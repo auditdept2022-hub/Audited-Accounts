@@ -2,7 +2,7 @@
       "relation": ["delegate_permission/common.handle_all_urls"],
       "target": {
         "namespace": "android_app",
-        "package_name": "io.github.auditdept2022_hub.twa",
-        "sha256_cert_fingerprints": ["44:6D:CD:4B:6C:B2:D4:EA:51:D9:BB:47:2C:65:C6:1A:8B:96:6D:06:E2:3A:FB:21:35:A3:48:0F:5E:6F:EA:5F"]
+        "package_name": "io.github.auditdept2022hub.auditedaccounts.twa",
+        "sha256_cert_fingerprints": ["E0:70:A1:FF:98:D1:C9:4C:2E:0C:95:A6:36:78:83:E0:19:36:57:DE:F0:ED:E9:BA:2E:26:C9:5D:F8:89:84:AF"]
       }
     }]

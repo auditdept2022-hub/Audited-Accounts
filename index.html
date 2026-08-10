@@ -304,6 +304,27 @@
   .mark-option.active{background:var(--accent-soft);}
   .mark-option.clear{border-top:1px solid var(--line);margin-top:4px;padding-top:9px;color:var(--muted);}
   .mark-swatch{width:17px;height:17px;border-radius:6px;flex-shrink:0;border:1.5px solid rgba(16,22,60,.10);}
+
+  /* Compact highlight picker embedded next to "Add new remark" — same
+     four colors as the card's mark button/popover, just inline so a
+     color can be picked before or after typing the remark, without
+     leaving the modal. */
+  .mini-marker-picker{display:flex;align-items:center;gap:6px;margin-left:auto;text-transform:none;letter-spacing:0;}
+  .mini-mark-swatch{
+    width:17px;height:17px;border-radius:6px;border:1.5px solid rgba(16,22,60,.14);
+    cursor:pointer;padding:0;background:#fff;flex-shrink:0;
+    transition:transform .1s ease,box-shadow .15s ease;touch-action:manipulation;
+  }
+  .mini-mark-swatch:hover{transform:translateY(-1px);}
+  .mini-mark-swatch[data-color="green"]{background:linear-gradient(160deg,#3FCB88,#1C9A57);border-color:#1c8a50;}
+  .mini-mark-swatch[data-color="yellow"]{background:linear-gradient(160deg,#F7D157,#DFA800);border-color:#c79300;}
+  .mini-mark-swatch[data-color="red"]{background:linear-gradient(160deg,#EF6E64,#D93636);border-color:#c22f2f;}
+  .mini-mark-swatch[data-color="sky"]{background:linear-gradient(160deg,#5CC0EA,#2196C9);border-color:#1c84b3;}
+  .mini-mark-swatch.clear{color:#AFB4CF;font-size:9px;line-height:1;display:flex;align-items:center;justify-content:center;}
+  .mini-mark-swatch.active{box-shadow:0 0 0 2px #fff,0 0 0 3.5px var(--accent);}
+  @media (hover:none), (pointer:coarse){
+    .mini-mark-swatch{width:20px;height:20px;}
+  }
   .mark-swatch[data-color="green"]{background:#33B872;}
   .mark-swatch[data-color="yellow"]{background:#F0C22B;}
   .mark-swatch[data-color="red"]{background:#E4544A;}
@@ -730,7 +751,16 @@
       </div>
 
       <div class="section" style="margin-bottom:0;">
-        <div class="section-title" id="newRemarkLabel">Add new remark</div>
+        <div class="section-title">
+          <span id="newRemarkLabel">Add new remark</span>
+          <span class="mini-marker-picker" id="modalMarkerPicker" title="Highlight this customer">
+            <button type="button" class="mini-mark-swatch" data-color="green" title="Green"></button>
+            <button type="button" class="mini-mark-swatch" data-color="yellow" title="Yellow"></button>
+            <button type="button" class="mini-mark-swatch" data-color="red" title="Red"></button>
+            <button type="button" class="mini-mark-swatch" data-color="sky" title="Sky blue"></button>
+            <button type="button" class="mini-mark-swatch clear" data-color="" title="Clear highlight">✕</button>
+          </span>
+        </div>
         <textarea id="mNewRemark" placeholder="Write the audit finding for this visit..."></textarea>
         <div class="draft-status" id="draftStatus" style="display:none;"></div>
       </div>
@@ -3867,6 +3897,23 @@
     }, 400);
   });
 
+  // ---- Modal highlight picker — mirrors setMark_'s four colors, but
+  // doesn't save on click; it just tracks modalMarkerColor_, which
+  // saveModal() folds into the same fields object as everything else so
+  // it's written in the same request as the remark/field edits. ----
+  let modalMarkerColor_ = '';
+  function setModalMarkerPickerColor_(color){
+    modalMarkerColor_ = color || '';
+    document.querySelectorAll('#modalMarkerPicker .mini-mark-swatch').forEach(btn=>{
+      btn.classList.toggle('active', btn.dataset.color === modalMarkerColor_);
+    });
+  }
+  document.getElementById('modalMarkerPicker').addEventListener('click', (e)=>{
+    const btn = e.target.closest('.mini-mark-swatch');
+    if(!btn) return;
+    setModalMarkerPickerColor_(btn.dataset.color);
+  });
+
   function openEditModal(row){
     const c = customers.find(x => x.row === row);
     if(!c) return;
@@ -3894,6 +3941,7 @@
     const draft = loadDraft_(row);
     document.getElementById('mNewRemark').value = draft ? draft.text : '';
     updateDraftStatus_();
+    setModalMarkerPickerColor_(c.marker || '');
     document.getElementById('overlay').classList.add('open');
     lockBodyScroll();
   }
@@ -3921,6 +3969,7 @@
     const draft = loadDraft_(null);
     document.getElementById('mNewRemark').value = draft ? draft.text : '';
     updateDraftStatus_();
+    setModalMarkerPickerColor_('');
     document.getElementById('overlay').classList.add('open');
     lockBodyScroll();
   }
@@ -3935,6 +3984,7 @@
 
   async function saveModal(){
     const fields = collectFieldValues();
+    fields.marker = modalMarkerColor_;
     if(modalMode === 'create' && !fields.customer){ toast('Customer name is required.'); return; }
 
     const btn = document.getElementById('saveBtn');

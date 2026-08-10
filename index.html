@@ -1500,6 +1500,48 @@
     return out;
   }
 
+  // Apps Script Web Apps enforce a hard ceiling on total request-URL length
+  // (roughly 8KB, enforced by Google's front end before your script code
+  // even runs) — and since every write here goes out as a GET with the
+  // whole payload JSON-encoded into the URL (see apiCall() below: a
+  // redirected POST loses its body per the fetch spec, so GET is the only
+  // option), a chunk that encodes too large just silently fails before the
+  // server sees it.
+  //
+  // A fixed item-count chunk size doesn't account for how big each
+  // record's JSON actually is. Import Balances (3 numeric fields) and
+  // Import Remarks (name + remark) stay small even at 40 records per
+  // chunk. Import Accounts sends 9 fields per record (customer, model,
+  // engine no, release date, due date, term, MA, beg bal, status) —
+  // 40 of those can push a single chunk's encoded URL well past 8KB,
+  // which is why bulk imports with bigger records "run" (the confirm
+  // popup shows a correct count) but never actually save.
+  //
+  // Fix: pack chunks by *encoded* byte length instead of a fixed count,
+  // so chunk size automatically shrinks for wide records and grows for
+  // narrow ones. MAX_CHUNK_ENCODED_CHARS is kept well under the ~8KB
+  // ceiling to leave room for the action/sheet/timestamp prefix and for
+  // multi-byte characters (₱, etc.) to encode larger than 1 char each.
+  const MAX_CHUNK_ENCODED_CHARS = 5500;
+
+  function chunkByEncodedSize_(items, toBatchItem, maxEncodedChars){
+    const chunks = [];
+    let current = [];
+    let currentLen = 2; // account for the wrapping [ ]
+    items.forEach(item => {
+      const encLen = encodeURIComponent(JSON.stringify(toBatchItem(item))).length + 1; // +1 for the comma separator
+      if(current.length && (currentLen + encLen) > maxEncodedChars){
+        chunks.push(current);
+        current = [];
+        currentLen = 2;
+      }
+      current.push(item);
+      currentLen += encLen;
+    });
+    if(current.length) chunks.push(current);
+    return chunks;
+  }
+
   // Sends `items` to a fast batch action in chunks, a few chunks at a time.
   // If a chunk's batch call errors for any reason, that chunk is retried
   // one row at a time via the single-row action instead — so one bad row,
@@ -1513,9 +1555,8 @@
   async function runBatched_(items, batchAction, batchKey, toBatchItem, singleAction, toSinglePayload, overallTotal, doneSoFar){
     if(!items.length) return { succeeded: 0, failed: 0, done: doneSoFar };
 
-    const CHUNK_SIZE = 40;
     const CONCURRENCY = 3;
-    const chunks = chunkArray_(items, CHUNK_SIZE);
+    const chunks = chunkByEncodedSize_(items, toBatchItem, MAX_CHUNK_ENCODED_CHARS);
     let succeeded = 0, failed = 0, done = doneSoFar;
 
     function reportProgress(){
@@ -1531,6 +1572,7 @@
           succeeded++;
         }catch(err){
           failed++;
+          console.error(`${singleAction} failed for row`, item, err);
         }
         done++;
         reportProgress();
@@ -1543,11 +1585,16 @@
         payload[batchKey] = chunk.map(toBatchItem);
         const res = await apiCall(batchAction, payload);
         const data = await res.json();
-        if(data.error) { await fallbackChunk(chunk); return; }
+        if(data.error) {
+          console.warn(`${batchAction} chunk of ${chunk.length} returned an error, retrying one row at a time:`, data.error);
+          await fallbackChunk(chunk);
+          return;
+        }
         succeeded += chunk.length;
         done += chunk.length;
         reportProgress();
       }catch(err){
+        console.warn(`${batchAction} chunk of ${chunk.length} threw (likely a request-too-large or network failure), retrying one row at a time:`, err);
         await fallbackChunk(chunk);
       }
     }

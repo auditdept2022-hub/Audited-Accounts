@@ -928,7 +928,6 @@
     ];
 
     const branchName = currentSheet || 'Branch';
-    const printedOn = new Date().toLocaleString('en-PH', { dateStyle:'medium', timeStyle:'short' });
 
     let tableHtml = '<table><thead><tr>' +
       cols.map(c => '<th>' + escapeHtml(c.label) + '</th>').join('') +
@@ -972,7 +971,6 @@
 </head>
 <body>
   <h1>${escapeHtml(branchName)} — Customer List</h1>
-  <div class="meta">${rows.length} record${rows.length === 1 ? '' : 's'} · Printed ${escapeHtml(printedOn)}</div>
   ${tableHtml}
 </body>
 </html>`);
@@ -1403,8 +1401,24 @@
 
   let profilesCache_ = [];
 
+  // ---- Body scroll lock -------------------------------------------------
+  // Prevents the page underneath from scrolling while any modal/overlay
+  // is open. Uses a counter since two overlays could theoretically be
+  // open at once (e.g. profile menu opened from within edit modal), so
+  // scroll is only restored once nothing is left open.
+  let openOverlayCount = 0;
+  function lockBodyScroll(){
+    openOverlayCount++;
+    document.body.style.overflow = 'hidden';
+  }
+  function unlockBodyScroll(){
+    openOverlayCount = Math.max(0, openOverlayCount - 1);
+    if(openOverlayCount === 0) document.body.style.overflow = '';
+  }
+
   function openProfileMenu(){
     document.getElementById('profileOverlay').classList.add('open');
+    lockBodyScroll();
     const searchInput = document.getElementById('profileSearch');
     if(searchInput) searchInput.value = '';
     loadProfiles_();
@@ -1412,6 +1426,7 @@
 
   function closeProfileMenu(){
     document.getElementById('profileOverlay').classList.remove('open');
+    unlockBodyScroll();
   }
 
   async function loadProfiles_(){
@@ -2729,6 +2744,7 @@
     document.getElementById('mNewRemark').value = draft ? draft.text : '';
     updateDraftStatus_();
     document.getElementById('overlay').classList.add('open');
+    lockBodyScroll();
   }
 
   // ---- Modal: create new --------------------------------------------------
@@ -2754,10 +2770,12 @@
     document.getElementById('mNewRemark').value = draft ? draft.text : '';
     updateDraftStatus_();
     document.getElementById('overlay').classList.add('open');
+    lockBodyScroll();
   }
 
   function closeModal(){
     document.getElementById('overlay').classList.remove('open');
+    unlockBodyScroll();
     activeRow = null;
   }
 

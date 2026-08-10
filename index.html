@@ -203,6 +203,8 @@
   .history-edit[readonly]{background:#EFF1F8;color:var(--muted);cursor:default;}
   .history-hint{font-size:11px;color:var(--muted);margin-top:6px;}
   .history-hint code{background:#EEF0F9;padding:1px 5px;border-radius:4px;}
+  .draft-status{font-size:11px;color:#9a6b00;background:#FFF6E0;border:1px solid #F3DFA0;border-radius:6px;padding:6px 10px;margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
+  .draft-status button{background:none;border:none;color:#9a6b00;text-decoration:underline;cursor:pointer;font-size:11px;padding:0;}
   .modal-foot{padding:16px 26px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;align-items:center;gap:10px;background:#F9FAFD;flex-shrink:0;padding-bottom:calc(16px + var(--safe-b));}
   .modal-foot .right{display:flex;gap:10px;}
 
@@ -428,6 +430,7 @@
           <input type="file" id="importRemarksInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
           <span id="importStatus" class="import-status"></span>
           <button class="btn" onclick="exportCSV()" title="Export all customers to CSV">⇩ Export</button>
+          <button class="btn" onclick="printCustomers()" title="Print the customer list currently shown for this branch">🖨 Print</button>
         </div>
         <div class="right">
           <input class="input" id="searchBox" placeholder="Search customer, model, engine no...">
@@ -487,6 +490,7 @@
       <div class="section" style="margin-bottom:0;">
         <div class="section-title" id="newRemarkLabel">Add new remark</div>
         <textarea id="mNewRemark" placeholder="Write the audit finding for this visit..."></textarea>
+        <div class="draft-status" id="draftStatus" style="display:none;"></div>
       </div>
 
     </div>
@@ -900,6 +904,82 @@
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     toast('Exported ' + customers.length + ' customers.');
+  }
+
+  // Prints just the customer-info table (the columns shown in the Sheet:
+  // Customer, Release/Rstr Date, Model, Engine No, Due Date, Term, MA,
+  // Beg Bal) for whichever branch is currently selected — and only the
+  // rows currently visible (i.e. respects the search box / filters), not
+  // the whole dashboard UI. Opens a plain print-friendly window rather
+  // than printing the card layout directly, since the cards don't fit a
+  // printed page well.
+  function printCustomers(){
+    const rows = getFilteredCustomers();
+    if(!rows.length){ toast('Nothing to print.'); return; }
+
+    const cols = [
+      { key:'customer',    label:'Customer' },
+      { key:'releaseDate', label:'Release/Rstr Date' },
+      { key:'model',       label:'Model' },
+      { key:'engineNo',    label:'Engine No' },
+      { key:'dueDate',     label:'Due Date' },
+      { key:'term',        label:'Term' },
+      { key:'ma',          label:'MA' },
+      { key:'begBal',      label:'Beg Bal' },
+    ];
+
+    const branchName = currentSheet || 'Branch';
+    const printedOn = new Date().toLocaleString('en-PH', { dateStyle:'medium', timeStyle:'short' });
+
+    let tableHtml = '<table><thead><tr>' +
+      cols.map(c => '<th>' + escapeHtml(c.label) + '</th>').join('') +
+      '</tr></thead><tbody>';
+
+    rows.forEach(c=>{
+      tableHtml += '<tr>' + cols.map(col=>{
+        let v = c[col.key];
+        if(col.key === 'ma' || col.key === 'begBal'){
+          v = (v !== '' && v != null) ? fmtMoney(v) : '—';
+        } else {
+          v = v || '—';
+        }
+        return '<td>' + escapeHtml(String(v)) + '</td>';
+      }).join('') + '</tr>';
+    });
+    tableHtml += '</tbody></table>';
+
+    const win = window.open('', '_blank');
+    if(!win){ toast('Please allow pop-ups to print.'); return; }
+
+    win.document.write(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${escapeHtml(branchName)} — Customer List</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; margin: 24px; color: #1a1a1a; }
+  h1 { font-size: 18px; margin: 0 0 2px; }
+  .meta { font-size: 12px; color: #666; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; white-space: nowrap; }
+  th { background: #f2f2f2; }
+  tbody tr:nth-child(even) { background: #fafafa; }
+  @media print {
+    body { margin: 10mm; }
+    button { display: none; }
+  }
+</style>
+</head>
+<body>
+  <h1>${escapeHtml(branchName)} — Customer List</h1>
+  <div class="meta">${rows.length} record${rows.length === 1 ? '' : 's'} · Printed ${escapeHtml(printedOn)}</div>
+  ${tableHtml}
+</body>
+</html>`);
+    win.document.close();
+    win.focus();
+    win.onload = () => win.print();
   }
 
   function readFileAsText_(file){
@@ -2363,14 +2443,12 @@
       (c._pending ? 1 : 0) + '\u0001' + (isConflict ? 1 : 0);
   }
 
-  function render(){
+  function getFilteredCustomers(){
     const q = document.getElementById('searchBox').value.trim().toLowerCase();
     const statusF = document.getElementById('statusFilter').value;
     const remarkF = document.getElementById('remarkFilter').value;
 
-    const conflictRows = new Set(outbox.filter(o => o.status === 'conflict' || o.status === 'error').map(o => o.row));
-
-    const filtered = customers.filter(c=>{
+    return customers.filter(c=>{
       if(c._pendingDelete) return false; // queued for deletion, hide immediately
       if(q){
         const hay = (c.customer + ' ' + c.model + ' ' + c.engineNo).toLowerCase();
@@ -2382,6 +2460,12 @@
       if(remarkF === 'done' && !hasRemark) return false;
       return true;
     });
+  }
+
+  function render(){
+    const conflictRows = new Set(outbox.filter(o => o.status === 'conflict' || o.status === 'error').map(o => o.row));
+
+    const filtered = getFilteredCustomers();
 
     document.getElementById('emptyState').style.display = filtered.length ? 'none' : 'block';
 
@@ -2557,6 +2641,68 @@
 
   // ---- Modal: edit existing ---------------------------------------------
 
+  // ---- Remark drafts --------------------------------------------------
+  //
+  // Whatever's typed into the "new remark" box is auto-saved to
+  // localStorage as the user types (debounced), keyed per branch + row,
+  // so a crash, accidental tab close, refresh, or sync error doesn't lose
+  // it. The draft is restored automatically next time that same
+  // customer's modal is opened, and cleared once the remark is actually
+  // saved to the sheet (or the user explicitly discards it).
+  function draftKey_(row){
+    return 'nicho_remark_draft_v1:' + API_URL + ':' + currentSheet + ':' + (row == null ? 'new' : row);
+  }
+
+  function saveDraft_(row, text){
+    try{
+      const key = draftKey_(row);
+      if(text && text.trim()){
+        localStorage.setItem(key, JSON.stringify({ text, savedAt: Date.now() }));
+      } else {
+        localStorage.removeItem(key);
+      }
+    }catch(err){ /* storage full/unavailable — draft just won't persist */ }
+  }
+
+  function loadDraft_(row){
+    try{
+      const raw = localStorage.getItem(draftKey_(row));
+      if(!raw) return null;
+      return JSON.parse(raw);
+    }catch(err){ return null; }
+  }
+
+  function clearDraft_(row){
+    try{ localStorage.removeItem(draftKey_(row)); }catch(err){ /* noop */ }
+  }
+
+  function updateDraftStatus_(){
+    const el = document.getElementById('draftStatus');
+    const draft = loadDraft_(activeRow);
+    if(draft && draft.text && draft.text.trim()){
+      el.style.display = 'flex';
+      el.innerHTML = '📝 Unsaved draft restored <button type="button" onclick="discardDraft()">Discard</button>';
+    } else {
+      el.style.display = 'none';
+      el.innerHTML = '';
+    }
+  }
+
+  function discardDraft(){
+    clearDraft_(activeRow);
+    document.getElementById('mNewRemark').value = '';
+    updateDraftStatus_();
+  }
+
+  let draftSaveDebounce;
+  document.getElementById('mNewRemark').addEventListener('input', function(){
+    clearTimeout(draftSaveDebounce);
+    draftSaveDebounce = setTimeout(()=>{
+      saveDraft_(activeRow, document.getElementById('mNewRemark').value);
+      updateDraftStatus_();
+    }, 400);
+  });
+
   function openEditModal(row){
     const c = customers.find(x => x.row === row);
     if(!c) return;
@@ -2580,7 +2726,9 @@
     editorOriginalHistory = str_(c.previousRemarks);
     document.getElementById('mHistoryEdit').value = editorOriginalHistory;
 
-    document.getElementById('mNewRemark').value = '';
+    const draft = loadDraft_(row);
+    document.getElementById('mNewRemark').value = draft ? draft.text : '';
+    updateDraftStatus_();
     document.getElementById('overlay').classList.add('open');
   }
 
@@ -2603,7 +2751,9 @@
     document.getElementById('mCurrentDate').textContent = '';
     document.getElementById('mCurrentEdit').value = '';
     document.getElementById('mHistoryEdit').value = '';
-    document.getElementById('mNewRemark').value = '';
+    const draft = loadDraft_(null);
+    document.getElementById('mNewRemark').value = draft ? draft.text : '';
+    updateDraftStatus_();
     document.getElementById('overlay').classList.add('open');
   }
 
@@ -2639,6 +2789,7 @@
         };
         const result = await queueOrSend_(item);
         toast(result && result.queued ? 'No connection — saved on this device, will sync automatically.' : 'Customer added.');
+        clearDraft_(null);
       } else {
         const c = customers.find(x => x.row === activeRow);
 
@@ -2672,6 +2823,7 @@
         };
         const result = await queueOrSend_(item);
         toast(result && result.queued ? 'No connection — saved on this device, will sync automatically.' : 'Changes saved.');
+        clearDraft_(activeRow);
       }
       closeModal();
       // queueOrSend_ already patched `customers` and re-rendered (either

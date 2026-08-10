@@ -606,36 +606,15 @@
 
   // ---- Customer color markers ("Select" button on each card) -----------
   //
-  // A personal "I've handled this one" flag — green/yellow/red/sky blue —
+  // A visual "I've handled this one" flag — green/yellow/red/sky blue —
   // set by tapping the round button on a card and picking a color from the
-  // popover. This is deliberately NOT written to the spreadsheet: it's a
-  // per-device visual checklist for whoever's going through the list
-  // right now, not shared data other auditors should see or that import/
-  // export should carry around. It's stored in localStorage, scoped to
-  // this API_URL + branch, and keyed by customer name (+ engine no. when
-  // present) rather than row number, so it survives the list being
-  // reloaded/re-sorted and doesn't jump onto a different customer if rows
-  // shift after an add/delete.
-  const MARKERS_PREFIX = 'nicho_markers_v1:';
-  function markersStorageKey_(){ return MARKERS_PREFIX + API_URL + ':' + (currentSheet || ''); }
-  function markKeyFor_(c){ return normalizeName_(c.customer) + '|' + normalizeEngine_(c.engineNo); }
-
-  let markers = {};
-  let markersLoadedFor = null;
-  function ensureMarkersLoaded_(){
-    const key = markersStorageKey_();
-    if(markersLoadedFor === key) return;
-    markersLoadedFor = key;
-    try{
-      markers = JSON.parse(localStorage.getItem(key) || '{}');
-    }catch(e){
-      markers = {};
-    }
-  }
-  function saveMarkers_(){
-    try{ localStorage.setItem(markersStorageKey_(), JSON.stringify(markers)); }catch(e){ /* storage full/unavailable — fine, it's just a local checklist */ }
-  }
-
+  // popover. This is saved as a real column on the customer's row (via the
+  // same updateCustomer action normal edits use), so it shows up the same
+  // way on every device/browser signed into the same sheet — not just the
+  // one it was set on. If a branch's sheet doesn't have a "Marker" column
+  // in row 1 yet, the backend just no-ops the write (c.marker comes back
+  // empty), so this degrades safely on branches that haven't added the
+  // column.
   let markPopoverRow = null; // which card's mark button opened the popover, or null when closed
 
   function closeMarkPopover_(){
@@ -647,7 +626,7 @@
     markPopoverRow = row;
     const pop = document.getElementById('markPopover');
     const c = customers.find(x => x.row === row);
-    const current = c ? (markers[markKeyFor_(c)] || '') : '';
+    const current = (c && c.marker) || '';
     pop.querySelectorAll('.mark-swatch').forEach(sw => {
       sw.classList.toggle('active', sw.dataset.color === current);
     });
@@ -661,14 +640,30 @@
     pop.style.left = left + 'px';
   }
 
-  function setMark_(row, color){
+  // Optimistic: paints the new color immediately and saves it in the
+  // background, same pattern as other quick single-field edits. On
+  // failure it reverts the color and lets the person know so a marker
+  // pick can't silently fail to sync (which is exactly what happened
+  // with the old device-only version of this feature).
+  async function setMark_(row, color){
     const c = customers.find(x => x.row === row);
     if(!c) return;
-    const key = markKeyFor_(c);
-    if(color) markers[key] = color; else delete markers[key];
-    saveMarkers_();
+    const prev = c.marker || '';
+    if(prev === color){ closeMarkPopover_(); return; }
+
+    c.marker = color;
     closeMarkPopover_();
     render();
+    saveLocalCache_(customers);
+
+    try{
+      await apiCallJson_('updateCustomer', { row: row, fields: { marker: color } });
+    }catch(err){
+      c.marker = prev;
+      render();
+      saveLocalCache_(customers);
+      toast('Could not save the color marker: ' + err.message);
+    }
   }
 
   // Field definitions drive both the edit/create form and payload building.
@@ -2379,7 +2374,7 @@
       c.row, c.customer, c.model, c.engineNo, c.releaseDate, c.dueDate, c.term,
       c.ma, c.begBal, c.dueThisMonth, c.paymentAdv, c.penaltyDue,
       c.customerStatus, c.unitStatus, c.paymentMode, c.dateOfAudit,
-      c.auditorRemarks, c.previousRemarks
+      c.auditorRemarks, c.previousRemarks, c.marker
     ]));
   }
 
@@ -2929,7 +2924,6 @@
   }
 
   function render(){
-    ensureMarkersLoaded_();
     const conflictRows = new Set(outbox.filter(o => o.status === 'conflict' || o.status === 'error').map(o => o.row));
 
     const filtered = getFilteredCustomers();
@@ -2941,7 +2935,7 @@
     for(let i = 0; i < filtered.length; i++){
       const c = filtered[i];
       const isConflict = conflictRows.has(c.row);
-      const mark = markers[markKeyFor_(c)] || '';
+      const mark = c.marker || '';
       const sig = rowSignature_(c, isConflict, mark);
 
       const cached = rowHtmlCache.get(c.row);

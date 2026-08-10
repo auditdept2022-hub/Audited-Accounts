@@ -1,12 +1,8 @@
-[
-  {
-    "relation": ["delegate_permission/common.handle_all_urls"],
-    "target": {
-      "namespace": "android_app",
-      "package_name": "REPLACE_WITH_YOUR_PACKAGE_ID",
-      "sha256_cert_fingerprints": [
-        "REPLACE:WITH:YOUR:SHA256:FINGERPRINT:FROM:PWA:BUILDER"
-      ]
-    }
-  }
-]
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "io.github.auditdept2022_hub.twa",
+        "sha256_cert_fingerprints": ["44:6D:CD:4B:6C:B2:D4:EA:51:D9:BB:47:2C:65:C6:1A:8B:96:6D:06:E2:3A:FB:21:35:A3:48:0F:5E:6F:EA:5F"]
+      }
+    }]

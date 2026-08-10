@@ -2008,6 +2008,7 @@
         + '</div>'
         + '<div class="p-actions">'
         + '<button class="icon-btn" title="Rename" onclick="startRenameProfile_(this, \'' + jsAttr_(name) + '\')">✎</button>'
+        + '<button class="icon-btn" title="Clear all records in this branch (keeps the branch itself)" onclick="clearBranchData_(\'' + jsAttr_(name) + '\')">🧹</button>'
         + (canDelete ? '<button class="icon-btn" title="Delete" onclick="deleteProfile_(\'' + jsAttr_(name) + '\')">🗑</button>' : '')
         + '</div></div>';
     }).join('');
@@ -2109,6 +2110,39 @@
       toast(isConnectionError_(err)
         ? 'You\'re offline — deleting a branch needs a connection.'
         : 'Could not delete: ' + err.message);
+    }
+  }
+
+  // Empties every customer record in a branch but keeps the branch
+  // itself — for rotating the same branch profile with fresh data
+  // (instead of deleting and re-adding it each time). Deliberately
+  // destructive and irreversible, so it always requires an explicit
+  // yes/no confirmation naming the branch before anything is sent —
+  // there's no accidental single-tap path to wiping a branch's data.
+  async function clearBranchData_(name){
+    const ok = confirm(
+      'Clear ALL customer records in "' + name + '"?\n\n' +
+      'Every customer, remark, and color marker in this branch will be permanently deleted. ' +
+      'The branch itself stays, empty, so you can start fresh with new data.\n\n' +
+      'This cannot be undone.\n\n' +
+      'Click OK to clear it, or Cancel to keep the data.'
+    );
+    if(!ok) return;
+    try{
+      const result = await apiCallJson_('clearBranchData', { name });
+      const n = (result && typeof result.cleared === 'number') ? result.cleared : null;
+      toast('Cleared ' + (n !== null ? n + ' record' + (n === 1 ? '' : 's') : 'all records') + ' from "' + name + '".');
+      if(currentSheet === name){
+        customers = [];
+        lastListHash = null;
+        saveLocalCache_(customers);
+        render();
+        await loadData();
+      }
+    }catch(err){
+      toast(isConnectionError_(err)
+        ? 'You\'re offline — clearing a branch needs a connection.'
+        : 'Could not clear: ' + err.message);
     }
   }
 

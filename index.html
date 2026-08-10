@@ -162,6 +162,44 @@
     .icon-btn{width:34px;height:34px;font-size:14px;}
   }
 
+  /* Mark button — a small round toggle on the right of each card that
+     opens the color popover. Unlike .row-actions (edit button, hidden
+     until hover) this stays visible at all times, since it's a status
+     indicator as much as a control. */
+  .mark-btn{border:2px solid #D9DDF0;background:#fff;border-radius:50%;width:22px;height:22px;padding:0;cursor:pointer;flex-shrink:0;touch-action:manipulation;transition:transform .08s, border-color .15s;}
+  .mark-btn:hover{transform:scale(1.08);border-color:#B9C0E4;}
+  .mark-btn.mark-btn-green{background:#33B872;border-color:#1F9D5B;}
+  .mark-btn.mark-btn-yellow{background:#F0C22B;border-color:#D9A400;}
+  .mark-btn.mark-btn-red{background:#E4544A;border-color:#D93636;}
+  .mark-btn.mark-btn-sky{background:#3FAADD;border-color:#2196C9;}
+  @media (hover:none), (pointer:coarse){
+    .mark-btn{width:28px;height:28px;}
+  }
+
+  /* Whole-card highlight once a color is picked — tints the card body,
+     not just the left accent bar, so it reads clearly at a glance. */
+  .rec.marked-green{background:#E9F8F0;border-color:#9EDBB9;}
+  .rec.marked-green::before{background:#1F9D5B;}
+  .rec.marked-yellow{background:#FFF8DE;border-color:#EBCE6E;}
+  .rec.marked-yellow::before{background:#D9A400;}
+  .rec.marked-red{background:#FCEAE8;border-color:#EDA79F;}
+  .rec.marked-red::before{background:#D93636;}
+  .rec.marked-sky{background:#E7F5FC;border-color:#9BCDE9;}
+  .rec.marked-sky::before{background:#2196C9;}
+
+  /* Floating color popover — one shared instance, positioned next to
+     whichever card's mark button was clicked. */
+  .mark-popover{position:fixed;z-index:200;display:none;gap:7px;align-items:center;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-md);padding:9px 10px;}
+  .mark-popover.open{display:flex;}
+  .mark-swatch{width:24px;height:24px;border-radius:50%;border:2px solid rgba(16,22,60,.10);cursor:pointer;padding:0;touch-action:manipulation;transition:transform .08s;display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:#fff;font-weight:700;}
+  .mark-swatch:hover{transform:scale(1.1);}
+  .mark-swatch[data-color="green"]{background:#33B872;}
+  .mark-swatch[data-color="yellow"]{background:#F0C22B;}
+  .mark-swatch[data-color="red"]{background:#E4544A;}
+  .mark-swatch[data-color="sky"]{background:#3FAADD;}
+  .mark-swatch[data-color=""]{background:#fff;border-color:#D9DDF0;color:var(--muted);}
+  .mark-swatch.active{box-shadow:0 0 0 2px #fff, 0 0 0 4px var(--accent);}
+
   /* Modal */
   .overlay{position:fixed;inset:0;background:rgba(8,12,34,.58);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;z-index:50;backdrop-filter:blur(2px);}
   .overlay.open{display:flex;}
@@ -453,6 +491,13 @@
       <div class="card">
         <div class="table-wrap">
           <div class="rec-list" id="tableBody"></div>
+          <div class="mark-popover" id="markPopover">
+            <button class="mark-swatch" data-color="green" title="Green" data-act="mark-set"></button>
+            <button class="mark-swatch" data-color="yellow" title="Yellow" data-act="mark-set"></button>
+            <button class="mark-swatch" data-color="red" title="Red" data-act="mark-set"></button>
+            <button class="mark-swatch" data-color="sky" title="Sky blue" data-act="mark-set"></button>
+            <button class="mark-swatch" data-color="" title="Clear" data-act="mark-set">✕</button>
+          </div>
         </div>
         <div class="empty-state" id="emptyState" style="display:none;">
           <div>No customers match your filters.</div>
@@ -558,6 +603,73 @@
   // of whichever existing profile the user picks in the "copy from"
   // selector — never a hardcoded name.
   let currentSheet = null;
+
+  // ---- Customer color markers ("Select" button on each card) -----------
+  //
+  // A personal "I've handled this one" flag — green/yellow/red/sky blue —
+  // set by tapping the round button on a card and picking a color from the
+  // popover. This is deliberately NOT written to the spreadsheet: it's a
+  // per-device visual checklist for whoever's going through the list
+  // right now, not shared data other auditors should see or that import/
+  // export should carry around. It's stored in localStorage, scoped to
+  // this API_URL + branch, and keyed by customer name (+ engine no. when
+  // present) rather than row number, so it survives the list being
+  // reloaded/re-sorted and doesn't jump onto a different customer if rows
+  // shift after an add/delete.
+  const MARKERS_PREFIX = 'nicho_markers_v1:';
+  function markersStorageKey_(){ return MARKERS_PREFIX + API_URL + ':' + (currentSheet || ''); }
+  function markKeyFor_(c){ return normalizeName_(c.customer) + '|' + normalizeEngine_(c.engineNo); }
+
+  let markers = {};
+  let markersLoadedFor = null;
+  function ensureMarkersLoaded_(){
+    const key = markersStorageKey_();
+    if(markersLoadedFor === key) return;
+    markersLoadedFor = key;
+    try{
+      markers = JSON.parse(localStorage.getItem(key) || '{}');
+    }catch(e){
+      markers = {};
+    }
+  }
+  function saveMarkers_(){
+    try{ localStorage.setItem(markersStorageKey_(), JSON.stringify(markers)); }catch(e){ /* storage full/unavailable — fine, it's just a local checklist */ }
+  }
+
+  let markPopoverRow = null; // which card's mark button opened the popover, or null when closed
+
+  function closeMarkPopover_(){
+    markPopoverRow = null;
+    document.getElementById('markPopover').classList.remove('open');
+  }
+
+  function openMarkPopoverFor_(row, btnEl){
+    markPopoverRow = row;
+    const pop = document.getElementById('markPopover');
+    const c = customers.find(x => x.row === row);
+    const current = c ? (markers[markKeyFor_(c)] || '') : '';
+    pop.querySelectorAll('.mark-swatch').forEach(sw => {
+      sw.classList.toggle('active', sw.dataset.color === current);
+    });
+    pop.classList.add('open');
+    // Position under the button, nudged left if it would overflow the
+    // viewport's right edge (cards near the right side of a wide layout).
+    const r = btnEl.getBoundingClientRect();
+    pop.style.top = (r.bottom + 6) + 'px';
+    let left = r.right - pop.offsetWidth;
+    if(left < 8) left = 8;
+    pop.style.left = left + 'px';
+  }
+
+  function setMark_(row, color){
+    const c = customers.find(x => x.row === row);
+    if(!c) return;
+    const key = markKeyFor_(c);
+    if(color) markers[key] = color; else delete markers[key];
+    saveMarkers_();
+    closeMarkPopover_();
+    render();
+  }
 
   // Field definitions drive both the edit/create form and payload building.
   // `lockedOnEdit:false` marks the only fields an auditor may change on an
@@ -2787,14 +2899,14 @@
   // memory, no behavior change — output is identical either way.
   const rowHtmlCache = new Map();
 
-  function rowSignature_(c, isConflict){
+  function rowSignature_(c, isConflict, mark){
     return c.customer + '\u0001' + c.model + '\u0001' + c.engineNo + '\u0001' +
       c.releaseDate + '\u0001' + c.dueDate + '\u0001' + c.term + '\u0001' +
       c.ma + '\u0001' + c.begBal + '\u0001' + c.dueThisMonth + '\u0001' +
       c.paymentAdv + '\u0001' + c.penaltyDue + '\u0001' + c.customerStatus + '\u0001' +
       c.unitStatus + '\u0001' + c.paymentMode + '\u0001' + c.dateOfAudit + '\u0001' +
       c.auditorRemarks + '\u0001' + c.previousRemarks + '\u0001' +
-      (c._pending ? 1 : 0) + '\u0001' + (isConflict ? 1 : 0);
+      (c._pending ? 1 : 0) + '\u0001' + (isConflict ? 1 : 0) + '\u0001' + (mark || '');
   }
 
   function getFilteredCustomers(){
@@ -2817,6 +2929,7 @@
   }
 
   function render(){
+    ensureMarkersLoaded_();
     const conflictRows = new Set(outbox.filter(o => o.status === 'conflict' || o.status === 'error').map(o => o.row));
 
     const filtered = getFilteredCustomers();
@@ -2828,7 +2941,8 @@
     for(let i = 0; i < filtered.length; i++){
       const c = filtered[i];
       const isConflict = conflictRows.has(c.row);
-      const sig = rowSignature_(c, isConflict);
+      const mark = markers[markKeyFor_(c)] || '';
+      const sig = rowSignature_(c, isConflict, mark);
 
       const cached = rowHtmlCache.get(c.row);
       if(cached && cached.sig === sig){
@@ -2870,7 +2984,9 @@
       const pendingTag = isConflict
         ? `<span class="tag-pending err">⚠ Needs attention</span>`
         : (c._pending ? `<span class="tag-pending">⏳ Syncing</span>` : '');
-      const recClass = 'rec' + (isConflict ? ' is-conflict' : (c._pending ? ' is-pending' : ''));
+      const recClass = 'rec' + (isConflict ? ' is-conflict' : (c._pending ? ' is-pending' : '')) + (mark ? ' marked-' + mark : '');
+      const markBtnClass = 'mark-btn' + (mark ? ' mark-btn-' + mark : '');
+      const markBtnTitle = mark ? 'Marked — click to change or clear' : 'Mark this customer';
 
       const html = `<div class="${recClass}" data-row="${c.row}">
         <div class="rec-top">
@@ -2880,6 +2996,7 @@
             ${pendingTag}
           </div>
           <div class="rec-right">
+            <button class="${markBtnClass}" title="${markBtnTitle}" data-act="mark" data-row="${c.row}"></button>
             <div class="row-actions">
               <button class="icon-btn" title="Edit" data-act="edit" data-row="${c.row}">✎</button>
             </div>
@@ -2917,11 +3034,33 @@
     if(actBtn){
       const row = Number(actBtn.dataset.row);
       if(actBtn.dataset.act === 'edit') openEditModal(row);
+      if(actBtn.dataset.act === 'mark'){
+        if(markPopoverRow === row) closeMarkPopover_();
+        else openMarkPopoverFor_(row, actBtn);
+      }
       return;
     }
     const rec = e.target.closest('.rec');
     if(rec) openEditModal(Number(rec.dataset.row));
   });
+
+  // The popover itself lives outside #tableBody (so re-rendering the list
+  // never touches or repositions it while it's open).
+  document.getElementById('markPopover').addEventListener('click', (e)=>{
+    const sw = e.target.closest('[data-act="mark-set"]');
+    if(sw && markPopoverRow !== null) setMark_(markPopoverRow, sw.dataset.color);
+  });
+
+  // Close the popover on any click outside it/its trigger button, or on
+  // scroll (its position is only computed at open time, so leaving it up
+  // while the list scrolls would leave it floating over the wrong card).
+  document.addEventListener('click', (e)=>{
+    if(markPopoverRow === null) return;
+    if(e.target.closest('#markPopover') || e.target.closest('[data-act="mark"]')) return;
+    closeMarkPopover_();
+  });
+  document.getElementById('tableBody').addEventListener('scroll', closeMarkPopover_);
+  window.addEventListener('scroll', closeMarkPopover_, true);
 
   // Google Sheets can hand back a number, boolean, or Date for a column
   // that's supposed to hold plain text (e.g. someone typed "2024" or a

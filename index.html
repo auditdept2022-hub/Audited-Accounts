@@ -100,6 +100,8 @@
   .btn.primary:hover{filter:brightness(1.08);}
   .btn.dark{background:var(--panel);color:#fff;border-color:var(--panel);}
   .btn.dark:hover{background:var(--panel-2);}
+  .btn.danger{background:var(--del-soft);color:var(--del);border-color:#F0C3CE;}
+  .btn.danger:hover{background:#F6D3DC;}
   .btn:disabled{opacity:.5;cursor:not-allowed;}
   .btn.icon{padding:9px 12px;}
 
@@ -263,6 +265,7 @@
   .draft-status{font-size:11px;color:#9a6b00;background:#FFF6E0;border:1px solid #F3DFA0;border-radius:6px;padding:6px 10px;margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
   .draft-status button{background:none;border:none;color:#9a6b00;text-decoration:underline;cursor:pointer;font-size:11px;padding:0;}
   .modal-foot{padding:16px 26px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;align-items:center;gap:10px;background:#F9FAFD;flex-shrink:0;padding-bottom:calc(16px + var(--safe-b));}
+  .modal-foot .left{margin-right:auto;display:flex;gap:10px;}
   .modal-foot .right{display:flex;gap:10px;}
 
   .setup{max-width:560px;margin:60px auto;background:#fff;border-radius:16px;border:1px solid var(--line);padding:30px;box-shadow:var(--shadow-md);}
@@ -424,7 +427,9 @@
     .modal-head{padding:16px 18px;}
     .modal-body{padding:18px;}
     .modal-foot{padding:14px 18px calc(14px + var(--safe-b));flex-wrap:wrap;}
-    .modal-foot .right{width:100%;}
+    .modal-foot .left{width:100%;margin-right:0;order:2;}
+    .modal-foot .left .btn{flex:1;}
+    .modal-foot .right{width:100%;order:1;}
     .modal-foot .right .btn{flex:1;}
 
     .toast{left:16px;right:16px;bottom:calc(16px + var(--safe-b));text-align:center;}
@@ -561,6 +566,9 @@
 
     </div>
     <div class="modal-foot">
+      <div class="left" id="deleteBtnWrap" style="display:none;">
+        <button class="btn danger" id="deleteBtn" onclick="deleteRecordFromModal_()">🗑 Delete</button>
+      </div>
       <div class="right">
         <button class="btn" onclick="closeModal()">Cancel</button>
         <button class="btn primary" id="saveBtn" onclick="saveModal()">Save changes</button>
@@ -2094,6 +2102,7 @@
     if(!confirm('Delete branch "' + name + '" and all its data? This cannot be undone.')) return;
     try{
       await apiCallJson_('deleteSheet', { name });
+      purgeBranchLocalState_(name);
       toast('Deleted "' + name + '".');
       if(currentSheet === name){
         const remaining = (profilesCache_ || []).filter(n => n !== name);
@@ -2119,10 +2128,40 @@
   // destructive and irreversible, so it always requires an explicit
   // yes/no confirmation naming the branch before anything is sent —
   // there's no accidental single-tap path to wiping a branch's data.
+  // Removes any queued offline edits (create/update/delete) and draft
+  // remark text left over for a branch. Called right after a successful
+  // clearBranchData so those queued items can't "resurrect" records the
+  // user just wiped: without this, any still-unsynced outbox entry for
+  // this branch would get replayed on top of the now-empty server list
+  // the next time loadData() runs (reapplyOutbox_ overlays the outbox on
+  // every fresh fetch), making the clear look like it silently undid
+  // itself — and worse, those queued writes would eventually sync back
+  // to the sheet too.
+  function purgeBranchLocalState_(name){
+    const outboxKeyForName = 'nicho_outbox_v1:' + API_URL + ':' + name;
+    try{ localStorage.removeItem(outboxKeyForName); }catch(e){ /* noop */ }
+    if(currentSheet === name){
+      outbox = [];
+      saveOutbox_();
+    }
+    // Sweep any per-row remark drafts for this branch — they reference
+    // row numbers that no longer exist on the sheet after a clear.
+    try{
+      const draftPrefix = 'nicho_remark_draft_v1:' + API_URL + ':' + name + ':';
+      const staleKeys = [];
+      for(let i = 0; i < localStorage.length; i++){
+        const k = localStorage.key(i);
+        if(k && k.indexOf(draftPrefix) === 0) staleKeys.push(k);
+      }
+      staleKeys.forEach(k => localStorage.removeItem(k));
+    }catch(e){ /* noop */ }
+  }
+
   async function clearBranchData_(name){
     const ok = confirm(
       'Clear ALL customer records in "' + name + '"?\n\n' +
-      'Every customer, remark, and color marker in this branch will be permanently deleted. ' +
+      'Every customer, remark, and color marker in this branch will be permanently deleted, ' +
+      'including any not-yet-synced offline edits queued for it. ' +
       'The branch itself stays, empty, so you can start fresh with new data.\n\n' +
       'This cannot be undone.\n\n' +
       'Click OK to clear it, or Cancel to keep the data.'
@@ -2131,11 +2170,13 @@
     try{
       const result = await apiCallJson_('clearBranchData', { name });
       const n = (result && typeof result.cleared === 'number') ? result.cleared : null;
+      purgeBranchLocalState_(name);
       toast('Cleared ' + (n !== null ? n + ' record' + (n === 1 ? '' : 's') : 'all records') + ' from "' + name + '".');
       if(currentSheet === name){
         customers = [];
         lastListHash = null;
         saveLocalCache_(customers);
+        updateSyncUI();
         render();
         await loadData();
       }
@@ -3269,6 +3310,7 @@
     document.getElementById('historySection').style.display = 'block';
     document.getElementById('newRemarkLabel').textContent = 'Add new remark';
     document.getElementById('saveBtn').textContent = 'Save changes';
+    document.getElementById('deleteBtnWrap').style.display = 'flex';
 
     buildFieldGrid(c);
 
@@ -3299,6 +3341,7 @@
     document.getElementById('historySection').style.display = 'none';
     document.getElementById('newRemarkLabel').textContent = 'Initial remark (optional)';
     document.getElementById('saveBtn').textContent = 'Create customer';
+    document.getElementById('deleteBtnWrap').style.display = 'none';
 
     buildFieldGrid({});
     editorOriginalCurrent = '';
@@ -3394,11 +3437,37 @@
     }
   }
 
-  // Deletion has been removed from this dashboard by design — editing
-  // only. (queueOrSend_/sendOne_/syncOutbox still know how to handle a
-  // 'delete' kind item internally so nothing breaks if one is ever
-  // present from an old queued session, but nothing in the UI creates
-  // one anymore.)
+  // Delete the record currently open in the edit modal. Only reachable
+  // from edit mode (the button is hidden in create mode — there's
+  // nothing to delete yet). Requires an explicit confirm naming the
+  // customer, then queues a 'delete' item the same way create/update do
+  // — queueOrSend_/sendOne_/syncOutbox/reapplyOutbox_ already know how
+  // to handle 'delete' kind items end-to-end (that plumbing already
+  // existed; this button is what was missing to actually trigger it).
+  async function deleteRecordFromModal_(){
+    if(modalMode !== 'edit' || !activeRow) return;
+    const c = customers.find(x => x.row === activeRow);
+    const label = c ? c.customer : ('row ' + activeRow);
+    if(!confirm('Delete "' + label + '"? This removes the customer, its balances, and all its remarks. This cannot be undone.')) return;
+
+    const btn = document.getElementById('deleteBtn');
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = 'Deleting…';
+
+    try{
+      const item = { id: genId_(), kind: 'delete', row: activeRow, status: 'pending' };
+      const result = await queueOrSend_(item);
+      toast(result && result.queued ? 'No connection — will delete once back online.' : 'Customer deleted.');
+      clearDraft_(activeRow);
+      closeModal();
+    }catch(err){
+      toast('Could not delete: ' + err.message);
+    }finally{
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    }
+  }
 
   let searchDebounce;
   document.getElementById('searchBox').addEventListener('input', ()=>{

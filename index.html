@@ -208,6 +208,25 @@
      each color even means without having to memorize it. */
   .mark-popover{position:fixed;z-index:200;display:none;flex-direction:column;gap:1px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-md);padding:6px;min-width:172px;}
   .mark-popover.open{display:flex;}
+
+  /* ---- View mode switch (Full details / Compact / Names only) ---- */
+  .view-switch{position:relative;}
+  .view-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:200;display:none;flex-direction:column;gap:1px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-md);padding:6px;min-width:200px;}
+  .view-menu.open{display:flex;}
+  .view-option{display:flex;flex-direction:column;align-items:flex-start;gap:1px;border:none;background:none;border-radius:9px;padding:8px 10px;cursor:pointer;text-align:left;width:100%;touch-action:manipulation;transition:background .12s ease;}
+  .view-option:hover{background:#F4F5FB;}
+  .view-option.active{background:var(--accent-soft);}
+  .view-option .vo-title{font-size:12.5px;font-weight:700;color:var(--text);}
+  .view-option .vo-sub{font-size:10.5px;color:var(--muted);}
+
+  /* Compact: hide the remarks block, keep the fact grid */
+  .rec-list.view-compact .rec-remarks{display:none;}
+
+  /* Minimal: name + status badge only */
+  .rec-list.view-minimal .fact-grid,
+  .rec-list.view-minimal .rec-remarks{display:none;}
+  .rec-list.view-minimal .rec{padding-top:12px;padding-bottom:12px;}
+  .rec-list.view-minimal .rec-top{margin-bottom:0;padding-bottom:0;border-bottom:none;}
   .mark-option{display:flex;align-items:center;gap:10px;border:none;background:none;border-radius:9px;padding:8px 9px;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--text);text-align:left;width:100%;touch-action:manipulation;transition:background .12s ease;}
   .mark-option:hover{background:#F4F5FB;}
   .mark-option.active{background:var(--accent-soft);}
@@ -497,6 +516,23 @@
           <button class="btn" onclick="printCustomers()" title="Print the customer list currently shown for this branch">🖨 Print</button>
         </div>
         <div class="right">
+          <div class="view-switch">
+            <button class="btn" id="viewModeBtn" onclick="toggleViewMenu_(event)" title="Choose how much detail each customer card shows">👁 Full details</button>
+            <div class="view-menu" id="viewMenu">
+              <button class="view-option" data-mode="full" data-act="view-set">
+                <span class="vo-title">Full details</span>
+                <span class="vo-sub">Name, all fields &amp; remarks</span>
+              </button>
+              <button class="view-option" data-mode="compact" data-act="view-set">
+                <span class="vo-title">Compact</span>
+                <span class="vo-sub">Name &amp; fields, remarks hidden</span>
+              </button>
+              <button class="view-option" data-mode="minimal" data-act="view-set">
+                <span class="vo-title">Name only</span>
+                <span class="vo-sub">Just name &amp; status</span>
+              </button>
+            </div>
+          </div>
           <input class="input" id="searchBox" placeholder="Search customer, model, engine no...">
           <select id="statusFilter">
             <option value="">All statuses</option>
@@ -642,6 +678,57 @@
   // in row 1 yet, the backend just no-ops the write (c.marker comes back
   // empty), so this degrades safely on branches that haven't added the
   // column.
+  // ---- View mode (Full details / Compact / Names only) ------------------
+  // Purely a display preference: it never changes what render() builds,
+  // only which CSS class sits on #tableBody, so switching modes is
+  // instant and doesn't disturb the per-row HTML cache above.
+  let viewMode = 'full';
+  const VIEW_MODE_LABELS = { full: 'Full details', compact: 'Compact', minimal: 'Name only' };
+
+  function viewModeKey_(){ return 'aa_view_mode_v1'; }
+
+  function loadViewMode_(){
+    try{
+      const v = localStorage.getItem(viewModeKey_());
+      if(v === 'full' || v === 'compact' || v === 'minimal') viewMode = v;
+    }catch(e){ /* ignore */ }
+    applyViewMode_();
+  }
+
+  function applyViewMode_(){
+    const list = document.getElementById('tableBody');
+    list.classList.remove('view-full', 'view-compact', 'view-minimal');
+    list.classList.add('view-' + viewMode);
+    document.getElementById('viewModeBtn').textContent = '👁 ' + VIEW_MODE_LABELS[viewMode];
+    document.querySelectorAll('.view-option').forEach(b=>{
+      b.classList.toggle('active', b.dataset.mode === viewMode);
+    });
+  }
+
+  function setViewMode_(mode){
+    if(mode !== 'full' && mode !== 'compact' && mode !== 'minimal') return;
+    viewMode = mode;
+    try{ localStorage.setItem(viewModeKey_(), mode); }catch(e){ /* ignore */ }
+    applyViewMode_();
+    closeViewMenu_();
+  }
+
+  function toggleViewMenu_(e){
+    if(e) e.stopPropagation();
+    document.getElementById('viewMenu').classList.toggle('open');
+  }
+  function closeViewMenu_(){
+    document.getElementById('viewMenu').classList.remove('open');
+  }
+  document.getElementById('viewMenu').addEventListener('click', (e)=>{
+    const b = e.target.closest('[data-act="view-set"]');
+    if(b) setViewMode_(b.dataset.mode);
+  });
+  document.addEventListener('click', (e)=>{
+    if(!e.target.closest('.view-switch')) closeViewMenu_();
+  });
+  loadViewMode_();
+
   let markPopoverRow = null; // which card's mark button opened the popover, or null when closed
 
   function closeMarkPopover_(){
@@ -754,7 +841,7 @@
   let outbox = [];
   let isSyncing = false;
 
-  function outboxKey_(){ return 'nicho_outbox_v1:' + API_URL + ':' + currentSheet; }
+  function outboxKey_(){ return 'aa_outbox_v1:' + API_URL + ':' + currentSheet; }
 
   function saveOutbox_(){
     try{ localStorage.setItem(outboxKey_(), JSON.stringify(outbox)); }catch(e){ /* storage full/unavailable — nothing else to do */ }
@@ -1814,14 +1901,14 @@
 
   // ---- Branch profiles: menu, switch, create, rename, delete ----------
 
-  function currentSheetKey_(){ return 'nicho_current_sheet_v1:' + API_URL; }
+  function currentSheetKey_(){ return 'aa_current_sheet_v1:' + API_URL; }
 
   // The branch list itself (the hamburger drawer) is cached the same way
   // the customer list is: last-known-good copy in localStorage, keyed per
   // API_URL. Without this, going offline meant the drawer could only show
   // an error — you couldn't even switch to a branch you'd already visited
   // and whose data was sitting right there in the per-branch cache below.
-  const SHEETS_LOCAL_CACHE_PREFIX = 'nicho_sheets_cache_v1:';
+  const SHEETS_LOCAL_CACHE_PREFIX = 'aa_sheets_cache_v1:';
   function sheetsLocalCacheKey_(){ return SHEETS_LOCAL_CACHE_PREFIX + API_URL; }
 
   function saveSheetsCache_(sheets){
@@ -2138,7 +2225,7 @@
   // itself — and worse, those queued writes would eventually sync back
   // to the sheet too.
   function purgeBranchLocalState_(name){
-    const outboxKeyForName = 'nicho_outbox_v1:' + API_URL + ':' + name;
+    const outboxKeyForName = 'aa_outbox_v1:' + API_URL + ':' + name;
     try{ localStorage.removeItem(outboxKeyForName); }catch(e){ /* noop */ }
     if(currentSheet === name){
       outbox = [];
@@ -2147,7 +2234,7 @@
     // Sweep any per-row remark drafts for this branch — they reference
     // row numbers that no longer exist on the sheet after a clear.
     try{
-      const draftPrefix = 'nicho_remark_draft_v1:' + API_URL + ':' + name + ':';
+      const draftPrefix = 'aa_remark_draft_v1:' + API_URL + ':' + name + ':';
       const staleKeys = [];
       for(let i = 0; i < localStorage.length; i++){
         const k = localStorage.key(i);
@@ -2860,7 +2947,7 @@
   // on boot, while a fresh copy is quietly fetched in the background and
   // swapped in the moment it arrives. The only thing that still waits on
   // the network is the very first load on a given browser/device.
-  const LOCAL_CACHE_PREFIX = 'nicho_cache_v1:';
+  const LOCAL_CACHE_PREFIX = 'aa_cache_v1:';
 
   function localCacheKey_(){
     return LOCAL_CACHE_PREFIX + API_URL + ':' + currentSheet;
@@ -3245,7 +3332,7 @@
   // customer's modal is opened, and cleared once the remark is actually
   // saved to the sheet (or the user explicitly discards it).
   function draftKey_(row){
-    return 'nicho_remark_draft_v1:' + API_URL + ':' + currentSheet + ':' + (row == null ? 'new' : row);
+    return 'aa_remark_draft_v1:' + API_URL + ':' + currentSheet + ':' + (row == null ? 'new' : row);
   }
 
   function saveDraft_(row, text){

@@ -87,7 +87,9 @@
 
   /* Toolbar — sits as its own plate above the record stack */
   .toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 18px;margin-bottom:20px;box-shadow:var(--shadow);}
-  .toolbar .left, .toolbar .right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .toolbar .left{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .toolbar .right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .filter-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 
   .input, select{border:1px solid #D7DCF0;background:#F8F9FD;border-radius:9px;padding:9px 12px;font-size:13px;color:var(--text);outline:none;transition:border-color .15s, box-shadow .15s;font-family:inherit;}
   .input{min-width:230px;}
@@ -210,7 +212,8 @@
   .mark-popover.open{display:flex;}
 
   /* ---- View mode switch (Full details / Compact / Names only) ---- */
-  .view-switch{position:relative;}
+  .view-switch{position:relative;display:flex;}
+  #viewModeBtn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .view-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:200;display:none;flex-direction:column;gap:1px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-md);padding:6px;min-width:200px;}
   .view-menu.open{display:flex;}
   .view-option{display:flex;flex-direction:column;align-items:flex-start;gap:1px;border:none;background:none;border-radius:9px;padding:8px 10px;cursor:pointer;text-align:left;width:100%;touch-action:manipulation;transition:background .12s ease;}
@@ -227,6 +230,22 @@
   .rec-list.view-minimal .rec-remarks{display:none;}
   .rec-list.view-minimal .rec{padding-top:12px;padding-bottom:12px;}
   .rec-list.view-minimal .rec-top{margin-bottom:0;padding-bottom:0;border-bottom:none;}
+
+  /* ---- Multi-select / bulk delete ---- */
+  .bulk-bar{display:flex;align-items:center;gap:14px;padding:11px 18px;border-bottom:1px solid var(--line);background:#F8F9FD;font-size:12.5px;color:var(--text);flex-wrap:wrap;border-radius:var(--radius) var(--radius) 0 0;}
+  .bulk-select-all{display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;user-select:none;}
+  .bulk-select-all input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer;}
+  .bulk-count{color:var(--muted);font-weight:600;}
+  .bulk-actions{margin-left:auto;display:flex;gap:8px;}
+  .btn.danger{background:#FDECEB;border-color:#F3B7B0;color:#B42318;}
+  .btn.danger:hover{background:#FBDEDB;}
+  .btn:disabled{opacity:.45;cursor:not-allowed;}
+  .btn:disabled:hover{background:#fff;}
+  .btn.danger:disabled:hover{background:#FDECEB;}
+  .row-check{display:flex;align-items:center;padding-right:2px;flex-shrink:0;}
+  .row-check input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer;margin:0;}
+  .rec.is-selected{border-color:var(--accent);box-shadow:0 0 0 2px rgba(42,61,154,.15);}
+  .rec.is-selected::before{background:var(--accent);}
   .mark-option{display:flex;align-items:center;gap:10px;border:none;background:none;border-radius:9px;padding:8px 9px;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--text);text-align:left;width:100%;touch-action:manipulation;transition:background .12s ease;}
   .mark-option:hover{background:#F4F5FB;}
   .mark-option.active{background:var(--accent-soft);}
@@ -424,15 +443,16 @@
     .sync-pill{font-size:10px;padding:5px 10px;flex-wrap:wrap;row-gap:4px;}
     #pendingWrap{white-space:normal;}
 
-    .toolbar{padding:12px;gap:10px;}
-    .toolbar .left, .toolbar .right{width:100%;}
-    .toolbar .left{order:2;}
-    .toolbar .right{order:1;}
-    .toolbar .right{flex-wrap:wrap;}
-    .input{min-width:0;width:100%;flex:1 1 100%;}
-    select{min-width:0;flex:1 1 calc(50% - 5px);}
-    .toolbar .left{flex-wrap:wrap;}
-    .toolbar .btn{flex:1 1 auto;}
+    .toolbar{padding:12px 0 12px 12px;gap:0;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+    .toolbar .left, .toolbar .right{width:auto;flex-wrap:nowrap;flex-shrink:0;}
+    .toolbar .left{order:1;}
+    .toolbar .right{order:2;padding-right:12px;}
+    .toolbar .btn, .toolbar .input, .toolbar select, .toolbar .view-switch, .filter-row{flex:0 0 auto;}
+    .toolbar .input{min-width:200px;width:200px;}
+    .filter-row{display:flex;flex-wrap:nowrap;}
+    .filter-row select{min-width:130px;}
+
+    .view-menu{left:auto;right:0;}
 
     .rec-list{padding:10px;gap:10px;}
     .rec{padding:14px 14px 14px 16px;}
@@ -516,39 +536,52 @@
           <button class="btn" onclick="printCustomers()" title="Print the customer list currently shown for this branch">🖨 Print</button>
         </div>
         <div class="right">
-          <div class="view-switch">
-            <button class="btn" id="viewModeBtn" onclick="toggleViewMenu_(event)" title="Choose how much detail each customer card shows">👁 Full details</button>
-            <div class="view-menu" id="viewMenu">
-              <button class="view-option" data-mode="full" data-act="view-set">
-                <span class="vo-title">Full details</span>
-                <span class="vo-sub">Name, all fields &amp; remarks</span>
-              </button>
-              <button class="view-option" data-mode="compact" data-act="view-set">
-                <span class="vo-title">Compact</span>
-                <span class="vo-sub">Name &amp; fields, remarks hidden</span>
-              </button>
-              <button class="view-option" data-mode="minimal" data-act="view-set">
-                <span class="vo-title">Name only</span>
-                <span class="vo-sub">Just name &amp; status</span>
-              </button>
-            </div>
-          </div>
           <input class="input" id="searchBox" placeholder="Search customer, model, engine no...">
-          <select id="statusFilter">
-            <option value="">All statuses</option>
-            <option value="OD">Overdue (OD)</option>
-            <option value="DEL">Delinquent (DEL)</option>
-            <option value="RSTR">Restructured (RSTR)</option>
-          </select>
-          <select id="remarkFilter">
-            <option value="">All remarks</option>
-            <option value="pending">No remarks yet</option>
-            <option value="done">Has remarks</option>
-          </select>
+          <div class="filter-row">
+            <div class="view-switch">
+              <button class="btn" id="viewModeBtn" onclick="toggleViewMenu_(event)" title="Choose how much detail each customer card shows">👁 Full details</button>
+              <div class="view-menu" id="viewMenu">
+                <button class="view-option" data-mode="full" data-act="view-set">
+                  <span class="vo-title">Full details</span>
+                  <span class="vo-sub">Name, all fields &amp; remarks</span>
+                </button>
+                <button class="view-option" data-mode="compact" data-act="view-set">
+                  <span class="vo-title">Compact</span>
+                  <span class="vo-sub">Name &amp; fields, remarks hidden</span>
+                </button>
+                <button class="view-option" data-mode="minimal" data-act="view-set">
+                  <span class="vo-title">Name only</span>
+                  <span class="vo-sub">Just name &amp; status</span>
+                </button>
+              </div>
+            </div>
+            <select id="statusFilter">
+              <option value="">All statuses</option>
+              <option value="OD">Overdue (OD)</option>
+              <option value="DEL">Delinquent (DEL)</option>
+              <option value="RSTR">Restructured (RSTR)</option>
+            </select>
+            <select id="remarkFilter">
+              <option value="">All remarks</option>
+              <option value="pending">No remarks yet</option>
+              <option value="done">Has remarks</option>
+            </select>
+          </div>
         </div>
       </div>
 
       <div class="card">
+        <div class="bulk-bar" id="bulkBar">
+          <label class="bulk-select-all">
+            <input type="checkbox" id="selectAllBox" onchange="toggleSelectAll_(this.checked)">
+            <span>Select all shown</span>
+          </label>
+          <span class="bulk-count" id="bulkCountLabel">No accounts selected</span>
+          <div class="bulk-actions">
+            <button class="btn" id="bulkClearBtn" onclick="clearSelection_()" disabled>Clear</button>
+            <button class="btn danger" id="bulkDeleteBtn" onclick="deleteSelected_()" disabled>🗑 Delete selected</button>
+          </div>
+        </div>
         <div class="table-wrap">
           <div class="rec-list" id="tableBody"></div>
           <div class="mark-popover" id="markPopover">
@@ -728,6 +761,105 @@
     if(!e.target.closest('.view-switch')) closeViewMenu_();
   });
   loadViewMode_();
+
+  // ---- Multi-select / bulk delete ---------------------------------------
+  // Selection is purely a UI/session concern (not persisted, not part of
+  // getFilteredCustomers()), so switching branches, filters, or the view
+  // mode never has to reconcile it against server state — it's just a Set
+  // of row numbers that render() re-syncs onto checkboxes after every draw.
+  let selectedRows = new Set();
+
+  function getSelectableFiltered_(){
+    // Rows already queued for deletion can't be selected for deletion again.
+    return getFilteredCustomers().filter(c => !c._pendingDelete);
+  }
+
+  function updateBulkBar_(){
+    const filtered = getSelectableFiltered_();
+    const selectedInView = filtered.filter(c => selectedRows.has(c.row)).length;
+    const total = selectedRows.size;
+
+    document.getElementById('bulkCountLabel').textContent =
+      total ? total + ' selected' : 'No accounts selected';
+
+    const allBox = document.getElementById('selectAllBox');
+    allBox.checked = filtered.length > 0 && selectedInView === filtered.length;
+    allBox.indeterminate = selectedInView > 0 && selectedInView < filtered.length;
+    allBox.disabled = filtered.length === 0;
+
+    document.getElementById('bulkDeleteBtn').disabled = total === 0;
+    document.getElementById('bulkClearBtn').disabled = total === 0;
+  }
+
+  function toggleSelectAll_(checked){
+    const filtered = getSelectableFiltered_();
+    filtered.forEach(c=>{
+      if(checked) selectedRows.add(c.row);
+      else selectedRows.delete(c.row);
+    });
+    render();
+  }
+
+  function clearSelection_(){
+    if(!selectedRows.size) return;
+    selectedRows.clear();
+    render();
+  }
+
+  // Sequential on purpose: the backend already serializes writes with its
+  // own lock (withLock_ in Code.gs), so firing every delete at once would
+  // just have them queue up server-side anyway — going one at a time here
+  // lets the button show live progress and lets us report a partial
+  // success (e.g. "8 deleted, 1 failed") instead of an all-or-nothing call.
+  async function deleteSelected_(){
+    const rows = Array.from(selectedRows).filter(r =>
+      customers.some(c => c.row === r && !c._pendingDelete)
+    );
+    if(!rows.length) return;
+
+    const names = rows.map(r=>{
+      const c = customers.find(x => x.row === r);
+      return c ? c.customer : ('row ' + r);
+    });
+    const preview = names.slice(0, 5).join(', ') + (names.length > 5 ? ', +' + (names.length - 5) + ' more' : '');
+    const label = rows.length === 1 ? 'this customer' : ('these ' + rows.length + ' customers');
+    if(!confirm('Delete ' + label + '? (' + preview + ') This removes each customer, its balances, and all its remarks. This cannot be undone.')) return;
+
+    const btn = document.getElementById('bulkDeleteBtn');
+    const originalLabel = btn.textContent;
+    btn.disabled = true;
+    document.getElementById('bulkClearBtn').disabled = true;
+
+    let done = 0, failed = 0;
+    for(const row of rows){
+      btn.textContent = 'Deleting ' + (done + failed + 1) + '/' + rows.length + '…';
+      try{
+        await queueOrSend_({ id: genId_(), kind: 'delete', row: row, status: 'pending' });
+        clearDraft_(row);
+        selectedRows.delete(row);
+        done++;
+      }catch(err){
+        failed++;
+      }
+    }
+
+    btn.textContent = originalLabel;
+    render();
+    toast(failed
+      ? (done + ' deleted, ' + failed + ' failed — check your connection and try again.')
+      : (done + ' customer' + (done > 1 ? 's' : '') + ' deleted.'));
+  }
+
+  document.getElementById('tableBody').addEventListener('change', (e)=>{
+    const cb = e.target.closest('.row-check-box');
+    if(!cb) return;
+    const row = Number(cb.dataset.row);
+    if(cb.checked) selectedRows.add(row);
+    else selectedRows.delete(row);
+    const rec = cb.closest('.rec');
+    if(rec) rec.classList.toggle('is-selected', cb.checked);
+    updateBulkBar_();
+  });
 
   let markPopoverRow = null; // which card's mark button opened the popover, or null when closed
 
@@ -3177,6 +3309,9 @@
 
       const html = `<div class="${recClass}" data-row="${c.row}">
         <div class="rec-top">
+          <label class="row-check" onclick="event.stopPropagation()">
+            <input type="checkbox" class="row-check-box" data-row="${c.row}">
+          </label>
           <div class="rec-id">
             <div class="cust-name">${escapeHtml(c.customer)}</div>
             <span class="badge ${g}">${escapeHtml(c.customerStatus || '—')}</span>
@@ -3201,6 +3336,20 @@
 
     // Single DOM write avoids a reflow per row.
     document.getElementById('tableBody').innerHTML = parts.join('');
+
+    // Checkbox "checked" state is intentionally NOT part of rowSignature_/
+    // the per-row HTML cache above (selecting/deselecting shouldn't force
+    // every other field to be considered "changed"), so it's synced here
+    // as a separate, cheap pass after every render — cached or freshly
+    // built rows both end up reflecting the current selection.
+    document.querySelectorAll('#tableBody .row-check-box').forEach(cb=>{
+      const row = Number(cb.dataset.row);
+      const isSel = selectedRows.has(row);
+      cb.checked = isSel;
+      const rec = cb.closest('.rec');
+      if(rec) rec.classList.toggle('is-selected', isSel);
+    });
+    updateBulkBar_();
 
     // Drop cache entries for rows that no longer exist at all (deleted,
     // or a synced-away temp row) so the Map doesn't grow unbounded over a

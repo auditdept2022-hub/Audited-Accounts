@@ -222,6 +222,23 @@
   .view-option .vo-title{font-size:12.5px;font-weight:700;color:var(--text);}
   .view-option .vo-sub{font-size:10.5px;color:var(--muted);}
 
+  /* Status filter — multi-select dropdown (checkbox list), same shell as view-switch */
+  .status-switch{position:relative;display:flex;}
+  .status-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:200;display:none;flex-direction:column;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-md);padding:8px;min-width:220px;max-width:280px;}
+  .status-menu.open{display:flex;}
+  .status-menu-actions{display:flex;align-items:center;justify-content:space-between;padding:2px 6px 8px;margin-bottom:6px;border-bottom:1px solid var(--line);}
+  .status-menu-actions span{font-size:10.5px;color:var(--muted);letter-spacing:.4px;text-transform:uppercase;font-weight:600;}
+  .status-menu-links{display:flex;gap:10px;}
+  .status-menu-link{background:none;border:none;color:var(--accent);font-size:11.5px;font-weight:700;cursor:pointer;padding:2px;}
+  .status-menu-link:hover{text-decoration:underline;}
+  .status-menu-list{display:flex;flex-direction:column;gap:1px;overflow-y:auto;max-height:280px;}
+  .status-option{display:flex;align-items:center;gap:9px;border:none;background:none;border-radius:9px;padding:7px 8px;cursor:pointer;text-align:left;width:100%;touch-action:manipulation;transition:background .12s ease;}
+  .status-option:hover{background:#F4F5FB;}
+  .status-option.active{background:var(--accent-soft);}
+  .status-option input[type=checkbox]{pointer-events:none;width:15px;height:15px;accent-color:var(--accent);flex:0 0 auto;}
+  .status-option .so-label{font-size:12.5px;font-weight:600;color:var(--text);}
+  .status-menu-empty{font-size:12px;color:var(--muted);padding:10px 8px;text-align:center;}
+
   /* Compact: hide the remarks block, keep the fact grid */
   .rec-list.view-compact .rec-remarks{display:none;}
 
@@ -447,12 +464,12 @@
     .toolbar .left, .toolbar .right{width:auto;flex-wrap:nowrap;flex-shrink:0;}
     .toolbar .left{order:1;}
     .toolbar .right{order:2;padding-right:12px;}
-    .toolbar .btn, .toolbar .input, .toolbar select, .toolbar .view-switch, .filter-row{flex:0 0 auto;}
+    .toolbar .btn, .toolbar .input, .toolbar select, .toolbar .view-switch, .toolbar .status-switch, .filter-row{flex:0 0 auto;}
     .toolbar .input{min-width:200px;width:200px;}
     .filter-row{display:flex;flex-wrap:nowrap;}
     .filter-row select{min-width:130px;}
 
-    .view-menu{left:auto;right:0;}
+    .view-menu, .status-menu{left:auto;right:0;}
 
     .rec-list{padding:10px;gap:10px;}
     .rec{padding:14px 14px 14px 16px;}
@@ -555,9 +572,19 @@
                 </button>
               </div>
             </div>
-            <select id="statusFilter">
-              <option value="">All statuses</option>
-            </select>
+            <div class="status-switch" id="statusSwitch">
+              <button class="btn" id="statusFilterBtn" onclick="toggleStatusMenu_(event)" title="Filter by one or more statuses">🏷 All statuses</button>
+              <div class="status-menu" id="statusMenu">
+                <div class="status-menu-actions">
+                  <span>Statuses</span>
+                  <div class="status-menu-links">
+                    <button type="button" class="status-menu-link" data-act="status-all">All</button>
+                    <button type="button" class="status-menu-link" data-act="status-clear">Clear</button>
+                  </div>
+                </div>
+                <div class="status-menu-list" id="statusMenuList"></div>
+              </div>
+            </div>
             <select id="remarkFilter">
               <option value="">All remarks</option>
               <option value="pending">No remarks yet</option>
@@ -3210,31 +3237,116 @@
   // your team actually uses is always filterable — nothing hardcoded.
   let lastStatusOptionsSig_ = null;
   const STATUS_BLANK_VALUE = '\u0000__blank__';
+  // Multi-select: empty Set means "All statuses" (no filtering). Otherwise
+  // only rows whose (trimmed) customerStatus — or STATUS_BLANK_VALUE for
+  // blank statuses — is in the set are shown. Lets you tick e.g. OD + DEL
+  // together instead of being limited to one status at a time.
+  const selectedStatuses_ = new Set();
 
   function populateStatusFilter_(){
-    const sel = document.getElementById('statusFilter');
+    const listEl = document.getElementById('statusMenuList');
     const distinct = Array.from(new Set(customers.map(c => str_(c.customerStatus).trim())))
       .filter(Boolean)
       .sort((a, b) => a.localeCompare(b));
     const hasBlank = customers.some(c => !str_(c.customerStatus).trim());
     const sig = distinct.join('\u0001') + '\u0002' + (hasBlank ? 1 : 0);
-    if(sig === lastStatusOptionsSig_) return; // no new/removed statuses — leave the dropdown alone
+    if(sig === lastStatusOptionsSig_){ updateStatusFilterBtn_(); return; } // no new/removed statuses — leave the menu alone
     lastStatusOptionsSig_ = sig;
 
-    const current = sel.value;
-    let html = '<option value="">All statuses</option>';
-    distinct.forEach(s=>{
-      html += `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`;
-    });
-    if(hasBlank) html += `<option value="${STATUS_BLANK_VALUE}">(No status)</option>`;
-    sel.innerHTML = html;
+    // Drop any previously-selected status that no longer exists, instead
+    // of silently filtering the list down to nothing.
+    const validValues = new Set(distinct);
+    if(hasBlank) validValues.add(STATUS_BLANK_VALUE);
+    Array.from(selectedStatuses_).forEach(v=>{ if(!validValues.has(v)) selectedStatuses_.delete(v); });
 
-    // Keep whatever was selected if it still exists among the new
-    // options; otherwise fall back to "All statuses" instead of silently
-    // filtering the list down to nothing.
-    const stillValid = current === '' || current === STATUS_BLANK_VALUE ? true : distinct.includes(current);
-    sel.value = stillValid ? current : '';
+    let html = '';
+    if(!distinct.length && !hasBlank){
+      html = '<div class="status-menu-empty">No statuses yet</div>';
+    } else {
+      distinct.forEach(s=>{
+        html += `<button type="button" class="status-option" data-value="${escapeHtml(s)}">` +
+          `<input type="checkbox"><span class="so-label">${escapeHtml(s)}</span></button>`;
+      });
+      if(hasBlank){
+        html += `<button type="button" class="status-option" data-value="${escapeHtml(STATUS_BLANK_VALUE)}">` +
+          `<input type="checkbox"><span class="so-label">(No status)</span></button>`;
+      }
+    }
+    listEl.innerHTML = html;
+    syncStatusCheckboxes_();
+    updateStatusFilterBtn_();
   }
+
+  // Reflect selectedStatuses_ onto the checkbox controls already in the DOM.
+  function syncStatusCheckboxes_(){
+    document.querySelectorAll('#statusMenuList .status-option').forEach(opt=>{
+      const on = selectedStatuses_.has(opt.dataset.value);
+      opt.classList.toggle('active', on);
+      const cb = opt.querySelector('input[type=checkbox]');
+      if(cb) cb.checked = on;
+    });
+  }
+
+  function updateStatusFilterBtn_(){
+    const btn = document.getElementById('statusFilterBtn');
+    if(!btn) return;
+    const n = selectedStatuses_.size;
+    if(n === 0){
+      btn.textContent = '🏷 All statuses';
+    } else if(n === 1){
+      const v = Array.from(selectedStatuses_)[0];
+      btn.textContent = '🏷 ' + (v === STATUS_BLANK_VALUE ? '(No status)' : v);
+    } else {
+      btn.textContent = '🏷 ' + n + ' statuses';
+    }
+  }
+
+  function toggleStatusOption_(value){
+    if(selectedStatuses_.has(value)) selectedStatuses_.delete(value);
+    else selectedStatuses_.add(value);
+    syncStatusCheckboxes_();
+    updateStatusFilterBtn_();
+    render();
+  }
+
+  function setAllStatuses_(){
+    selectedStatuses_.clear();
+    document.querySelectorAll('#statusMenuList .status-option').forEach(opt=>{
+      selectedStatuses_.add(opt.dataset.value);
+    });
+    syncStatusCheckboxes_();
+    updateStatusFilterBtn_();
+    render();
+  }
+
+  function clearStatusFilter_(){
+    selectedStatuses_.clear();
+    syncStatusCheckboxes_();
+    updateStatusFilterBtn_();
+    render();
+  }
+
+  function toggleStatusMenu_(e){
+    if(e) e.stopPropagation();
+    document.getElementById('statusMenu').classList.toggle('open');
+  }
+  function closeStatusMenu_(){
+    document.getElementById('statusMenu').classList.remove('open');
+  }
+  document.getElementById('statusMenu').addEventListener('click', (e)=>{
+    e.stopPropagation();
+    const actBtn = e.target.closest('[data-act]');
+    if(actBtn){
+      if(actBtn.dataset.act === 'status-all') setAllStatuses_();
+      else if(actBtn.dataset.act === 'status-clear') clearStatusFilter_();
+      return;
+    }
+    const opt = e.target.closest('.status-option');
+    if(opt) toggleStatusOption_(opt.dataset.value);
+  });
+  document.addEventListener('click', (e)=>{
+    if(!e.target.closest('.status-switch')) closeStatusMenu_();
+  });
 
   function fmtMoney(n){
     n = Number(n) || 0;
@@ -3264,7 +3376,6 @@
 
   function getFilteredCustomers(){
     const q = document.getElementById('searchBox').value.trim().toLowerCase();
-    const statusF = document.getElementById('statusFilter').value;
     const remarkF = document.getElementById('remarkFilter').value;
 
     return customers.filter(c=>{
@@ -3273,10 +3384,10 @@
         const hay = (c.customer + ' ' + c.model + ' ' + c.engineNo).toLowerCase();
         if(hay.indexOf(q) === -1) return false;
       }
-      if(statusF === STATUS_BLANK_VALUE){
-        if(str_(c.customerStatus).trim()) return false;
-      } else if(statusF && str_(c.customerStatus).trim() !== statusF){
-        return false;
+      if(selectedStatuses_.size){
+        const cs = str_(c.customerStatus).trim();
+        const key = cs ? cs : STATUS_BLANK_VALUE;
+        if(!selectedStatuses_.has(key)) return false;
       }
       const hasRemark = c.auditorRemarks && str_(c.auditorRemarks).toUpperCase() !== 'NO REMARKS';
       if(remarkF === 'pending' && hasRemark) return false;
@@ -3748,7 +3859,6 @@
     clearTimeout(searchDebounce);
     searchDebounce = setTimeout(render, 150);
   });
-  document.getElementById('statusFilter').addEventListener('change', render);
   document.getElementById('remarkFilter').addEventListener('change', render);
   document.getElementById('overlay').addEventListener('click', e=>{ if(e.target.id==='overlay') closeModal(); });
   document.getElementById('profileOverlay').addEventListener('click', e=>{ if(e.target.id==='profileOverlay') closeProfileMenu(); });

@@ -162,18 +162,30 @@
     .icon-btn{width:34px;height:34px;font-size:14px;}
   }
 
-  /* Mark button — a small round toggle on the right of each card that
+  /* Mark button — a small squircle toggle on the right of each card that
      opens the color popover. Unlike .row-actions (edit button, hidden
      until hover) this stays visible at all times, since it's a status
-     indicator as much as a control. */
-  .mark-btn{border:2px solid #D9DDF0;background:#fff;border-radius:50%;width:22px;height:22px;padding:0;cursor:pointer;flex-shrink:0;touch-action:manipulation;transition:transform .08s, border-color .15s;}
-  .mark-btn:hover{transform:scale(1.08);border-color:#B9C0E4;}
-  .mark-btn.mark-btn-green{background:#33B872;border-color:#1F9D5B;}
-  .mark-btn.mark-btn-yellow{background:#F0C22B;border-color:#D9A400;}
-  .mark-btn.mark-btn-red{background:#E4544A;border-color:#D93636;}
-  .mark-btn.mark-btn-sky{background:#3FAADD;border-color:#2196C9;}
+     indicator as much as a control. Unmarked = outlined flag on a plain
+     tile; marked = the flag fills solid on a colored, gently glossy tile
+     so the state reads at a glance without needing to open the popover. */
+  .mark-btn{
+    border:1.5px solid #D9DDF0;background:#fff;border-radius:10px;
+    width:30px;height:30px;padding:0;cursor:pointer;flex-shrink:0;
+    display:inline-flex;align-items:center;justify-content:center;
+    color:#AFB4CF;touch-action:manipulation;
+    box-shadow:0 1px 2px rgba(16,22,60,.05);
+    transition:transform .12s ease, box-shadow .15s ease, border-color .15s ease, background .15s ease, color .15s ease;
+  }
+  .mark-btn svg{width:14px;height:14px;display:block;}
+  .mark-btn:hover{transform:translateY(-1px);border-color:#B9C0E4;color:#7E86BC;box-shadow:0 4px 10px rgba(16,22,60,.10);}
+  .mark-btn:active{transform:translateY(0) scale(.94);}
+  .mark-btn.mark-btn-green{background:linear-gradient(160deg,#3FCB88,#1C9A57);border-color:#1c8a50;color:#fff;box-shadow:0 3px 9px rgba(31,157,91,.35);}
+  .mark-btn.mark-btn-yellow{background:linear-gradient(160deg,#F7D157,#DFA800);border-color:#c79300;color:#57420A;box-shadow:0 3px 9px rgba(223,168,0,.32);}
+  .mark-btn.mark-btn-red{background:linear-gradient(160deg,#EF6E64,#D93636);border-color:#c22f2f;color:#fff;box-shadow:0 3px 9px rgba(217,54,54,.32);}
+  .mark-btn.mark-btn-sky{background:linear-gradient(160deg,#5CC0EA,#2196C9);border-color:#1c84b3;color:#fff;box-shadow:0 3px 9px rgba(33,150,201,.32);}
   @media (hover:none), (pointer:coarse){
-    .mark-btn{width:28px;height:28px;}
+    .mark-btn{width:34px;height:34px;}
+    .mark-btn svg{width:15px;height:15px;}
   }
 
   /* Whole-card highlight once a color is picked — tints the card body,
@@ -188,17 +200,24 @@
   .rec.marked-sky::before{background:#2196C9;}
 
   /* Floating color popover — one shared instance, positioned next to
-     whichever card's mark button was clicked. */
-  .mark-popover{position:fixed;z-index:200;display:none;gap:7px;align-items:center;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-md);padding:9px 10px;}
+     whichever card's mark button was clicked. Redesigned from a bare row
+     of colored dots into a proper labeled menu: swatch + name + a
+     checkmark on whichever one is currently active, so it's clear what
+     each color even means without having to memorize it. */
+  .mark-popover{position:fixed;z-index:200;display:none;flex-direction:column;gap:1px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-md);padding:6px;min-width:172px;}
   .mark-popover.open{display:flex;}
-  .mark-swatch{width:24px;height:24px;border-radius:50%;border:2px solid rgba(16,22,60,.10);cursor:pointer;padding:0;touch-action:manipulation;transition:transform .08s;display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:#fff;font-weight:700;}
-  .mark-swatch:hover{transform:scale(1.1);}
+  .mark-option{display:flex;align-items:center;gap:10px;border:none;background:none;border-radius:9px;padding:8px 9px;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--text);text-align:left;width:100%;touch-action:manipulation;transition:background .12s ease;}
+  .mark-option:hover{background:#F4F5FB;}
+  .mark-option.active{background:var(--accent-soft);}
+  .mark-option.clear{border-top:1px solid var(--line);margin-top:4px;padding-top:9px;color:var(--muted);}
+  .mark-swatch{width:17px;height:17px;border-radius:6px;flex-shrink:0;border:1.5px solid rgba(16,22,60,.10);}
   .mark-swatch[data-color="green"]{background:#33B872;}
   .mark-swatch[data-color="yellow"]{background:#F0C22B;}
   .mark-swatch[data-color="red"]{background:#E4544A;}
   .mark-swatch[data-color="sky"]{background:#3FAADD;}
-  .mark-swatch[data-color=""]{background:#fff;border-color:#D9DDF0;color:var(--muted);}
-  .mark-swatch.active{box-shadow:0 0 0 2px #fff, 0 0 0 4px var(--accent);}
+  .mark-swatch[data-color=""]{background:#fff;}
+  .mark-option .check{margin-left:auto;color:var(--accent);font-weight:800;font-size:12px;opacity:0;flex-shrink:0;}
+  .mark-option.active .check{opacity:1;}
 
   /* Modal */
   .overlay{position:fixed;inset:0;background:rgba(8,12,34,.58);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;z-index:50;backdrop-filter:blur(2px);}
@@ -492,11 +511,11 @@
         <div class="table-wrap">
           <div class="rec-list" id="tableBody"></div>
           <div class="mark-popover" id="markPopover">
-            <button class="mark-swatch" data-color="green" title="Green" data-act="mark-set"></button>
-            <button class="mark-swatch" data-color="yellow" title="Yellow" data-act="mark-set"></button>
-            <button class="mark-swatch" data-color="red" title="Red" data-act="mark-set"></button>
-            <button class="mark-swatch" data-color="sky" title="Sky blue" data-act="mark-set"></button>
-            <button class="mark-swatch" data-color="" title="Clear" data-act="mark-set">✕</button>
+            <button class="mark-option" data-color="green" data-act="mark-set"><span class="mark-swatch" data-color="green"></span><span>Green</span><span class="check">✓</span></button>
+            <button class="mark-option" data-color="yellow" data-act="mark-set"><span class="mark-swatch" data-color="yellow"></span><span>Yellow</span><span class="check">✓</span></button>
+            <button class="mark-option" data-color="red" data-act="mark-set"><span class="mark-swatch" data-color="red"></span><span>Red</span><span class="check">✓</span></button>
+            <button class="mark-option" data-color="sky" data-act="mark-set"><span class="mark-swatch" data-color="sky"></span><span>Sky blue</span><span class="check">✓</span></button>
+            <button class="mark-option clear" data-color="" data-act="mark-set"><span class="mark-swatch" data-color=""></span><span>Clear mark</span><span class="check">✓</span></button>
           </div>
         </div>
         <div class="empty-state" id="emptyState" style="display:none;">
@@ -627,8 +646,8 @@
     const pop = document.getElementById('markPopover');
     const c = customers.find(x => x.row === row);
     const current = (c && c.marker) || '';
-    pop.querySelectorAll('.mark-swatch').forEach(sw => {
-      sw.classList.toggle('active', sw.dataset.color === current);
+    pop.querySelectorAll('.mark-option').forEach(opt => {
+      opt.classList.toggle('active', opt.dataset.color === current);
     });
     pop.classList.add('open');
     // Position under the button, nudged left if it would overflow the
@@ -640,28 +659,40 @@
     pop.style.left = left + 'px';
   }
 
-  // Optimistic: paints the new color immediately and saves it in the
-  // background, same pattern as other quick single-field edits. On
-  // failure it reverts the color and lets the person know so a marker
-  // pick can't silently fail to sync (which is exactly what happened
-  // with the old device-only version of this feature).
+  // Goes through the exact same queueOrSend_ path every other edit uses:
+  // tries to save live first, and — if that fails because there's no
+  // connection (not because of a real server error) — queues it in the
+  // offline outbox instead of giving up. The outbox is what makes "set
+  // it on the phone while offline, it syncs to the PC once back online"
+  // work: it's persisted to localStorage, retried automatically every
+  // 20s once navigator.onLine flips back to true, and merged into the
+  // list on every subsequent load so it isn't lost or overwritten by a
+  // background refresh in the meantime.
   async function setMark_(row, color){
     const c = customers.find(x => x.row === row);
     if(!c) return;
     const prev = c.marker || '';
     if(prev === color){ closeMarkPopover_(); return; }
 
-    c.marker = color;
     closeMarkPopover_();
-    render();
-    saveLocalCache_(customers);
+
+    const item = {
+      id: genId_(),
+      kind: 'update',
+      row: row,
+      fields: { marker: color },
+      remark: null,
+      auditor: null,
+      status: 'pending',
+      // Only the marker field is being touched, so only it needs to be
+      // snapshotted for drift detection at sync time.
+      snapshot: { marker: prev }
+    };
 
     try{
-      await apiCallJson_('updateCustomer', { row: row, fields: { marker: color } });
+      const result = await queueOrSend_(item);
+      if(result && result.queued) toast('Offline — marker will sync automatically once you\'re back online.');
     }catch(err){
-      c.marker = prev;
-      render();
-      saveLocalCache_(customers);
       toast('Could not save the color marker: ' + err.message);
     }
   }
@@ -2990,7 +3021,9 @@
             ${pendingTag}
           </div>
           <div class="rec-right">
-            <button class="${markBtnClass}" title="${markBtnTitle}" data-act="mark" data-row="${c.row}"></button>
+            <button class="${markBtnClass}" title="${markBtnTitle}" data-act="mark" data-row="${c.row}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4"/><path d="M5 5h12l-2.6 4.2L17 13H5"/></svg>
+            </button>
             <div class="row-actions">
               <button class="icon-btn" title="Edit" data-act="edit" data-row="${c.row}">✎</button>
             </div>

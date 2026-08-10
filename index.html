@@ -428,6 +428,8 @@
           <input type="file" id="importBalancesInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
           <button class="btn" onclick="document.getElementById('importRemarksInput').click()" title="Import CSV or Excel (.xls/.xlsx) files. Matches customers by name (and engine no. when the file has one). Takes ONLY the customer name and a Remarks/Auditor Remarks column and adds each one as a new line directly into Previous Audit Remarks (no date stamp). The current Auditor Remarks and Date of Audit are never touched. Any balance columns in the file are ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Remarks</button>
           <input type="file" id="importRemarksInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
+          <button class="btn" onclick="document.getElementById('importAccountsInput').click()" title="Import an STA-style account report (.xls/.xlsx), the kind with grouped sections like &quot;BNEW - OD&quot; instead of a plain status column. Reads Customer, Model, Engine No, Release/Rstr Date, Due Date, Term, MA &amp; Beg Bal, and turns each section header into that row's Customer Status (e.g. section &quot;BNEW - OD&quot; → status &quot;OD - BN&quot;). Existing accounts (matched by name + engine no.) are refreshed with this info; accounts not already on the list are added as new. Due This Month / Payment (Adv) / Penalty Due are always reset to 0 by this import (use Import Balances afterward to fill them in) — Remarks / Date of Audit are never touched.">⇪ Import Accounts</button>
+          <input type="file" id="importAccountsInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
           <span id="importStatus" class="import-status"></span>
           <button class="btn" onclick="exportCSV()" title="Export all customers to CSV">⇩ Export</button>
           <button class="btn" onclick="printCustomers()" title="Print the customer list currently shown for this branch">🖨 Print</button>
@@ -1205,6 +1207,293 @@
     await loadData();
   }
 
+  // ---- Import Accounts ---------------------------------------------------
+  //
+  // A third, independent import flow for a specific report shape: the
+  // "STA"-style ledger export, where rows are grouped under section
+  // headers like "BNEW - OD" / "RSTR - DEL" instead of carrying a plain
+  // Customer Status column, and the due/payment/penalty figures live in
+  // a pair of repeated CU/OD/DEL/TTL blocks plus an "Adv" column rather
+  // than columns literally named "Due This Month" etc. Neither of those
+  // things match FIELD_ALIASES, so the generic parseImportFiles_ /
+  // detectHeaderAndParseRows_ pipeline used by Import Balances / Import
+  // Remarks can't read this layout — this flow has its own bespoke
+  // parser (parseAccountsMatrix_) instead.
+  //
+  // Unlike the other two imports, this one is allowed to ADD new
+  // accounts (via batchCreateCustomer), not just update existing ones —
+  // the whole point is "make the dashboard look exactly like this
+  // report." Matching against the currently loaded list still uses the
+  // same name(+engine no.) rule as the other flows: a match refreshes
+  // that account's customer info / status; no match creates a brand-new
+  // account. Due This Month, Payment (Adv) and Penalty Due are NOT read
+  // from the file at all — that's Import Balances' job — this flow
+  // always resets all three to 0 instead, for both new AND refreshed
+  // accounts, so a re-import never leaves a stale balance sitting there
+  // from before. Run Import Balances right after to fill them back in.
+  // Auditor Remarks, Previous Audit Remarks and Date of Audit are never
+  // written by this flow either — only createCustomer's own
+  // "NO REMARKS" default applies to brand-new rows.
+  //
+  // Accounts that exist on the dashboard but are simply absent from a
+  // given import file are left alone (never deleted) — re-importing a
+  // report that dropped some rows will not remove those customers here.
+
+  // Column header fragments this parser looks for, matched with the same
+  // normHeader_ used elsewhere (so "Acct Type/Status\nCustomer" becomes
+  // "acct type/status customer", etc.) — deliberately loose (substring /
+  // fragment matches) since these reports don't always word things
+  // identically.
+  function findAccountsHeaderRow_(matrix){
+    const maxScan = Math.min(15, matrix.length);
+    for(let r = 0; r < maxScan; r++){
+      const row = matrix[r] || [];
+      const cols = {};
+      const ttlIdxs = [];
+      row.forEach((cell, idx) => {
+        const norm = normHeader_(cell);
+        if(!norm) return;
+        if(cols.customer === undefined && norm.indexOf('customer') !== -1) cols.customer = idx;
+        else if(cols.release === undefined && norm.indexOf('release') !== -1) cols.release = idx;
+        else if(cols.model === undefined && norm === 'model') cols.model = idx;
+        else if(cols.engine === undefined && norm.indexOf('engine') !== -1) cols.engine = idx;
+        else if(cols.dueDate === undefined && norm.indexOf('due') !== -1 && norm.indexOf('date') !== -1) cols.dueDate = idx;
+        else if(cols.term === undefined && norm === 'term') cols.term = idx;
+        else if(cols.ma === undefined && norm === 'ma') cols.ma = idx;
+        else if(cols.begBal === undefined && norm.indexOf('beg') !== -1 && norm.indexOf('bal') !== -1) cols.begBal = idx;
+        else if(norm === 'ttl') ttlIdxs.push(idx);
+        else if(cols.adv === undefined && norm === 'adv') cols.adv = idx;
+      });
+      // Needs a customer column, a beginning-balance column, the "Adv"
+      // (penalty) column, and BOTH repeated TTL columns (due-this-month
+      // total + the second block's total) — that combination is specific
+      // enough to this report shape that it won't misfire on an
+      // ordinary Balances/Remarks file.
+      if(cols.customer !== undefined && cols.begBal !== undefined && cols.adv !== undefined && ttlIdxs.length >= 2){
+        cols.ttl1 = ttlIdxs[0];
+        cols.ttl2 = ttlIdxs[1];
+        return { headerRow: r, cols };
+      }
+    }
+    return null;
+  }
+
+  // "BNEW - OD" -> "OD - BN" (the format this dashboard's Customer
+  // Status column actually uses). Only "BNEW" gets abbreviated to "BN";
+  // other prefixes (RSTR, REPO, ...) pass through unchanged, matching
+  // every section header this format has been seen to use.
+  function deriveStatusFromSection_(sectionText){
+    const parts = String(sectionText).split('-').map(s => s.trim()).filter(Boolean);
+    if(parts.length < 2) return String(sectionText).trim();
+    const prefix = parts[0].toUpperCase();
+    const suffix = parts.slice(1).join(' - ').toUpperCase();
+    return suffix + ' - ' + (prefix === 'BNEW' ? 'BN' : prefix);
+  }
+
+  // Excel's date serial numbers count days since 1899-12-30. Used when a
+  // date cell comes through as a raw number instead of a JS Date (SheetJS
+  // only auto-converts cells that are actually *formatted* as dates).
+  function excelSerialToIsoDate_(n){
+    const d = new Date(Math.round((n - 25569) * 86400 * 1000));
+    const yyyy = d.getUTCFullYear(), mm = String(d.getUTCMonth() + 1).padStart(2, '0'), dd = String(d.getUTCDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  function accountsDateCell_(v){
+    if(v === undefined || v === null || v === '') return '';
+    if(Object.prototype.toString.call(v) === '[object Date]') return Utilities_formatDateLocal_(v);
+    if(typeof v === 'number') return excelSerialToIsoDate_(v);
+    return String(v).trim();
+  }
+
+  // Parses one sheet's matrix into account records, tracking which
+  // section header ("BNEW - OD", ...) each data row currently falls
+  // under. A row counts as a section header when it has a name in the
+  // customer column but every other core column (release date, model,
+  // engine, due date, term, MA, beg bal) is blank on that same row —
+  // that's what "ADV - BN", "OD - BN" etc. look like in the raw sheet.
+  function parseAccountsMatrix_(matrix){
+    const found = findAccountsHeaderRow_(matrix);
+    if(!found) return [];
+    const { headerRow, cols } = found;
+    const coreIdxs = [cols.release, cols.model, cols.engine, cols.dueDate, cols.term, cols.ma, cols.begBal];
+
+    const records = [];
+    let currentStatus = '';
+    for(let r = headerRow + 1; r < matrix.length; r++){
+      const row = matrix[r] || [];
+      const nameCell = row[cols.customer];
+      const name = (nameCell === undefined || nameCell === null) ? '' : String(nameCell).trim();
+      if(!name) continue;
+      if(/^\s*(sub[\s-]?total|grand total|total)\b/i.test(name)) continue;
+
+      const otherBlank = coreIdxs.every(idx => idx === undefined || row[idx] === undefined || row[idx] === null || row[idx] === '');
+      if(otherBlank){
+        currentStatus = deriveStatusFromSection_(name);
+        continue;
+      }
+
+      const begBal = parseNum_(row[cols.begBal]);
+      if(isNaN(begBal)) continue; // doesn't look like a real data row
+
+      const maVal = parseNum_(row[cols.ma]);
+      const ttl1 = parseNum_(row[cols.ttl1]);
+      const adv = parseNum_(row[cols.adv]);
+      const ttl2 = parseNum_(row[cols.ttl2]);
+
+      records.push({
+        customer: name,
+        model: cols.model !== undefined ? String(row[cols.model] == null ? '' : row[cols.model]).trim() : '',
+        engineNo: cols.engine !== undefined ? String(row[cols.engine] == null ? '' : row[cols.engine]).trim() : '',
+        releaseDate: cols.release !== undefined ? accountsDateCell_(row[cols.release]) : '',
+        dueDate: cols.dueDate !== undefined ? String(row[cols.dueDate] == null ? '' : row[cols.dueDate]).trim() : '',
+        term: cols.term !== undefined ? String(row[cols.term] == null ? '' : row[cols.term]).trim() : '',
+        ma: isNaN(maVal) ? 0 : maVal,
+        begBal: begBal,
+        dueThisMonth: isNaN(ttl1) ? 0 : ttl1,
+        penaltyDue: isNaN(adv) ? 0 : adv,
+        paymentAdv: (isNaN(ttl2) ? 0 : ttl2) - (isNaN(adv) ? 0 : adv),
+        customerStatus: currentStatus
+      });
+    }
+    return records;
+  }
+
+  async function parseAccountsFiles_(fileList){
+    const files = Array.from(fileList || []);
+    let allRecords = [];
+    for(const file of files){
+      const ext = (file.name.split('.').pop() || '').toLowerCase();
+      try{
+        let sheets;
+        if(ext === 'xls' || ext === 'xlsx'){
+          if(typeof XLSX === 'undefined'){ toast('Excel support failed to load — try again.'); continue; }
+          sheets = await excelToMatrices_(file);
+        } else if(ext === 'csv'){
+          const text = await readFileAsText_(file);
+          sheets = [{ name: file.name, matrix: csvToMatrix_(text) }];
+        } else {
+          toast(file.name + ': unsupported file type (use .csv, .xls, or .xlsx).');
+          continue;
+        }
+        let fileRecords = [];
+        sheets.forEach(({ matrix }) => { fileRecords = fileRecords.concat(parseAccountsMatrix_(matrix)); });
+        if(!fileRecords.length){
+          toast(file.name + ': doesn\u2019t look like an STA-style account report (couldn\u2019t find the expected columns/sections).');
+          continue;
+        }
+        allRecords = allRecords.concat(fileRecords);
+      }catch(err){
+        toast('Could not read ' + file.name + ': ' + err.message);
+      }
+    }
+    return allRecords;
+  }
+
+  // Splits parsed account records into ones that match an existing
+  // customer (by name, or name+engine when the row has an engine no.,
+  // same rule as matchImportRecords_) vs. ones with no match at all,
+  // which is what makes this flow able to both refresh existing rows
+  // AND add brand-new ones in a single import.
+  function splitAccountsForImport_(allRecords){
+    const nameIndex = {};
+    const compoundIndex = {};
+    customers.forEach(c => {
+      const nameKey = normalizeName_(c.customer);
+      (nameIndex[nameKey] = nameIndex[nameKey] || []).push(c);
+      const engKey = normalizeEngine_(c.engineNo);
+      if(engKey){
+        const key = nameKey + '|' + engKey;
+        (compoundIndex[key] = compoundIndex[key] || []).push(c);
+      }
+    });
+
+    const toUpdate = [];
+    const toCreate = [];
+    let duplicateNameRows = 0;
+
+    allRecords.forEach(rec => {
+      const nameKey = normalizeName_(rec.customer);
+      const engKey = normalizeEngine_(rec.engineNo);
+      let matches = null;
+      if(engKey){
+        matches = compoundIndex[nameKey + '|' + engKey] || null;
+        if(!matches){
+          const byName = nameIndex[nameKey];
+          if(byName && byName.length === 1) matches = byName;
+        }
+      } else {
+        matches = nameIndex[nameKey] || null;
+      }
+
+      // Due This Month / Payment (Adv) / Penalty Due are owned by the
+      // "Import Balances" flow (and manual edits), not this one — so
+      // this import always resets those three to 0 rather than reading
+      // them from the file. New accounts land with 0; existing accounts
+      // get reset to 0 too (instead of keeping a stale leftover balance
+      // from before this import), so the numbers never look "still
+      // there" after an Accounts import. Run Import Balances afterward
+      // to fill them back in with the current period's real figures.
+      const fields = {};
+      ['customer', 'model', 'engineNo', 'releaseDate', 'dueDate', 'term', 'ma', 'begBal', 'customerStatus']
+        .forEach(k => { if(rec[k] !== undefined && rec[k] !== '') fields[k] = rec[k]; });
+      fields.dueThisMonth = 0;
+      fields.paymentAdv = 0;
+      fields.penaltyDue = 0;
+
+      if(matches && matches.length){
+        if(!engKey && matches.length > 1) duplicateNameRows++;
+        matches.forEach(m => toUpdate.push({ row: m.row, fields }));
+      } else {
+        toCreate.push(fields);
+      }
+    });
+
+    return { toUpdate, toCreate, duplicateNameRows };
+  }
+
+  async function handleImportAccountsFiles(fileList){
+    const allRecords = await parseAccountsFiles_(fileList);
+    if(!allRecords.length){ toast('No account rows found to import.'); return; }
+
+    const { toUpdate, toCreate, duplicateNameRows } = splitAccountsForImport_(allRecords);
+    if(!toUpdate.length && !toCreate.length){ toast('Found rows, but nothing usable to import.'); return; }
+
+    const msg = `Found ${allRecords.length} account${allRecords.length === 1 ? '' : 's'} in the file: `
+      + `${toCreate.length} new account${toCreate.length === 1 ? '' : 's'} will be added`
+      + `, ${toUpdate.length} existing account${toUpdate.length === 1 ? '' : 's'} will be refreshed (customer info & status)`
+      + (duplicateNameRows ? `. ${duplicateNameRows} name${duplicateNameRows === 1 ? '' : 's'} had no engine number to disambiguate and matched more than one account — all of them will be updated` : '')
+      + '. Due This Month / Payment (Adv) / Penalty Due will be reset to 0 for all of them (new and existing) — use Import Balances afterward to fill in the current figures. Auditor Remarks / Previous Audit Remarks / Date of Audit are never touched. Accounts on the dashboard that aren\u2019t in this file are left alone (never deleted). Continue?';
+    if(!confirm(msg)) return;
+
+    const total = toCreate.length + toUpdate.length;
+    document.getElementById('importStatus').textContent = `Importing 0 / ${total}\u2026`;
+    toast(`Importing ${total} account${total === 1 ? '' : 's'}\u2026`);
+
+    // New accounts first (batchCreateCustomer), then refreshes to
+    // existing ones (batchUpdateCustomer) — same chunked-with-fallback
+    // helper the other two import flows use, just run twice in sequence
+    // so the progress readout covers both phases.
+    const createResult = await runBatched_(
+      toCreate, 'batchCreateCustomer', 'records',
+      item => item,
+      'createCustomer', item => ({ fields: item }),
+      total, 0
+    );
+    const updateResult = await runBatched_(
+      toUpdate, 'batchUpdateCustomer', 'updates',
+      item => ({ row: item.row, fields: item.fields }),
+      'updateCustomer', item => ({ row: item.row, fields: item.fields }),
+      total, createResult.done
+    );
+
+    const created = createResult.succeeded, updated = updateResult.succeeded;
+    const failed = createResult.failed + updateResult.failed;
+    toast(`Import complete: ${created} added${updated ? ', ' + updated + ' refreshed' : ''}${failed ? ', ' + failed + ' failed' : ''}.`);
+    document.getElementById('importStatus').textContent = '';
+    await loadData();
+  }
+
   function chunkArray_(arr, size){
     const out = [];
     for(let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
@@ -1281,6 +1570,10 @@
   });
   document.getElementById('importRemarksInput').addEventListener('change', (e)=>{
     handleImportRemarksFiles(e.target.files);
+    e.target.value = ''; // allow re-importing the same file(s) later
+  });
+  document.getElementById('importAccountsInput').addEventListener('change', (e)=>{
+    handleImportAccountsFiles(e.target.files);
     e.target.value = ''; // allow re-importing the same file(s) later
   });
 

@@ -121,11 +121,11 @@
   .rec::before{content:'';position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:3px;background:var(--line);transition:background .15s;}
   .rec:hover{box-shadow:var(--shadow-md);border-color:#C9D1EE;transform:translateY(-1px);}
   .rec:hover::before{background:var(--accent);}
-  .rec-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #EEF0F8;}
+  .rec-top{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #EEF0F8;}
   .rec-id{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
   .cust-name{font-weight:700;font-size:14.5px;color:var(--ink);letter-spacing:-.1px;}
   .cust-sub{color:var(--muted);font-size:10.5px;font-family:'JetBrains Mono',monospace;letter-spacing:.2px;}
-  .rec-right{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+  .rec-right{display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto;}
 
   .fact-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px 18px;margin-bottom:12px;}
   .fact{display:flex;flex-direction:column;gap:3px;min-width:0;}
@@ -557,9 +557,6 @@
             </div>
             <select id="statusFilter">
               <option value="">All statuses</option>
-              <option value="OD">Overdue (OD)</option>
-              <option value="DEL">Delinquent (DEL)</option>
-              <option value="RSTR">Restructured (RSTR)</option>
             </select>
             <select id="remarkFilter">
               <option value="">All remarks</option>
@@ -3203,6 +3200,42 @@
     return 'other';
   }
 
+  // ---- Status filter options -------------------------------------------
+  // The dropdown used to only ever offer OD / DEL / RSTR — any status text
+  // that didn't contain one of those three substrings (a lot of real
+  // sheets have others, e.g. "CURRENT", "FULLY PAID", "REPO") fell into an
+  // unfilterable "other" bucket with no way to select it. This instead
+  // builds the list straight from whatever "Customer Status" values are
+  // actually present in the branch you're looking at, so every status
+  // your team actually uses is always filterable — nothing hardcoded.
+  let lastStatusOptionsSig_ = null;
+  const STATUS_BLANK_VALUE = '\u0000__blank__';
+
+  function populateStatusFilter_(){
+    const sel = document.getElementById('statusFilter');
+    const distinct = Array.from(new Set(customers.map(c => str_(c.customerStatus).trim())))
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+    const hasBlank = customers.some(c => !str_(c.customerStatus).trim());
+    const sig = distinct.join('\u0001') + '\u0002' + (hasBlank ? 1 : 0);
+    if(sig === lastStatusOptionsSig_) return; // no new/removed statuses — leave the dropdown alone
+    lastStatusOptionsSig_ = sig;
+
+    const current = sel.value;
+    let html = '<option value="">All statuses</option>';
+    distinct.forEach(s=>{
+      html += `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`;
+    });
+    if(hasBlank) html += `<option value="${STATUS_BLANK_VALUE}">(No status)</option>`;
+    sel.innerHTML = html;
+
+    // Keep whatever was selected if it still exists among the new
+    // options; otherwise fall back to "All statuses" instead of silently
+    // filtering the list down to nothing.
+    const stillValid = current === '' || current === STATUS_BLANK_VALUE ? true : distinct.includes(current);
+    sel.value = stillValid ? current : '';
+  }
+
   function fmtMoney(n){
     n = Number(n) || 0;
     return n.toLocaleString('en-PH', {minimumFractionDigits:0, maximumFractionDigits:0});
@@ -3240,7 +3273,11 @@
         const hay = (c.customer + ' ' + c.model + ' ' + c.engineNo).toLowerCase();
         if(hay.indexOf(q) === -1) return false;
       }
-      if(statusF && statusGroup(c.customerStatus) !== statusF.toLowerCase()) return false;
+      if(statusF === STATUS_BLANK_VALUE){
+        if(str_(c.customerStatus).trim()) return false;
+      } else if(statusF && str_(c.customerStatus).trim() !== statusF){
+        return false;
+      }
       const hasRemark = c.auditorRemarks && str_(c.auditorRemarks).toUpperCase() !== 'NO REMARKS';
       if(remarkF === 'pending' && hasRemark) return false;
       if(remarkF === 'done' && !hasRemark) return false;
@@ -3249,6 +3286,7 @@
   }
 
   function render(){
+    populateStatusFilter_();
     const conflictRows = new Set(outbox.filter(o => o.status === 'conflict' || o.status === 'error').map(o => o.row));
 
     const filtered = getFilteredCustomers();

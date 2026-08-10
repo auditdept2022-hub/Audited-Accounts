@@ -118,19 +118,19 @@
   .card{background:var(--card);border-radius:var(--radius);border:1px solid var(--line);overflow:hidden;box-shadow:var(--shadow);}
   .table-wrap{overflow-x:auto;}
 
-  .rec-list{display:flex;flex-direction:column;gap:14px;padding:16px;background:linear-gradient(180deg,#F7F8FC,transparent 120px);}
+  .rec-list{display:flex;flex-direction:column;gap:12px;padding:16px;background:linear-gradient(180deg,#F7F8FC,transparent 120px);}
   .rec{
-    position:relative;padding:16px 18px 16px 20px;border:1px solid var(--line);border-radius:12px;background:#fff;
-    cursor:pointer;transition:transform .1s ease, box-shadow .18s ease, border-color .15s ease;
-    box-shadow:0 1px 2px rgba(16,22,60,.05), 0 1px 0 rgba(16,22,60,.03);
+    position:relative;padding:16px 18px 16px 20px;border:1px solid var(--line);border-radius:var(--radius-sm);background:#fff;
+    cursor:pointer;transition:transform .12s ease, box-shadow .18s ease, border-color .15s ease;
+    box-shadow:0 1px 2px rgba(16,22,60,.04);
     content-visibility:auto;contain-intrinsic-size:170px;
   }
   .rec::before{content:'';position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:3px;background:var(--line);transition:background .15s;}
   .rec:hover{box-shadow:var(--shadow-md);border-color:#C9D1EE;transform:translateY(-1px);}
   .rec:hover::before{background:var(--accent);}
-  .rec-top{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #EEF0F8;}
-  .rec-id{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
-  .cust-name{font-weight:700;font-size:14.5px;color:var(--ink);letter-spacing:-.1px;}
+  .rec-top{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #EEF0F8;}
+  .rec-id{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;}
+  .cust-name{font-weight:700;font-size:15px;color:var(--ink);letter-spacing:-.1px;overflow:hidden;text-overflow:ellipsis;}
   .cust-sub{color:var(--muted);font-size:10.5px;font-family:'JetBrains Mono',monospace;letter-spacing:.2px;}
   .rec-right{display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto;}
 
@@ -268,6 +268,13 @@
   .btn.danger:disabled:hover{background:#FDECEB;}
   .row-check{display:flex;align-items:center;padding-right:2px;flex-shrink:0;}
   .row-check input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer;margin:0;}
+
+  /* Checkboxes & the bulk-delete bar are hidden until "Select" is turned
+     on — keeps every card's header clean day-to-day, and only asks for a
+     tap-to-pick UI when you're actually about to delete something. */
+  .card:not(.select-mode) .bulk-bar{display:none;}
+  .card:not(.select-mode) .row-check{display:none;width:0;padding:0;}
+  #selectModeBtn.active{background:var(--accent-soft);border-color:#B9C4EE;color:var(--accent-dark);}
   .rec.is-selected{border-color:var(--accent);box-shadow:0 0 0 2px rgba(42,61,154,.15);}
   .rec.is-selected::before{background:var(--accent);}
   .mark-option{display:flex;align-items:center;gap:10px;border:none;background:none;border-radius:9px;padding:8px 9px;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--text);text-align:left;width:100%;touch-action:manipulation;transition:background .12s ease;}
@@ -535,7 +542,10 @@
 
     .rec-list{padding:10px;gap:10px;}
     .rec{padding:14px 14px 14px 16px;}
-    .fact-grid{grid-template-columns:repeat(2,1fr);gap:10px 14px;}
+    .rec-top{gap:8px;margin-bottom:10px;padding-bottom:10px;}
+    .cust-name{font-size:14px;}
+    .fact-grid{grid-template-columns:repeat(2,1fr);gap:12px 14px;}
+    .fact .v{font-size:12.5px;white-space:normal;overflow-wrap:anywhere;}
 
     /* Full-width, bottom-sheet style modal: easier to reach one-handed
        and avoids the on-screen keyboard fighting a centered dialog. */
@@ -613,6 +623,7 @@
           <span id="importStatus" class="import-status"></span>
           <button class="btn" onclick="exportCSV()" title="Export all customers to CSV">⇩ Export</button>
           <button class="btn" onclick="printCustomers()" title="Print the customer list currently shown for this branch">🖨 Print</button>
+          <button class="btn" id="selectModeBtn" onclick="toggleSelectMode_()" title="Select accounts to bulk-delete">☑ Select</button>
         </div>
         <div class="right">
           <div class="filter-row">
@@ -634,10 +645,10 @@
               </div>
             </div>
             <div class="status-switch" id="statusSwitch">
-              <button class="btn" id="statusFilterBtn" onclick="toggleStatusMenu_(event)" title="Filter by one or more statuses">🏷 All statuses</button>
+              <button class="btn" id="statusFilterBtn" onclick="toggleStatusMenu_(event)" title="Filter by one or more statuses">All status</button>
               <div class="status-menu" id="statusMenu">
                 <div class="status-menu-actions">
-                  <span>Statuses</span>
+                  <span>Status</span>
                   <div class="status-menu-links">
                     <button type="button" class="status-menu-link" data-act="status-all">All</button>
                     <button type="button" class="status-menu-link" data-act="status-clear">Clear</button>
@@ -646,11 +657,16 @@
                 <div class="status-menu-list" id="statusMenuList"></div>
               </div>
             </div>
-            <select id="remarkFilter">
-              <option value="">All remarks</option>
-              <option value="pending">No remarks yet</option>
-              <option value="done">Has remarks</option>
-            </select>
+            <div class="status-switch" id="remarkSwitch">
+              <button class="btn" id="remarkFilterBtn" onclick="toggleRemarkMenu_(event)" title="Filter by remarks status">All remarks</button>
+              <div class="status-menu" id="remarkMenu">
+                <div class="status-menu-list">
+                  <button type="button" class="status-option active" data-value=""><span class="so-label">All remarks</span></button>
+                  <button type="button" class="status-option" data-value="pending"><span class="so-label">No remarks yet</span></button>
+                  <button type="button" class="status-option" data-value="done"><span class="so-label">Has remarks</span></button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         <div class="toolbar-search">
@@ -893,6 +909,18 @@
     if(!selectedRows.size) return;
     selectedRows.clear();
     render();
+  }
+
+  // ---- Select mode: checkboxes/bulk bar are only shown while this is on,
+  // so the everyday card view stays uncluttered and bulk-delete is an
+  // explicit, opt-in action instead of a permanent extra control. ----
+  let selectModeOn_ = false;
+  function toggleSelectMode_(){
+    selectModeOn_ = !selectModeOn_;
+    document.querySelector('.card').classList.toggle('select-mode', selectModeOn_);
+    document.getElementById('selectModeBtn').classList.toggle('active', selectModeOn_);
+    document.getElementById('selectModeBtn').textContent = selectModeOn_ ? '✕ Cancel select' : '☑ Select';
+    if(!selectModeOn_) clearSelection_();
   }
 
   // Online: everything selected goes out as ONE batchDeleteCustomer
@@ -3398,12 +3426,12 @@
     if(!btn) return;
     const n = selectedStatuses_.size;
     if(n === 0){
-      btn.textContent = '🏷 All statuses';
+      btn.textContent = 'All status';
     } else if(n === 1){
       const v = Array.from(selectedStatuses_)[0];
-      btn.textContent = '🏷 ' + (v === STATUS_BLANK_VALUE ? '(No status)' : v);
+      btn.textContent = (v === STATUS_BLANK_VALUE ? '(No status)' : v);
     } else {
-      btn.textContent = '🏷 ' + n + ' statuses';
+      btn.textContent = n + ' statuses';
     }
   }
 
@@ -3454,6 +3482,42 @@
     if(!e.target.closest('.status-switch')) closeStatusMenu_();
   });
 
+  // ---- Remarks filter — same custom dropdown-menu shell as the status
+  // filter, single-select, instead of a native <select> (which can't be
+  // styled/positioned consistently across mobile browsers). ----
+  let remarkFilterValue_ = '';
+  function updateRemarkFilterBtn_(){
+    const btn = document.getElementById('remarkFilterBtn');
+    if(!btn) return;
+    btn.textContent = remarkFilterValue_ === 'pending' ? 'No remarks yet'
+      : remarkFilterValue_ === 'done' ? 'Has remarks'
+      : 'All remarks';
+  }
+  function setRemarkFilter_(value){
+    remarkFilterValue_ = value || '';
+    document.querySelectorAll('#remarkMenu .status-option').forEach(opt=>{
+      opt.classList.toggle('active', opt.dataset.value === remarkFilterValue_);
+    });
+    updateRemarkFilterBtn_();
+    closeRemarkMenu_();
+    render();
+  }
+  function toggleRemarkMenu_(e){
+    if(e) e.stopPropagation();
+    document.getElementById('remarkMenu').classList.toggle('open');
+  }
+  function closeRemarkMenu_(){
+    document.getElementById('remarkMenu').classList.remove('open');
+  }
+  document.getElementById('remarkMenu').addEventListener('click', (e)=>{
+    e.stopPropagation();
+    const opt = e.target.closest('.status-option');
+    if(opt) setRemarkFilter_(opt.dataset.value);
+  });
+  document.addEventListener('click', (e)=>{
+    if(!e.target.closest('#remarkSwitch')) closeRemarkMenu_();
+  });
+
   function fmtMoney(n){
     n = Number(n) || 0;
     return n.toLocaleString('en-PH', {minimumFractionDigits:0, maximumFractionDigits:0});
@@ -3482,7 +3546,7 @@
 
   function getFilteredCustomers(){
     const q = document.getElementById('searchBox').value.trim().toLowerCase();
-    const remarkF = document.getElementById('remarkFilter').value;
+    const remarkF = remarkFilterValue_;
 
     return customers.filter(c=>{
       if(c._pendingDelete) return false; // queued for deletion, hide immediately
@@ -3965,7 +4029,6 @@
     clearTimeout(searchDebounce);
     searchDebounce = setTimeout(render, 150);
   });
-  document.getElementById('remarkFilter').addEventListener('change', render);
   document.getElementById('overlay').addEventListener('click', e=>{ if(e.target.id==='overlay') closeModal(); });
   document.getElementById('profileOverlay').addEventListener('click', e=>{ if(e.target.id==='profileOverlay') closeProfileMenu(); });
   document.getElementById('newProfileName').addEventListener('keydown', e=>{ if(e.key === 'Enter'){ e.preventDefault(); createProfile_(); } });

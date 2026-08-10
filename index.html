@@ -364,7 +364,23 @@
     background:#F1F2F8;color:var(--muted);cursor:not-allowed;border-color:#E4E7F3;
     font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace;font-size:12.5px;
   }
-  .lock-tag{font-size:10px;opacity:.55;cursor:help;text-transform:none;letter-spacing:0;}
+
+  /* Compact key/value list used inside the customer modal in place of the
+     old boxy 2-column field grid — denser, easier to scan, and reads more
+     like a spec sheet than a form full of disabled inputs. */
+  .info-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;}
+  .info-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:8px 14px;border-bottom:1px solid var(--line);min-height:36px;}
+  .info-row:last-child{border-bottom:none;}
+  .info-row:nth-child(even){background:#FAFBFE;}
+  .info-label{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:flex;align-items:center;gap:5px;flex-shrink:0;white-space:nowrap;}
+  .info-value{font-size:12.5px;color:var(--text);font-family:'JetBrains Mono',monospace;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .info-input{border:1px solid transparent;background:transparent;border-radius:6px;padding:5px 9px;font-size:12.5px;font-family:inherit;color:var(--text);text-align:right;outline:none;min-width:0;flex:1 1 auto;max-width:62%;transition:border-color .15s, background .15s, box-shadow .15s;}
+  .info-input:hover{background:#F6F7FD;border-color:#E5E8F7;}
+  .info-input:focus{background:#F6F7FD;border-color:var(--accent);box-shadow:0 0 0 3px rgba(42,61,154,.12);}
+  @media(max-width:640px){
+    .info-row{padding:8px 12px;}
+    .info-input{max-width:56%;}
+  }
 
   .current-remark{background:#F6F7FD;border:1px solid #E5E8F7;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.5;}
   .current-remark .date{font-size:11px;color:var(--accent);font-weight:700;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;}
@@ -745,16 +761,14 @@
   <div class="modal">
     <div class="modal-head">
       <div>
-        <h2 id="mTitle">New Customer</h2>
-        <div class="meta" id="mMeta"></div>
+        <h2 id="mTitle">Account &amp; unit information</h2>
       </div>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
 
       <div class="section">
-        <div class="section-title">Account &amp; unit information</div>
-        <div class="field-grid" id="fieldGrid"></div>
+        <div id="fieldGrid"></div>
       </div>
 
       <div class="section" id="remarksSection">
@@ -3812,31 +3826,31 @@
     // Locking only applies when editing an EXISTING customer — a brand
     // new record has nothing to lock yet, so every field stays editable.
     const isEdit = modalMode === 'edit';
-    grid.innerHTML = FIELDS.map(f=>{
+    const rowsHtml = FIELDS.map(f=>{
       const raw = values && values[f.key] !== undefined ? values[f.key] : '';
       const locked = isEdit && f.lockedOnEdit;
-      const cls = 'field' + (f.span === 2 ? ' span2' : '') + (locked ? ' field-locked' : '');
 
       if(locked){
-        // Read-only reference view. Money fields get the ₱ sign and
+        // Read-only reference row. Money fields get the ₱ sign and
         // thousands separators (fmtMoney) so it's unmistakably a peso
         // amount at a glance, same formatting as the record cards use.
         const display = f.money
           ? (raw !== '' && raw != null ? '₱' + fmtMoney(raw) : '—')
           : (raw !== '' && raw != null && raw !== '' ? String(raw) : '—');
-        return `<div class="${cls}">
-          <label>${escapeHtml(f.label)} <span class="lock-tag" title="Locked — only Unit Status, Payment Mode and Remarks can be edited here">🔒</span></label>
-          <input class="input locked" type="text" value="${escapeHtml(display)}" disabled readonly>
+        return `<div class="info-row locked">
+          <span class="info-label">${escapeHtml(f.label)}</span>
+          <span class="info-value">${escapeHtml(display)}</span>
         </div>`;
       }
 
       const ph = f.placeholder ? ` placeholder="${escapeHtml(f.placeholder)}"` : '';
       const step = f.type === 'number' ? ' step="0.01"' : '';
-      return `<div class="${cls}">
-        <label>${escapeHtml(f.label)}${f.required ? ' *' : ''}</label>
-        <input class="input" data-key="${f.key}" type="${f.type}" value="${escapeHtml(raw)}"${ph}${step}>
+      return `<div class="info-row editable">
+        <span class="info-label">${escapeHtml(f.label)}${f.required ? ' *' : ''}</span>
+        <input class="info-input" data-key="${f.key}" type="${f.type}" value="${escapeHtml(raw)}"${ph}${step}>
       </div>`;
     }).join('');
+    grid.innerHTML = `<div class="info-list">${rowsHtml}</div>`;
   }
 
   function collectFieldValues(){
@@ -3938,8 +3952,6 @@
     modalMode = 'edit';
     activeRow = row;
 
-    document.getElementById('mTitle').textContent = c.customer;
-    document.getElementById('mMeta').textContent = `Row ${c.row} · ${c.model || 'No model'} · Engine ${c.engineNo || '—'}`;
     document.getElementById('remarksSection').style.display = 'block';
     document.getElementById('historySection').style.display = 'block';
     document.getElementById('newRemarkLabel').textContent = 'Add new remark';
@@ -3970,8 +3982,6 @@
     modalMode = 'create';
     activeRow = null;
 
-    document.getElementById('mTitle').textContent = 'New Customer';
-    document.getElementById('mMeta').textContent = 'Not yet saved';
     document.getElementById('remarksSection').style.display = 'none';
     document.getElementById('historySection').style.display = 'none';
     document.getElementById('newRemarkLabel').textContent = 'Initial remark (optional)';

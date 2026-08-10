@@ -90,6 +90,13 @@
   .toolbar .left{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
   .toolbar .right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
   .filter-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  /* Search sits in its own full-width row, always last — on desktop
+     AND mobile — instead of squeezed in next to the filters where it
+     used to fight them for space. Order:1 (higher than the left/right
+     panes' default order:0) is what pushes it below them regardless of
+     source order or viewport width. */
+  .toolbar-search{width:100%;order:1;}
+  .toolbar-search .input{width:100%;min-width:0;}
 
   .input, select{border:1px solid #D7DCF0;background:#F8F9FD;border-radius:9px;padding:9px 12px;font-size:13px;color:var(--text);outline:none;transition:border-color .15s, box-shadow .15s;font-family:inherit;}
   .input{min-width:230px;}
@@ -452,24 +459,79 @@
     .pagehead{flex-direction:column;align-items:flex-start;gap:6px;}
     .pagehead h1{font-size:21px;}
 
-    .topband{padding:calc(14px + var(--safe-t)) 16px 14px;gap:10px;}
-    .brand .mark{font-size:16px;}
-    .brand .sub{font-size:10px;}
-    .header-sync{width:100%;justify-content:space-between;}
+    /* ---- Mobile header: redesigned as a compact two-row app bar.
+       Row 1 is just hamburger + brand + refresh, always a single
+       tidy line; the sync/status pill drops to its own full-width
+       row underneath instead of competing for space and wrapping
+       awkwardly. This block only fires under 640px — the desktop
+       .topband/.brand/.header-sync rules above are untouched. ---- */
+    .topband{
+      flex-direction:column;
+      align-items:stretch;
+      gap:10px;
+      padding:calc(12px + var(--safe-t)) 14px 12px;
+      row-gap:10px;
+    }
+    .brand{justify-content:flex-start;gap:10px;min-width:0;}
+    .brand .names{min-width:0;}
+    .hamburger-btn{flex-shrink:0;}
+    .brand .mark{font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .brand .sub{font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .header-sync{
+      width:100%;
+      order:2;
+      justify-content:space-between;
+      gap:8px;
+      padding-top:8px;
+      border-top:1px solid rgba(255,255,255,.10);
+    }
+    .header-sync .sync-btn{
+      order:-1;
+      width:32px;height:32px;flex-shrink:0;
+      display:flex;align-items:center;justify-content:center;
+      padding:0;font-size:14px;
+    }
+    #connStatus{
+      flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+      font-size:10px;
+    }
     .import-status{display:none;}
-    .sync-pill{font-size:10px;padding:5px 10px;flex-wrap:wrap;row-gap:4px;}
-    #pendingWrap{white-space:normal;}
+    .sync-pill{
+      font-size:10px;padding:5px 9px;flex-wrap:nowrap;row-gap:0;
+      flex-shrink:0;
+    }
+    #pendingWrap{white-space:nowrap;}
+    #pendingWrap .count{font-weight:700;}
 
-    .toolbar{padding:12px 0 12px 12px;gap:0;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;}
-    .toolbar .left, .toolbar .right{width:auto;flex-wrap:nowrap;flex-shrink:0;}
-    .toolbar .left{order:1;}
-    .toolbar .right{order:2;padding-right:12px;}
-    .toolbar .btn, .toolbar .input, .toolbar select, .toolbar .view-switch, .toolbar .status-switch, .filter-row{flex:0 0 auto;}
-    .toolbar .input{min-width:200px;width:200px;}
-    .filter-row{display:flex;flex-wrap:nowrap;}
-    .filter-row select{min-width:130px;}
+    /* ---- Toolbar: was a single horizontally-scrolling row on
+       mobile (overflow-x:auto), which hid buttons off-screen and
+       needed a swipe to reach them. Now it wraps onto as many rows
+       as it needs instead, so every control is visible without any
+       side-scrolling — the toolbar just grows taller. ---- */
+    .toolbar{
+      flex-direction:column;
+      align-items:stretch;
+      padding:12px;
+      gap:10px;
+      overflow:visible;
+      flex-wrap:wrap;
+    }
+    .toolbar .left, .toolbar .right{
+      width:100%;
+      flex-wrap:wrap;
+      flex-shrink:1;
+    }
+    .toolbar .left{order:1;padding-right:0;}
+    .toolbar .right{order:2;padding-right:0;}
+    .toolbar-search{order:3;}
+    .toolbar .btn, .toolbar select{flex:0 0 auto;}
+    .toolbar .input{min-width:0;width:100%;}
+    .filter-row{display:flex;flex-wrap:wrap;width:100%;gap:8px;}
+    .filter-row .view-switch, .filter-row .status-switch, .filter-row select{flex:1 1 140px;min-width:120px;}
+    .filter-row .view-switch .btn, .filter-row .status-switch .btn{width:100%;}
+    .filter-row select{width:100%;}
 
-    .view-menu, .status-menu{left:auto;right:0;}
+    .view-menu, .status-menu{left:0;right:auto;width:100%;max-width:none;}
 
     .rec-list{padding:10px;gap:10px;}
     .rec{padding:14px 14px 14px 16px;}
@@ -553,7 +615,6 @@
           <button class="btn" onclick="printCustomers()" title="Print the customer list currently shown for this branch">🖨 Print</button>
         </div>
         <div class="right">
-          <input class="input" id="searchBox" placeholder="Search customer, model, engine no...">
           <div class="filter-row">
             <div class="view-switch">
               <button class="btn" id="viewModeBtn" onclick="toggleViewMenu_(event)" title="Choose how much detail each customer card shows">👁 Full details</button>
@@ -592,7 +653,11 @@
             </select>
           </div>
         </div>
+        <div class="toolbar-search">
+          <input class="input" id="searchBox" placeholder="Search customer, model, engine no...">
+        </div>
       </div>
+
 
       <div class="card">
         <div class="bulk-bar" id="bulkBar">

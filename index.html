@@ -370,11 +370,23 @@
   .history-item{border-left:2px solid var(--accent);padding-left:12px;font-size:12.5px;color:var(--text);}
   .history-item .date{font-size:10.5px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.4px;}
 
-  /* Directly-editable current remark & history (edit modal) */
+  /* Directly-editable current remark & history (edit modal).
+     Kept visually flat/plain (no box, no border) by default so they
+     read as plain text and don't invite taps meant for "Add new
+     remark" below — the box only appears once you actually hover or
+     focus into the field, at which point it's obviously editable. */
   .current-remark-date{font-size:11px;color:var(--accent);font-weight:700;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px;}
-  .current-remark-edit{background:#F6F7FD;border-color:#E5E8F7;min-height:70px;}
+  .edit-hint{font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted-2);font-size:10px;font-style:italic;}
+  .current-remark-edit{
+    background:transparent;border-color:transparent;min-height:44px;cursor:text;
+  }
+  .current-remark-edit:hover{background:#F6F7FD;border-color:#E5E8F7;}
+  .current-remark-edit:focus{background:#F6F7FD;border-color:var(--accent);box-shadow:0 0 0 3px rgba(42,61,154,.12);}
   .history-edit{min-height:90px;max-height:90px;overflow-y:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.6;resize:none;}
-  .history-edit[readonly]{background:#EFF1F8;color:var(--muted);cursor:default;}
+  .history-edit[readonly]{
+    background:transparent;border-color:transparent;color:var(--muted);cursor:default;
+  }
+  .history-edit[readonly]:hover{background:#F6F7FD;border-color:#E5E8F7;}
   .history-hint{font-size:11px;color:var(--muted);margin-top:6px;}
   .history-hint code{background:#EEF0F9;padding:1px 5px;border-radius:4px;}
   .draft-status{font-size:11px;color:#9a6b00;background:#FFF6E0;border:1px solid #F3DFA0;border-radius:6px;padding:6px 10px;margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
@@ -743,7 +755,7 @@
       </div>
 
       <div class="section" id="remarksSection">
-        <div class="section-title">Current remark</div>
+        <div class="section-title">Current remark <span class="edit-hint">click to edit</span></div>
         <div class="current-remark-date" id="mCurrentDate"></div>
         <textarea id="mCurrentEdit" class="current-remark-edit" placeholder="No remarks recorded yet."></textarea>
       </div>

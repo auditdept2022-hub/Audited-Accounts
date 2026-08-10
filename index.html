@@ -95,8 +95,8 @@
      used to fight them for space. Order:1 (higher than the left/right
      panes' default order:0) is what pushes it below them regardless of
      source order or viewport width. */
-  .toolbar-search{width:100%;order:1;}
-  .toolbar-search .input{width:100%;min-width:0;}
+  .toolbar-search{width:100%;order:1;display:flex;}
+  .toolbar-search .input{width:100%;max-width:340px;min-width:0;}
 
   .input, select{border:1px solid #D7DCF0;background:#F8F9FD;border-radius:9px;padding:9px 12px;font-size:13px;color:var(--text);outline:none;transition:border-color .15s, box-shadow .15s;font-family:inherit;}
   .input{min-width:230px;}

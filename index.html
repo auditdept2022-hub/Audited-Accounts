@@ -254,8 +254,18 @@
   /* ---- View mode switch (Full details / Compact / Names only) ---- */
   .view-switch{position:relative;display:flex;}
   #viewModeBtn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .view-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:200;display:none;flex-direction:column;gap:1px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-md);padding:6px;min-width:200px;}
-  .view-menu.open{display:flex;}
+  /* `position:fixed` + JS-computed top/left (see positionMenu_) instead of
+     `position:absolute` anchored to the button — an absolutely-positioned
+     menu can only ever open downward/rightward from the button, so a
+     button near the edge of the screen (or a short/narrow phone
+     viewport) used to render the menu partly or fully off-screen with no
+     way to reach the rest of it. positionMenu_ measures the menu, then
+     clamps it inside the viewport (flipping above the button, or sliding
+     it sideways) so the whole menu is always reachable regardless of
+     screen size. The top/left below are just an unpositioned fallback
+     for the instant before JS runs. */
+  .view-menu{position:fixed;top:0;left:0;z-index:200;display:none;flex-direction:column;gap:1px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-md);padding:6px;min-width:200px;max-width:min(260px,calc(100vw - 16px));opacity:0;transform:translateY(-4px) scale(.98);transition:opacity .14s ease,transform .14s ease;}
+  .view-menu.open{display:flex;opacity:1;transform:translateY(0) scale(1);}
   .view-option{display:flex;flex-direction:column;align-items:flex-start;gap:1px;border:none;background:none;border-radius:9px;padding:8px 10px;cursor:pointer;text-align:left;width:100%;touch-action:manipulation;transition:background .12s ease;}
   .view-option:hover{background:#F4F5FB;}
   .view-option.active{background:var(--accent-soft);}
@@ -264,8 +274,8 @@
 
   /* Status filter — multi-select dropdown (checkbox list), same shell as view-switch */
   .status-switch{position:relative;display:flex;}
-  .status-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:200;display:none;flex-direction:column;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-md);padding:8px;min-width:220px;max-width:280px;}
-  .status-menu.open{display:flex;}
+  .status-menu{position:fixed;top:0;left:0;z-index:200;display:none;flex-direction:column;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-md);padding:8px;min-width:220px;max-width:min(280px,calc(100vw - 16px));opacity:0;transform:translateY(-4px) scale(.98);transition:opacity .14s ease,transform .14s ease;}
+  .status-menu.open{display:flex;opacity:1;transform:translateY(0) scale(1);}
   .status-menu-actions{display:flex;align-items:center;justify-content:space-between;padding:2px 6px 8px;margin-bottom:6px;border-bottom:1px solid var(--line);}
   .status-menu-actions span{font-size:10.5px;color:var(--muted);letter-spacing:.4px;text-transform:uppercase;font-weight:600;}
   .status-menu-links{display:flex;gap:10px;}
@@ -278,6 +288,17 @@
   .status-option input[type=checkbox]{pointer-events:none;width:15px;height:15px;accent-color:var(--accent);flex:0 0 auto;}
   .status-option .so-label{font-size:12.5px;font-weight:600;color:var(--text);}
   .status-menu-empty{font-size:12px;color:var(--muted);padding:10px 8px;text-align:center;}
+
+  /* Confirm bar — the status filter no longer re-filters the list on
+     every single checkbox tap (jumpy on a long list, easy to mis-tap
+     while scrolling a checkbox menu). Choices are staged in
+     pendingStatuses_ and only applied to the visible list when "OK" is
+     pressed; closing the menu any other way (tap outside, Escape)
+     discards the staged changes instead of silently applying them. */
+  .status-menu-ok-row{display:flex;justify-content:flex-end;padding-top:8px;margin-top:6px;border-top:1px solid var(--line);}
+  .status-menu-ok{background:var(--accent);border:1px solid var(--accent);color:#fff;font-size:12.5px;font-weight:700;padding:7px 16px;border-radius:9px;cursor:pointer;touch-action:manipulation;transition:background .12s ease,transform .05s ease;}
+  .status-menu-ok:hover{background:var(--accent-dark,var(--accent));}
+  .status-menu-ok:active{transform:scale(.97);}
 
   /* Compact: hide the remarks block, keep the fact grid */
   .rec-list.view-compact .rec-remarks{display:none;}
@@ -611,7 +632,10 @@
     .toolbar-extra{display:none;order:2;width:100%;}
     .toolbar-extra.open{display:flex;flex-direction:column;gap:10px;padding-top:10px;border-top:1px solid var(--line);margin-top:2px;}
 
-    .view-menu, .status-menu{left:0;right:auto;width:100%;max-width:none;}
+    /* Positioning for .view-menu/.status-menu is now handled entirely by
+       positionMenu_() at open time (fixed + viewport-clamped), so no
+       mobile-only override is needed here any more — the same JS keeps
+       the menu fully on-screen on any width. */
 
     .rec-list{padding:10px;gap:10px;}
     .rec{padding:14px 14px 14px 16px;}
@@ -741,6 +765,9 @@
                   </div>
                 </div>
                 <div class="status-menu-list" id="statusMenuList"></div>
+                <div class="status-menu-ok-row">
+                  <button type="button" class="status-menu-ok" data-act="status-ok">OK</button>
+                </div>
               </div>
             </div>
             <div class="status-switch" id="remarkSwitch">
@@ -964,12 +991,61 @@
     closeViewMenu_();
   }
 
+  // Shared positioner for every fixed-position dropdown menu (view mode,
+  // status filter, remarks filter). Anchors the menu under its trigger
+  // button, then clamps it inside the current viewport — sliding it left
+  // if it would run off the right edge, and flipping it to open upward
+  // if there isn't room below (e.g. the toolbar sits near the bottom of
+  // a short phone screen). Re-run on window resize/orientation change
+  // while a menu is open so rotating the device or resizing the window
+  // doesn't strand it off-screen.
+  const MENU_EDGE_MARGIN = 8;
+  function positionMenu_(menuEl, btnEl){
+    if(!menuEl || !btnEl) return;
+    const r = btnEl.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth;
+    const vh = document.documentElement.clientHeight;
+    const mw = menuEl.offsetWidth;
+    const mh = menuEl.offsetHeight;
+
+    let left = r.left;
+    if(left + mw > vw - MENU_EDGE_MARGIN) left = vw - MENU_EDGE_MARGIN - mw;
+    if(left < MENU_EDGE_MARGIN) left = MENU_EDGE_MARGIN;
+
+    let top = r.bottom + 6;
+    if(top + mh > vh - MENU_EDGE_MARGIN){
+      const above = r.top - 6 - mh;
+      top = above > MENU_EDGE_MARGIN ? above : Math.max(MENU_EDGE_MARGIN, vh - MENU_EDGE_MARGIN - mh);
+    }
+    menuEl.style.left = left + 'px';
+    menuEl.style.top = top + 'px';
+  }
+
+  // Keeps whichever menu is currently open correctly positioned across a
+  // resize/rotation instead of leaving it wherever it was measured last.
+  let openPositionedMenu_ = null; // { menuEl, btnEl } | null
+  window.addEventListener('resize', ()=>{
+    if(openPositionedMenu_) positionMenu_(openPositionedMenu_.menuEl, openPositionedMenu_.btnEl);
+  });
+
+  function openPositionedMenu(menuEl, btnEl){
+    menuEl.classList.add('open');
+    positionMenu_(menuEl, btnEl);
+    openPositionedMenu_ = { menuEl, btnEl };
+  }
+  function closePositionedMenu(menuEl){
+    menuEl.classList.remove('open');
+    if(openPositionedMenu_ && openPositionedMenu_.menuEl === menuEl) openPositionedMenu_ = null;
+  }
+
   function toggleViewMenu_(e){
     if(e) e.stopPropagation();
-    document.getElementById('viewMenu').classList.toggle('open');
+    const menu = document.getElementById('viewMenu');
+    if(menu.classList.contains('open')) closeViewMenu_();
+    else openPositionedMenu(menu, document.getElementById('viewModeBtn'));
   }
   function closeViewMenu_(){
-    document.getElementById('viewMenu').classList.remove('open');
+    closePositionedMenu(document.getElementById('viewMenu'));
   }
   document.getElementById('viewMenu').addEventListener('click', (e)=>{
     const b = e.target.closest('[data-act="view-set"]');
@@ -3512,6 +3588,11 @@
   // blank statuses — is in the set are shown. Lets you tick e.g. OD + DEL
   // together instead of being limited to one status at a time.
   const selectedStatuses_ = new Set();
+  // Staged selection while the menu is open — see toggleStatusMenu_/
+  // applyStatusFilter_. Ticking a box only ever edits this copy; it's
+  // copied over to selectedStatuses_ (and the list re-filtered) when OK
+  // is pressed.
+  let pendingStatuses_ = new Set();
 
   function populateStatusFilter_(){
     const listEl = document.getElementById('statusMenuList');
@@ -3528,6 +3609,7 @@
     const validValues = new Set(distinct);
     if(hasBlank) validValues.add(STATUS_BLANK_VALUE);
     Array.from(selectedStatuses_).forEach(v=>{ if(!validValues.has(v)) selectedStatuses_.delete(v); });
+    Array.from(pendingStatuses_).forEach(v=>{ if(!validValues.has(v)) pendingStatuses_.delete(v); });
 
     let html = '';
     if(!distinct.length && !hasBlank){
@@ -3543,14 +3625,25 @@
       }
     }
     listEl.innerHTML = html;
+    // The menu list only gets rebuilt (this branch) when the set of
+    // available statuses actually changed — if that happens while the
+    // menu is closed, re-stage from the applied selection so a later
+    // open doesn't briefly flash a stale, never-applied set of
+    // checkboxes left over from before the rebuild.
+    if(!document.getElementById('statusMenu').classList.contains('open')){
+      pendingStatuses_ = new Set(selectedStatuses_);
+    }
     syncStatusCheckboxes_();
     updateStatusFilterBtn_();
   }
 
-  // Reflect selectedStatuses_ onto the checkbox controls already in the DOM.
+  // Reflect the STAGED selection (pendingStatuses_) onto the checkbox
+  // controls in the DOM — this is what the menu shows while it's open,
+  // separate from selectedStatuses_ (what's actually applied to the
+  // list) until OK is pressed.
   function syncStatusCheckboxes_(){
     document.querySelectorAll('#statusMenuList .status-option').forEach(opt=>{
-      const on = selectedStatuses_.has(opt.dataset.value);
+      const on = pendingStatuses_.has(opt.dataset.value);
       opt.classList.toggle('active', on);
       const cb = opt.querySelector('input[type=checkbox]');
       if(cb) cb.checked = on;
@@ -3571,37 +3664,57 @@
     }
   }
 
+  // Ticking a box, or using the "All"/"Clear" shortcuts, only edits the
+  // STAGED selection and updates the checkboxes in the menu — the
+  // visible customer list is untouched until applyStatusFilter_() runs
+  // (via the OK button). This is what turns the filter from "re-filters
+  // the whole list on every single tap" into "pick everything you want,
+  // then apply once."
   function toggleStatusOption_(value){
-    if(selectedStatuses_.has(value)) selectedStatuses_.delete(value);
-    else selectedStatuses_.add(value);
+    if(pendingStatuses_.has(value)) pendingStatuses_.delete(value);
+    else pendingStatuses_.add(value);
     syncStatusCheckboxes_();
-    updateStatusFilterBtn_();
-    render();
   }
 
   function setAllStatuses_(){
-    selectedStatuses_.clear();
+    pendingStatuses_.clear();
     document.querySelectorAll('#statusMenuList .status-option').forEach(opt=>{
-      selectedStatuses_.add(opt.dataset.value);
+      pendingStatuses_.add(opt.dataset.value);
     });
     syncStatusCheckboxes_();
-    updateStatusFilterBtn_();
-    render();
   }
 
   function clearStatusFilter_(){
-    selectedStatuses_.clear();
+    pendingStatuses_.clear();
     syncStatusCheckboxes_();
+  }
+
+  // Commits the staged selection: copies pendingStatuses_ over
+  // selectedStatuses_, actually re-filters the list, and closes the menu.
+  function applyStatusFilter_(){
+    selectedStatuses_.clear();
+    pendingStatuses_.forEach(v => selectedStatuses_.add(v));
     updateStatusFilterBtn_();
+    closeStatusMenu_();
     render();
   }
 
   function toggleStatusMenu_(e){
     if(e) e.stopPropagation();
-    document.getElementById('statusMenu').classList.toggle('open');
+    const menu = document.getElementById('statusMenu');
+    if(menu.classList.contains('open')){
+      closeStatusMenu_();
+    } else {
+      // Stage a fresh copy of the last-applied selection every time the
+      // menu is (re)opened, so ticking boxes and then dismissing the
+      // menu without pressing OK never leaks into the applied filter.
+      pendingStatuses_ = new Set(selectedStatuses_);
+      syncStatusCheckboxes_();
+      openPositionedMenu(menu, document.getElementById('statusFilterBtn'));
+    }
   }
   function closeStatusMenu_(){
-    document.getElementById('statusMenu').classList.remove('open');
+    closePositionedMenu(document.getElementById('statusMenu'));
   }
   document.getElementById('statusMenu').addEventListener('click', (e)=>{
     e.stopPropagation();
@@ -3609,13 +3722,28 @@
     if(actBtn){
       if(actBtn.dataset.act === 'status-all') setAllStatuses_();
       else if(actBtn.dataset.act === 'status-clear') clearStatusFilter_();
+      else if(actBtn.dataset.act === 'status-ok') applyStatusFilter_();
       return;
     }
     const opt = e.target.closest('.status-option');
     if(opt) toggleStatusOption_(opt.dataset.value);
   });
+  // Enter applies the staged selection too, same as tapping OK — handy
+  // when the menu is open and the person is just tabbing/typing, not
+  // hunting for the button with a mouse.
+  document.getElementById('statusMenu').addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){ e.preventDefault(); applyStatusFilter_(); }
+  });
   document.addEventListener('click', (e)=>{
     if(!e.target.closest('.status-switch')) closeStatusMenu_();
+  });
+  // Escape discards any staged-but-unapplied checkbox changes and closes
+  // whichever of the three dropdown menus is currently open.
+  document.addEventListener('keydown', (e)=>{
+    if(e.key !== 'Escape') return;
+    closeViewMenu_();
+    closeStatusMenu_();
+    closeRemarkMenu_();
   });
 
   // ---- Remarks filter — same custom dropdown-menu shell as the status
@@ -3640,10 +3768,12 @@
   }
   function toggleRemarkMenu_(e){
     if(e) e.stopPropagation();
-    document.getElementById('remarkMenu').classList.toggle('open');
+    const menu = document.getElementById('remarkMenu');
+    if(menu.classList.contains('open')) closeRemarkMenu_();
+    else openPositionedMenu(menu, document.getElementById('remarkFilterBtn'));
   }
   function closeRemarkMenu_(){
-    document.getElementById('remarkMenu').classList.remove('open');
+    closePositionedMenu(document.getElementById('remarkMenu'));
   }
   document.getElementById('remarkMenu').addEventListener('click', (e)=>{
     e.stopPropagation();

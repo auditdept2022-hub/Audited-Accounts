@@ -912,7 +912,7 @@
           <span class="profile-add-icon">+</span>
           <div>
             <div class="profile-add-title-text">Add a new branch</div>
-            <span id="templateNameLabel" style="display:none;"></span>
+            <span class="profile-add-title-sub">Starts empty with the standard columns — not copied from any existing branch.</span>
           </div>
         </div>
         <div class="profile-add-combo">
@@ -957,9 +957,11 @@
   // being audited. There's no hardcoded template name: currentSheet is
   // resolved at boot (from localStorage, or the spreadsheet's first tab
   // if nothing was saved yet) and is which tab every read/write is
-  // scoped to right now. New profiles are created by copying the columns
-  // of whichever existing profile the user picks in the "copy from"
-  // selector — never a hardcoded name.
+  // scoped to right now. New profiles are created blank, with the app's
+  // standard column set built in on the backend — they are NOT copied
+  // from currentSheet or any other existing tab, so a new branch is
+  // never accidentally tied to (or inherits problems from) whatever
+  // another branch happens to look like right now.
   let currentSheet = null;
 
   // ---- Customer color markers ("Select" button on each card) -----------
@@ -2596,18 +2598,9 @@
     return clean ? clean.charAt(0).toUpperCase() : '?';
   }
 
-  // The "Add a new branch" box always copies from whichever branch is
-  // currently active (selected up in the list) — no separate picker.
-  function updateTemplateLabel_(){
-    const el = document.getElementById('templateNameLabel');
-    if(!el) return;
-    el.textContent = currentSheet || 'your current branch';
-  }
-
   function renderProfileList_(sheets){
     const listEl = document.getElementById('profileList');
     updateProfileCount_();
-    updateTemplateLabel_();
     if(!sheets.length){
       listEl.innerHTML = '<div class="profile-loading">No branch profiles yet — add one below.</div>';
       return;
@@ -2651,16 +2644,22 @@
     toast('Switched to ' + name + '.');
   }
 
+  // Creates a brand-new, blank branch tab with the standard set of
+  // columns — it is NOT copied from currentSheet or any other existing
+  // branch, so a new branch is never accidentally tied to (or corrupted
+  // by) whatever another branch's tab currently looks like. The column
+  // set matches exactly what the import flows (handleImportBalancesFiles/
+  // handleImportRemarksFiles/handleImportAccountsFiles) and the rest of
+  // this app expect, so importing into a freshly-created branch behaves
+  // identically to importing into any other branch.
   async function createProfile_(){
     const input = document.getElementById('newProfileName');
     const name = input.value.trim();
-    const templateName = currentSheet || '';
     if(!name){ toast('Enter a branch name first.'); return; }
-    if(!templateName){ toast('No existing profile to copy columns from yet — create one manually in the sheet first.'); return; }
     try{
-      await apiCallJson_('createSheet', { name, templateName });
+      await apiCallJson_('createSheet', { name });
       input.value = '';
-      toast('Branch "' + name + '" created (copied from "' + templateName + '").');
+      toast('Branch "' + name + '" created.');
       await loadProfiles_();
       await switchProfile_(name);
       openProfileMenu();

@@ -4003,7 +4003,21 @@
 
     const filtered = getFilteredCustomers();
 
-    document.getElementById('emptyState').style.display = filtered.length ? 'none' : 'block';
+    const emptyEl = document.getElementById('emptyState');
+    emptyEl.style.display = filtered.length ? 'none' : 'block';
+    if(!filtered.length){
+      // Two different reasons the list can be empty, and they need
+      // different messaging: a branch that genuinely has zero customers
+      // yet (e.g. a brand-new branch, or one that was just cleared)
+      // should say so plainly — not "no matches", which implies the
+      // user's filters are hiding real data that doesn't actually exist.
+      const emptyText = emptyEl.querySelector('div');
+      if(emptyText){
+        emptyText.textContent = customers.length
+          ? 'No customers match your filters.'
+          : 'No data — this branch has no customers yet.';
+      }
+    }
 
     const parts = new Array(filtered.length);
 

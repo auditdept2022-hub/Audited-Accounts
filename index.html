@@ -707,7 +707,7 @@
           <button class="btn" onclick="document.getElementById('importRemarksInput').click()" title="Import CSV or Excel (.xls/.xlsx) files. Matches customers by name (and engine no. when the file has one). Takes ONLY the customer name and a Remarks/Auditor Remarks column and adds each one as a new line directly into Previous Audit Remarks (no date stamp). The current Auditor Remarks and Date of Audit are never touched. Any balance columns in the file are ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Remarks</button>
           <input type="file" id="importRemarksInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
           <span id="importStatus" class="import-status"></span>
-          <button class="btn" onclick="exportCSV()" title="Export all customers to CSV">⇩ Export</button>
+          <button class="btn" onclick="exportCSV()" title="Export all customers to an Excel (.xlsx) file, with columns sized to fit">⇩ Export</button>
           <button class="btn" onclick="printCustomers()" title="Print the customer list currently shown for this branch">🖨 Print</button>
           <button class="btn" id="selectModeBtn" onclick="toggleSelectMode_()" title="Select accounts to bulk-delete">☑ Select</button>
         </div>
@@ -1523,24 +1523,37 @@
     return val;
   }
 
+  // Exports as a real .xlsx (via the same SheetJS library already loaded
+  // for imports) with each column's width set explicitly. A plain .csv
+  // has no width info at all, so Excel opens it with every column at its
+  // narrow default — money and remarks columns show truncated/"###"
+  // until the person manually drags each one wider. Sizing them here
+  // means the file opens readable immediately.
   function exportCSV(){
     if(!customers.length){ toast('Nothing to export yet.'); return; }
+    if(typeof XLSX === 'undefined'){ toast('Excel export failed to load — please refresh and try again.'); return; }
+
     const headers = FIELDS.map(f => f.label).concat(['Date of Audit', 'Auditor Remarks', 'Previous Remarks']);
-    const lines = [headers.map(csvEscape_).join(',')];
-    customers.forEach(c=>{
-      const row = FIELDS.map(f => csvEscape_(c[f.key]))
-        .concat([csvEscape_(c.dateOfAudit), csvEscape_(c.auditorRemarks), csvEscape_(c.previousRemarks)]);
-      lines.push(row.join(','));
+    const rows = customers.map(c=>{
+      const row = FIELDS.map(f => (c[f.key] !== undefined && c[f.key] !== null) ? c[f.key] : '');
+      row.push(c.dateOfAudit || '', c.auditorRemarks || '', c.previousRemarks || '');
+      return row;
     });
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'customers-' + new Date().toISOString().slice(0,10) + '.csv';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    ws['!cols'] = headers.map(h=>{
+      if(h === 'Auditor Remarks' || h === 'Previous Remarks') return { wch: 46 };
+      if(h === 'Customer Name') return { wch: 26 };
+      if(h === 'Release / Restructure Date') return { wch: 20 };
+      if(/\(₱\)/.test(h)) return { wch: 18 };
+      return { wch: Math.max(h.length + 4, 12) };
+    });
+    // Keeps the header row visible while scrolling a long list.
+    ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Customers');
+    XLSX.writeFile(wb, 'customers-' + new Date().toISOString().slice(0,10) + '.xlsx');
     toast('Exported ' + customers.length + ' customers.');
   }
 

@@ -1541,12 +1541,23 @@
     });
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-    ws['!cols'] = headers.map(h=>{
-      if(h === 'Auditor Remarks' || h === 'Previous Remarks') return { wch: 46 };
-      if(h === 'Customer Name') return { wch: 26 };
-      if(h === 'Release / Restructure Date') return { wch: 20 };
-      if(/\(₱\)/.test(h)) return { wch: 18 };
-      return { wch: Math.max(h.length + 4, 12) };
+    // Auto-fit each column to its own longest actual value (header
+    // included) instead of a guessed fixed width — a hardcoded width is
+    // always wrong for someone's data sooner or later (a long business
+    // name, a long engine number). Remarks columns are capped so one
+    // huge paragraph can't blow the sheet out sideways; everything else
+    // just fits its content.
+    const allRows = [headers, ...rows];
+    const capByHeader = { 'Auditor Remarks': 60, 'Previous Remarks': 60 };
+    ws['!cols'] = headers.map((h, colIdx)=>{
+      let maxLen = h.length;
+      allRows.forEach(r=>{
+        const v = r[colIdx];
+        const len = (v === null || v === undefined) ? 0 : String(v).length;
+        if(len > maxLen) maxLen = len;
+      });
+      const cap = capByHeader[h] || 42;
+      return { wch: Math.min(Math.max(maxLen + 2, 12), cap) };
     });
     // Keeps the header row visible while scrolling a long list.
     ws['!freeze'] = { xSplit: 0, ySplit: 1 };

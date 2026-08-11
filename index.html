@@ -540,22 +540,27 @@
        awkwardly. This block only fires under 640px — the desktop
        .topband/.brand rules above are untouched. ---- */
     .topband{
+      flex-wrap:wrap;
       padding:calc(12px + var(--safe-t)) 14px 12px;
       gap:10px;
     }
-    .brand{justify-content:flex-start;gap:10px;min-width:0;flex:1 1 auto;}
+    .brand{justify-content:flex-start;gap:10px;min-width:0;flex-basis:100%;}
     .brand .names{min-width:0;}
     .hamburger-btn{flex-shrink:0;}
     .brand .mark{font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
     .sub-row{font-size:9.5px;gap:5px;row-gap:3px;}
     .brand .sub{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px;}
     .hdr-status{font-size:9.5px;}
-    .sub-row-sync .hdr-status{font-size:9px;}
+    .sub-row-sync .hdr-status{font-size:9px;white-space:normal;overflow-wrap:anywhere;}
     .import-status{display:none;}
     #pendingWrap, #pendingWrap button{font-size:9.5px;}
-    .hdr-clock{flex-shrink:0;}
+    .hdr-clock{
+      flex-shrink:0;flex-direction:row;flex-basis:100%;align-items:baseline;
+      justify-content:space-between;width:100%;margin-top:2px;padding-top:8px;padding-right:0;
+      border-top:1px solid rgba(255,255,255,.10);
+    }
     .hdr-clock-time{font-size:19px;}
-    .hdr-clock-date{font-size:10.5px;}
+    .hdr-clock-date{font-size:10.5px;margin-top:0;}
 
     /* ---- Toolbar: was a single horizontally-scrolling row on
        mobile (overflow-x:auto), which hid buttons off-screen and
@@ -610,33 +615,15 @@
     .toast{left:16px;right:16px;bottom:calc(16px + var(--safe-b));text-align:center;}
   }
 
-  /* ---- Narrow phones: brand text (hamburger + title + status pills)
-     and the clock used to fight for the same single row, so both got
-     squeezed and the date was dropped entirely below 420px. Instead,
-     once things get this tight, the clock moves to its own full-width
-     row under the brand — time and date sit side by side there, at a
-     readable size, with nothing cropped or hidden. ---- */
+  /* ---- Narrow phones: shrink the clock a touch further; the full-width
+     stacked layout itself is already set at the 640px breakpoint above. ---- */
   @media(max-width:480px){
-    .topband{flex-wrap:wrap;}
-    .brand{flex-basis:100%;}
-    .hdr-clock{
-      flex-direction:row;
-      flex-basis:100%;
-      align-items:baseline;
-      justify-content:space-between;
-      width:100%;
-      margin-top:2px;
-      padding-top:8px;
-      padding-right:0;
-      border-top:1px solid rgba(255,255,255,.10);
-    }
     .hdr-clock-time{font-size:17px;}
-    .hdr-clock-date{font-size:11px;margin-top:0;}
+    .hdr-clock-date{font-size:11px;}
   }
 
   @media(max-width:420px){
     .fact-grid{grid-template-columns:1fr 1fr;}
-    #connStatus{display:none;}
   }
 
   /* ---------- Touch input: prevent iOS/Android auto-zoom-on-focus and

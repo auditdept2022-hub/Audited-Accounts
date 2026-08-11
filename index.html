@@ -780,6 +780,23 @@
                 </div>
               </div>
             </div>
+            <div class="status-switch" id="sortSwitch">
+              <button class="btn" id="sortBtn" onclick="toggleSortMenu_(event)" title="Sort the list — this also reorders the rows on the actual sheet">⇅ Sort: Default</button>
+              <div class="status-menu" id="sortMenu">
+                <div class="status-menu-list">
+                  <button type="button" class="status-option active" data-sortby="" data-dir=""><span class="so-label">Default (sheet order)</span></button>
+                  <button type="button" class="status-option" data-sortby="customer" data-dir="asc"><span class="so-label">Customer name (A–Z)</span></button>
+                  <button type="button" class="status-option" data-sortby="customer" data-dir="desc"><span class="so-label">Customer name (Z–A)</span></button>
+                  <button type="button" class="status-option" data-sortby="dueDate" data-dir="asc"><span class="so-label">Due date (earliest first)</span></button>
+                  <button type="button" class="status-option" data-sortby="dueDate" data-dir="desc"><span class="so-label">Due date (latest first)</span></button>
+                  <button type="button" class="status-option" data-sortby="begBal" data-dir="desc"><span class="so-label">Beg. balance (high–low)</span></button>
+                  <button type="button" class="status-option" data-sortby="begBal" data-dir="asc"><span class="so-label">Beg. balance (low–high)</span></button>
+                  <button type="button" class="status-option" data-sortby="customerStatus" data-dir="asc"><span class="so-label">Customer status (A–Z)</span></button>
+                  <button type="button" class="status-option" data-sortby="dateOfAudit" data-dir="desc"><span class="so-label">Last audited (newest first)</span></button>
+                  <button type="button" class="status-option" data-sortby="dateOfAudit" data-dir="asc"><span class="so-label">Last audited (oldest first)</span></button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         </div>
@@ -3744,6 +3761,7 @@
     closeViewMenu_();
     closeStatusMenu_();
     closeRemarkMenu_();
+    closeSortMenu_();
   });
 
   // ---- Remarks filter — same custom dropdown-menu shell as the status
@@ -3783,6 +3801,154 @@
   document.addEventListener('click', (e)=>{
     if(!e.target.closest('#remarkSwitch')) closeRemarkMenu_();
   });
+
+  // ---- Sort — same dropdown shell as the status/remark filters, but
+  // picking an option also physically reorders the branch's rows on the
+  // actual sheet (via the sortBranch backend action), not just how the
+  // dashboard draws them. That way opening the raw spreadsheet, exporting
+  // it, or printing it shows the same order as the dashboard.
+  //
+  // Because sorting changes every customer's row number, it's blocked
+  // while there are unsynced offline edits queued for this branch (they
+  // reference row numbers that a reorder would immediately make stale) —
+  // sync first, the same way switching branches nudges you to.
+  let sortByValue_ = '';
+  let sortDirValue_ = '';
+  const SORT_LABELS_ = {
+    'customer:asc': 'Name (A–Z)',
+    'customer:desc': 'Name (Z–A)',
+    'dueDate:asc': 'Due date ↑',
+    'dueDate:desc': 'Due date ↓',
+    'begBal:desc': 'Balance ↓',
+    'begBal:asc': 'Balance ↑',
+    'customerStatus:asc': 'Status (A–Z)',
+    'dateOfAudit:desc': 'Last audited ↓',
+    'dateOfAudit:asc': 'Last audited ↑'
+  };
+  function sortMenuKeyFor_(sortBy, dir){ return sortBy ? sortBy + ':' + dir : ''; }
+  function updateSortBtn_(){
+    const btn = document.getElementById('sortBtn');
+    if(!btn) return;
+    const label = SORT_LABELS_[sortMenuKeyFor_(sortByValue_, sortDirValue_)] || 'Default';
+    btn.textContent = '⇅ Sort: ' + label;
+  }
+  function syncSortOptionActive_(){
+    const key = sortMenuKeyFor_(sortByValue_, sortDirValue_);
+    document.querySelectorAll('#sortMenu .status-option').forEach(opt=>{
+      opt.classList.toggle('active', sortMenuKeyFor_(opt.dataset.sortby, opt.dataset.dir) === key);
+    });
+  }
+  function toggleSortMenu_(e){
+    if(e) e.stopPropagation();
+    const menu = document.getElementById('sortMenu');
+    if(menu.classList.contains('open')){
+      closeSortMenu_();
+    } else {
+      syncSortOptionActive_();
+      openPositionedMenu(menu, document.getElementById('sortBtn'));
+    }
+  }
+  function closeSortMenu_(){
+    closePositionedMenu(document.getElementById('sortMenu'));
+  }
+  document.getElementById('sortMenu').addEventListener('click', (e)=>{
+    e.stopPropagation();
+    const opt = e.target.closest('.status-option');
+    if(opt) applySort_(opt.dataset.sortby || '', opt.dataset.dir || '');
+  });
+  document.addEventListener('click', (e)=>{
+    if(!e.target.closest('#sortSwitch')) closeSortMenu_();
+  });
+
+  // Client-side comparator mirroring the backend's sortBranch() logic
+  // exactly (numeric / date / text field groups, blanks always last,
+  // stable tie-break) — used only for the instant optimistic re-sort
+  // below, while the real reorder happens on the sheet in the background.
+  function clientSort_(list, sortBy, dir){
+    const numericFields = { ma:1, begBal:1, dueThisMonth:1, paymentAdv:1, penaltyDue:1 };
+    const dateFields = { releaseDate:1, dueDate:1, dateOfAudit:1 };
+    const kind = numericFields[sortBy] ? 'numeric' : (dateFields[sortBy] ? 'date' : 'text');
+    const descending = dir === 'desc';
+    function val(c){
+      const raw = c[sortBy];
+      if(kind === 'numeric'){
+        const n = Number(raw);
+        const blank = raw === '' || raw == null || isNaN(n);
+        return { blank: blank, v: blank ? 0 : n };
+      }
+      if(kind === 'date'){
+        if(!raw) return { blank: true, v: 0 };
+        const t = new Date(raw).getTime();
+        return { blank: isNaN(t), v: isNaN(t) ? 0 : t };
+      }
+      const s = str_(raw).toLowerCase();
+      return { blank: s === '', v: s };
+    }
+    return list
+      .map((c, i) => ({ c: c, i: i }))
+      .sort((A, B) => {
+        const a = val(A.c), b = val(B.c);
+        if(a.blank !== b.blank) return a.blank ? 1 : -1;
+        if(a.blank && b.blank) return A.i - B.i;
+        let cmp = a.v < b.v ? -1 : (a.v > b.v ? 1 : 0);
+        if(cmp === 0) return A.i - B.i;
+        return descending ? -cmp : cmp;
+      })
+      .map(x => x.c);
+  }
+
+  async function applySort_(sortBy, dir){
+    closeSortMenu_();
+
+    if(!sortBy){
+      // "Default (sheet order)" — just show whatever's actually on the
+      // sheet right now, in its current physical row order.
+      sortByValue_ = ''; sortDirValue_ = '';
+      updateSortBtn_();
+      syncSortOptionActive_();
+      loadData();
+      return;
+    }
+
+    if(outbox.length){
+      toast('Sync your ' + outbox.length + ' pending change(s) first — sorting renumbers every row on the sheet.');
+      return;
+    }
+    if(isLoading) return;
+
+    sortByValue_ = sortBy; sortDirValue_ = dir;
+    updateSortBtn_();
+    syncSortOptionActive_();
+
+    // Instant optimistic re-sort so the list reorders right away, while
+    // the actual sheet reorder happens in the background below.
+    customers = clientSort_(customers, sortBy, dir);
+    render();
+
+    isLoading = true;
+    const prevStatus = document.getElementById('connStatus').textContent;
+    document.getElementById('connStatus').textContent = 'Sorting…';
+    try{
+      const data = await apiCallJson_('sortBranch', { sortBy: sortBy, dir: dir });
+      const fresh = data.customers || [];
+      lastListHash = listHash_(fresh);
+      customers = fresh;
+      // Row numbers just moved underneath every customer, so a cache
+      // entry keyed by "row 5" no longer necessarily describes the same
+      // customer it did a moment ago — drop it all rather than risk
+      // showing stale HTML under the right signature by coincidence.
+      rowHtmlCache.clear();
+      saveLocalCache_(customers);
+      render();
+      document.getElementById('connStatus').textContent = 'synced ' + new Date().toLocaleTimeString();
+    }catch(err){
+      toast('Could not sort: ' + err.message);
+      document.getElementById('connStatus').textContent = prevStatus;
+      loadData(); // fall back to a plain reload so the screen matches the sheet
+    }finally{
+      isLoading = false;
+    }
+  }
 
   function fmtMoney(n){
     n = Number(n) || 0;

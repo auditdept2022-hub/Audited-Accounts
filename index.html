@@ -125,6 +125,11 @@
      source order or viewport width. */
   .toolbar-search{width:100%;order:1;display:flex;}
   .toolbar-search .input{width:100%;max-width:340px;min-width:0;}
+  /* On desktop this wrapper is invisible to layout — .left/.right stay
+     direct flex children of .toolbar exactly as before. Only the mobile
+     breakpoint below turns it into an actual collapsible block. */
+  .toolbar-extra{display:contents;}
+  .toolbar-toggle{display:none;}
 
   .input, select{border:1px solid #D7DCF0;background:#F8F9FD;border-radius:9px;padding:9px 12px;font-size:13px;color:var(--text);outline:none;transition:border-color .15s, box-shadow .15s;font-family:inherit;}
   .input{min-width:230px;}
@@ -566,7 +571,11 @@
        mobile (overflow-x:auto), which hid buttons off-screen and
        needed a swipe to reach them. Now it wraps onto as many rows
        as it needs instead, so every control is visible without any
-       side-scrolling — the toolbar just grows taller. ---- */
+       side-scrolling — the toolbar just grows taller. ----
+       On top of that: import/export/print/select and the status/view/
+       remarks filters are now tucked behind a collapsible section, so
+       only the search box (and the ▾ toggle) show by default and the
+       customer list starts right below it — tap ▾ to reveal the rest. ---- */
     .toolbar{
       flex-direction:column;
       align-items:stretch;
@@ -582,13 +591,25 @@
     }
     .toolbar .left{order:1;padding-right:0;}
     .toolbar .right{order:2;padding-right:0;}
-    .toolbar-search{order:3;}
+    .toolbar-search{order:1;gap:8px;align-items:center;}
+    .toolbar-search .input{flex:1;min-width:0;}
     .toolbar .btn, .toolbar select{flex:0 0 auto;}
     .toolbar .input{min-width:0;width:100%;}
     .filter-row{display:flex;flex-wrap:wrap;width:100%;gap:8px;}
     .filter-row .view-switch, .filter-row .status-switch, .filter-row select{flex:1 1 140px;min-width:120px;}
     .filter-row .view-switch .btn, .filter-row .status-switch .btn{width:100%;}
     .filter-row select{width:100%;}
+
+    .toolbar-toggle{
+      display:flex;align-items:center;justify-content:center;flex-shrink:0;
+      width:38px;height:38px;border:1px solid var(--line);background:#fff;border-radius:10px;
+      color:var(--muted);font-size:13px;cursor:pointer;
+      transition:transform .18s ease,background .15s,color .15s;
+    }
+    .toolbar-toggle:hover{background:#F4F5FB;color:var(--text);}
+    .toolbar-toggle.open{transform:rotate(180deg);color:var(--accent);border-color:#B9C4EE;background:var(--accent-soft);}
+    .toolbar-extra{display:none;order:2;width:100%;}
+    .toolbar-extra.open{display:flex;flex-direction:column;gap:10px;padding-top:10px;border-top:1px solid var(--line);margin-top:2px;}
 
     .view-menu, .status-menu{left:0;right:auto;width:100%;max-width:none;}
 
@@ -677,6 +698,7 @@
     <div id="dashPanel" style="display:none;">
       <div id="conflictBanner" style="display:none;"></div>
       <div class="toolbar" style="margin-top:6px;">
+        <div class="toolbar-extra" id="toolbarExtra">
         <div class="left">
           <button class="btn" onclick="document.getElementById('importAccountsInput').click()" title="Import an STA-style account report (.xls/.xlsx), the kind with grouped sections like &quot;BNEW - OD&quot; instead of a plain status column. Reads Customer, Model, Engine No, Release/Rstr Date, Due Date, Term, MA &amp; Beg Bal, and turns each section header into that row's Customer Status (e.g. section &quot;BNEW - OD&quot; → status &quot;OD - BN&quot;). Existing accounts (matched by name + engine no.) are refreshed with this info; accounts not already on the list are added as new. Due This Month / Payment (Adv) / Penalty Due are always reset to 0 by this import (use Import Balances afterward to fill them in) — Remarks / Date of Audit are never touched.">⇪ Import Accounts</button>
           <input type="file" id="importAccountsInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
@@ -733,8 +755,10 @@
             </div>
           </div>
         </div>
+        </div>
         <div class="toolbar-search">
           <input class="input" id="searchBox" placeholder="Search customer, model, engine no...">
+          <button type="button" class="toolbar-toggle" id="toolbarToggleBtn" onclick="toggleToolbarExtra_()" title="Show import/export &amp; filters" aria-expanded="false" aria-controls="toolbarExtra">▾</button>
         </div>
       </div>
 
@@ -4126,6 +4150,21 @@
       btn.disabled = false;
       btn.textContent = originalLabel;
     }
+  }
+
+  // ---- Mobile: collapsible toolbar (import/export/print/select +
+  // view/status/remarks filters) tucked behind a ▾ toggle next to the
+  // search box, so the search bar + customer list are what's visible by
+  // default. Desktop is unaffected — .toolbar-extra is `display:contents`
+  // there, so this class toggle has no visual effect above the 640px
+  // breakpoint where the collapsing CSS actually applies. ----
+  function toggleToolbarExtra_(){
+    const extra = document.getElementById('toolbarExtra');
+    const btn = document.getElementById('toolbarToggleBtn');
+    const isOpen = extra.classList.toggle('open');
+    btn.classList.toggle('open', isOpen);
+    btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    btn.title = isOpen ? 'Hide import/export & filters' : 'Show import/export & filters';
   }
 
   let searchDebounce;

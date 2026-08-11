@@ -2018,8 +2018,8 @@
         else if(cols.adv === undefined && norm === 'adv') cols.adv = idx;
       });
       // Needs a customer column, a beginning-balance column, the "Adv"
-      // (penalty) column, and BOTH repeated TTL columns (due-this-month
-      // total + the second block's total) — that combination is specific
+      // (advance payment) column, and BOTH repeated TTL columns
+      // (due-this-month total + the penalty block's total) — that combination is specific
       // enough to this report shape that it won't misfire on an
       // ordinary Balances/Remarks file.
       if(cols.customer !== undefined && cols.begBal !== undefined && cols.adv !== undefined && ttlIdxs.length >= 2){
@@ -2104,8 +2104,8 @@
         ma: isNaN(maVal) ? 0 : maVal,
         begBal: begBal,
         dueThisMonth: isNaN(ttl1) ? 0 : ttl1,
-        penaltyDue: isNaN(adv) ? 0 : adv,
-        paymentAdv: (isNaN(ttl2) ? 0 : ttl2) - (isNaN(adv) ? 0 : adv),
+        paymentAdv: isNaN(adv) ? 0 : adv,
+        penaltyDue: isNaN(ttl2) ? 0 : ttl2,
         customerStatus: currentStatus
       });
     }

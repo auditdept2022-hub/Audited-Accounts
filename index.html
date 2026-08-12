@@ -3678,13 +3678,14 @@
     }
   }
 
-  // isColdStartRetry is INTERNAL ONLY — set by loadData itself when it
-  // re-calls itself after a timeout (see the AbortError branch in the
+  // isColdStartRetryCount is INTERNAL ONLY — set by loadData itself when
+  // it re-calls itself after a timeout (see the AbortError branch in the
   // catch block below). Every real call site in this file calls
-  // loadData() with no arguments, so this is always falsy for a
-  // user/timer-initiated load and only becomes true for the one
-  // automatic follow-up attempt.
-  async function loadData(isColdStartRetry){
+  // loadData() with no arguments, so this is always 0/undefined for a
+  // user/timer-initiated load and only increments for the automatic
+  // follow-up attempts.
+  async function loadData(isColdStartRetryCount){
+    isColdStartRetryCount = isColdStartRetryCount || 0;
     if(!API_URL){
       document.getElementById('setupPanel').style.display = 'block';
       document.getElementById('dashPanel').style.display = 'none';
@@ -3786,22 +3787,26 @@
       // and the FIRST request after idle paid that cost — by the time
       // this catch runs, the instance is usually warm. Rather than
       // making the person notice the message and tap ⟳ themselves, retry
-      // ONCE automatically here. This is deliberately narrower than the
-      // old "auto-retry everything" behavior that caused 60-75s silent
-      // hangs (see the big comment on fetchJsonRetry_ above):
-      //   - it only ever fires once per load (isColdStartRetry guards
-      //     against a second timeout triggering a third attempt)
+      // automatically here, up to MAX_COLD_START_RETRIES times. This is
+      // deliberately narrower than the old "auto-retry everything"
+      // behavior that caused 60-75s silent hangs (see the big comment on
+      // fetchJsonRetry_ above):
+      //   - it's capped (isColdStartRetryCount guards against runaway
+      //     retries) — a genuinely large/slow branch gets a fair second
+      //     and third chance to warm up before giving up, rather than
+      //     failing after a single 30s window
       //   - the status line updates immediately, so nothing is silent —
       //     if cached data is already on screen the retry just runs
       //     quietly underneath it with no visible interruption
       //   - it is NOT used for writes (queueOrSend_ / sendOne_ never
       //     call loadData, so a queued create/update is never
       //     double-submitted by this)
-      if(err && err.name === 'AbortError' && !isColdStartRetry){
-        document.getElementById('connStatus').textContent = paintedFromCache
+      const MAX_COLD_START_RETRIES = 2;
+      if(err && err.name === 'AbortError' && isColdStartRetryCount < MAX_COLD_START_RETRIES){
+        document.getElementById('connStatus').textContent = customers.length > 0
           ? 'Sync failed — showing cached data. Retrying (cold start)…'
           : 'Cold start — retrying automatically…';
-        setTimeout(() => { loadData(true); }, 300);
+        setTimeout(() => { loadData(isColdStartRetryCount + 1); }, 300);
         return;
       }
 
@@ -3814,13 +3819,34 @@
       // needs redeploying / set to Anyone") instead of a raw
       // "Unexpected token '<'..." JSON parse error.
       const friendly = isConnectionError_(err) ? connectionErrorLabel_(err) : err.message;
-      if(paintedFromCache){
+      // NOTE: deliberately checking `customers.length` here, not the
+      // call-local `paintedFromCache` above. `paintedFromCache` only
+      // reflects whether THIS particular invocation just painted from
+      // cache — but a cold-start retry is a brand-new call to loadData(),
+      // and by then `customers` is already populated from the FIRST
+      // call's cache-paint, so the `if(customers.length === 0)` guard
+      // above skips straight past setting `paintedFromCache` on the
+      // retry. That used to make a retry's failure look like "nothing
+      // was ever on screen" and fire the hard error + toast even though
+      // the person's cached data was sitting there the whole time —
+      // exactly the spurious error toast seen on a slow cold start.
+      // `customers.length > 0` is accurate across the whole retry chain:
+      // switching branches clears `customers` immediately, so a non-empty
+      // list here can only mean data for THIS sheet is genuinely visible.
+      const hasDataOnScreen = customers.length > 0;
+      if(hasDataOnScreen){
         document.getElementById('connStatus').textContent =
           'Sync failed — showing cached data. (' + friendly + ')';
+        // Deliberately NO toast here. The person already has correct,
+        // usable data on screen; a popup error for "the background
+        // refresh is still waiting on a slow Apps Script cold start" is
+        // just noise with nothing to act on — the status line above
+        // already says so, quietly, and the next auto-refresh (or a
+        // manual ⟳) will simply try again.
       } else {
         document.getElementById('connStatus').textContent = 'Connection error — ' + friendly;
+        toast('Could not load data: ' + friendly);
       }
-      toast('Could not load data: ' + friendly);
     }finally{
       isLoading = false;
       updateRefreshLock_(false);

@@ -2658,13 +2658,12 @@
     updateSyncUI();
     toast('Switched to ' + name + '.');
     // Not awaited: loadData() paints instantly from this branch's local
-    // cache (if it's been visited before, or was warmed by
-    // prefetchOtherBranches_) before it ever touches the network, so the
-    // switch itself never has to wait on an Apps Script round trip. The
-    // live fetch then continues underneath and swaps in fresh data —
-    // or, if you flip branches again quickly, is safely discarded by the
-    // generation/sheet guard inside loadData() instead of racing onto
-    // the screen.
+    // cache if it's been visited before in this browser, before it ever
+    // touches the network, so the switch itself never has to wait on an
+    // Apps Script round trip. The live fetch then continues underneath
+    // and swaps in fresh data — or, if you flip branches again quickly,
+    // is safely discarded by the generation/sheet guard inside loadData()
+    // instead of racing onto the screen.
     loadData();
   }
 
@@ -3158,9 +3157,9 @@
   //      bad response can be diagnosed (and reported clearly via
   //      connectionErrorLabel_ above) instead of just re-thrown as-is.
   const FETCH_TIMEOUT_MS = 25000;
-  async function fetchJson_(url){
+  async function fetchJson_(url, timeoutMs){
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs || FETCH_TIMEOUT_MS);
     let res;
     try{
       res = await fetch(url, { cache: 'no-store', signal: controller.signal });
@@ -3182,29 +3181,31 @@
     return data;
   }
 
-  // Retries a READ-ONLY fetchJson_ call a couple of times before giving up.
-  // Only ever used for idempotent GETs (list / listSheets) — never for
-  // writes, where blindly retrying could double-submit a create/update.
-  // Apps Script cold starts and one-off redirect hiccups are common
-  // enough that a single transient failure shouldn't surface as a hard
-  // "sync failed" to the user when the very next attempt, moments later,
-  // usually just works. Each retry waits a bit longer than the last.
-  async function fetchJsonRetry_(url, retries){
-    retries = (retries == null) ? 2 : retries;
-    let lastErr;
-    for(let attempt = 0; attempt <= retries; attempt++){
-      try{
-        return await fetchJson_(url);
-      }catch(err){
-        lastErr = err;
-        // Only retry connection/parse/timeout issues — a real application
-        // error ({error:"..."} from the backend) will just fail identically
-        // again, so surface it immediately instead of stalling on retries.
-        if(attempt === retries || !isConnectionError_(err)) throw err;
-        await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
-      }
+  // Retries a READ-ONLY fetchJson_ call before giving up. Only ever used
+  // for idempotent GETs (list / listSheets) — never for writes, where
+  // blindly retrying could double-submit a create/update.
+  //
+  // IMPORTANT: a timeout (AbortError) is NEVER auto-retried with another
+  // full-length wait. Retrying a timeout by just asking again is what
+  // used to turn one 25s cold-start wait into a 60-75s ordeal before any
+  // feedback ever reached the screen — worse than doing nothing. Instead:
+  //   - A fast connection drop or a bad/HTML response (TypeError /
+  //     SyntaxError) usually clears in well under a second, so those get
+  //     one quick retry.
+  //   - A genuine timeout is surfaced immediately, so the person sees
+  //     what's happening and the manual "Retry" is right there — by
+  //     then the Apps Script instance is usually warm, so that retry is
+  //     fast, instead of silently waiting through a second full timeout
+  //     they can't see.
+  async function fetchJsonRetry_(url){
+    try{
+      return await fetchJson_(url);
+    }catch(err){
+      if(err && err.name === 'AbortError') throw err; // timeout — don't pile on another wait
+      if(!isConnectionError_(err)) throw err; // a real application error — retrying won't change it
+      await new Promise(r => setTimeout(r, 400));
+      return fetchJson_(url);
     }
-    throw lastErr;
   }
 
   // ---- Queueing ---------------------------------------------------------
@@ -3580,9 +3581,9 @@
   }
 
   // `sheet` defaults to currentSheet everywhere it's omitted (every
-  // existing call site), but accepting it explicitly lets background
-  // prefetch (see prefetchOtherBranches_) warm the cache for a branch
-  // that isn't the one currently on screen.
+  // existing call site), but accepting it explicitly lets loadData()
+  // safely cache a late/stale response under the branch it actually
+  // belongs to without touching the branch currently on screen.
   function saveLocalCache_(list, sheet){
     try{
       localStorage.setItem(localCacheKey_(sheet), JSON.stringify({ customers: list, ts: Date.now() }));
@@ -4708,55 +4709,6 @@
     loadData();
   }, AUTO_REFRESH_MS);
 
-  // ---- Background prefetch of other branches ---------------------------
-  // Switching branches is only instant when that branch's data is already
-  // sitting in localStorage (see loadData()'s cache-paint). The very
-  // first visit to any given branch still has to pay for one real Apps
-  // Script round trip — nothing can avoid that — but once the branch list
-  // is known, every OTHER branch can be quietly warmed in the background
-  // while the person is looking at their current one, so the next switch
-  // (and the one after that) is instant instead of a cold fetch.
-  //
-  // Deliberately conservative: one branch at a time, small gap between
-  // each, skipped entirely while offline or while the tab is hidden, and
-  // never overlapping a real foreground load (isLoading is shared, so a
-  // prefetch in flight still respects the same lock/coalescing as
-  // everything else).
-  let prefetchQueue_ = null;   // null = not yet built; [] once exhausted
-  let prefetchRunning_ = false;
-  function prefetchOtherBranches_(){
-    if(prefetchRunning_ || !API_URL) return;
-    if(!navigator.onLine || document.hidden) return; // resumed by the listeners below
-    if(prefetchQueue_ === null){
-      const sheets = (profilesCache_ && profilesCache_.length)
-        ? profilesCache_
-        : ((loadSheetsCache_() || {}).sheets || []);
-      prefetchQueue_ = sheets.filter(s => s !== currentSheet);
-    }
-    if(!prefetchQueue_.length) return;
-    prefetchRunning_ = true;
-    (async () => {
-      while(prefetchQueue_.length){
-        if(!navigator.onLine || document.hidden) break; // pause; resumed below
-        const s = prefetchQueue_.shift();
-        const cached = loadLocalCache_(s);
-        // Skip a branch we already have a reasonably fresh copy of.
-        if(cached && (Date.now() - cached.ts) < AUTO_REFRESH_MS) continue;
-        try{
-          const data = await fetchCustomerList_(s);
-          saveLocalCache_(data.customers || [], s);
-        }catch(e){
-          // Best-effort — a failed prefetch just means that branch falls
-          // back to a normal live fetch whenever it's actually opened.
-        }
-        await new Promise(r => setTimeout(r, 500)); // stay well out of the way of anything foreground
-      }
-      prefetchRunning_ = false;
-    })();
-  }
-  document.addEventListener('visibilitychange', () => { if(!document.hidden) prefetchOtherBranches_(); });
-  window.addEventListener('online', prefetchOtherBranches_);
-
   // Boot
   if(API_URL){
     (async () => {
@@ -4766,16 +4718,6 @@
       document.getElementById('dashPanel').style.display = 'block';
       await loadData();
       if(outbox.length) syncOutbox();
-      // Warm the branch list, then quietly prefetch the rest, well after
-      // the current branch's own data is already on screen.
-      setTimeout(async () => {
-        try{
-          const data = await apiCallJsonRead_('listSheets', {});
-          profilesCache_ = data.sheets || profilesCache_;
-          saveSheetsCache_(profilesCache_);
-        }catch(e){ /* fall back to whatever's cached, if anything */ }
-        prefetchOtherBranches_();
-      }, 1500);
     })();
   } else {
     document.getElementById('setupPanel').style.display = 'block';

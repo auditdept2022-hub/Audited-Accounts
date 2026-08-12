@@ -4216,6 +4216,88 @@
     });
   }
 
+  // Keyed DOM reconciliation for the customer list, keyed on data-row.
+  //
+  // Given the desired order (`filtered`) and the HTML string + signature
+  // already computed for each of those rows (`parts[i]` / `sigs[i]` —
+  // built once in render(), reusing rowHtmlCache so unchanged rows don't
+  // even re-stringify), this walks the ACTUAL DOM children of `container`
+  // and does the minimum work needed to make it match:
+  //   - a row whose signature is identical to what's already on screen is
+  //     left completely alone — no new element, no reflow, nothing
+  //   - a row whose signature changed gets ONLY that element swapped out
+  //   - a row that moved (e.g. after a sort or a marker changing its
+  //     status grouping) gets its existing element relocated, not rebuilt
+  //   - a row no longer present (deleted, or filtered out) gets removed
+  //   - a genuinely new row gets a new element inserted at its position
+  //
+  // This is what actually delivers "only the light changes refresh" —
+  // rowHtmlCache upstream already skipped re-building HTML for unchanged
+  // rows, but every render still nuked and re-created the whole list's
+  // DOM via one big innerHTML write. This is the piece that stops that:
+  // the DOM itself now only changes where the data itself changed.
+  //
+  // Click/change handlers are delegated on #tableBody itself (see the
+  // tableBody 'click'/'change' listeners below), not attached per-row, so
+  // swapping or moving individual row elements here is always safe — it
+  // never orphans an event listener.
+  function patchTableBody_(container, filtered, parts, sigs){
+    const existing = new Map();
+    Array.from(container.children).forEach(el => {
+      const r = Number(el.dataset.row);
+      if(!isNaN(r) && !existing.has(r)){
+        existing.set(r, el);
+      } else if(isNaN(r)){
+        // Not a real row — e.g. a skeletonHtml() loading placeholder,
+        // which has no data-row at all. Those are only ever meant to be
+        // shown until the first real render replaces them; without this
+        // they'd never be cleaned up (they're invisible to the row-keyed
+        // logic below) and would sit orphaned in the DOM forever,
+        // interleaved with real rows.
+        el.remove();
+      }
+    });
+
+    let refNode = container.firstChild;
+
+    for(let i = 0; i < filtered.length; i++){
+      const row = filtered[i].row;
+      let el = existing.get(row);
+
+      if(el){
+        existing.delete(row); // consumed — whatever's left over at the end gets removed
+        if(el.__aaSig !== sigs[i]){
+          const tmp = document.createElement('div');
+          tmp.innerHTML = parts[i];
+          const fresh = tmp.firstElementChild;
+          fresh.__aaSig = sigs[i];
+          if(el === refNode) refNode = el.nextSibling;
+          container.replaceChild(fresh, el);
+          el = fresh;
+        }
+      } else {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = parts[i];
+        el = tmp.firstElementChild;
+        el.__aaSig = sigs[i];
+      }
+
+      // Make sure `el` sits at the right position. If it's already the
+      // next node in document order, nothing to do; otherwise move it
+      // (insertBefore relocates rather than duplicates if it's already
+      // in the tree elsewhere in `container`).
+      if(el !== refNode){
+        container.insertBefore(el, refNode);
+      } else {
+        refNode = refNode.nextSibling;
+      }
+    }
+
+    // Anything left in `existing` is a row that's no longer in the
+    // filtered/live list at all — remove its element.
+    existing.forEach(el => el.remove());
+  }
+
   function render(){
     populateStatusFilter_();
     const conflictRows = new Set(outbox.filter(o => o.status === 'conflict' || o.status === 'error').map(o => o.row));
@@ -4239,12 +4321,14 @@
     }
 
     const parts = new Array(filtered.length);
+    const sigs = new Array(filtered.length); // parallel to parts — one signature per row, used by patchTableBody_ below to skip untouched DOM nodes entirely
 
     for(let i = 0; i < filtered.length; i++){
       const c = filtered[i];
       const isConflict = conflictRows.has(c.row);
       const mark = c.marker || '';
       const sig = rowSignature_(c, isConflict, mark);
+      sigs[i] = sig;
 
       const cached = rowHtmlCache.get(c.row);
       if(cached && cached.sig === sig){
@@ -4317,8 +4401,18 @@
       rowHtmlCache.set(c.row, { sig, html });
     }
 
-    // Single DOM write avoids a reflow per row.
-    document.getElementById('tableBody').innerHTML = parts.join('');
+    // Patch the live DOM in place instead of replacing it wholesale.
+    // Previously this did one `tableBody.innerHTML = parts.join('')` every
+    // render — cheap to build (thanks to rowHtmlCache above) but still a
+    // full teardown/rebuild of every row's actual DOM node on every call,
+    // even the ones whose HTML string didn't change at all. That's what
+    // caused a "flash"/full refresh feel on every sync even when only one
+    // customer actually changed. patchTableBody_ below walks the existing
+    // DOM by row number and only replaces the specific node(s) whose
+    // signature changed, reorders nodes that moved (e.g. after a sort),
+    // removes rows that are gone, and leaves everything else — its exact
+    // DOM node, scroll position, any CSS transition mid-flight — untouched.
+    patchTableBody_(document.getElementById('tableBody'), filtered, parts, sigs);
 
     // Checkbox "checked" state is intentionally NOT part of rowSignature_/
     // the per-row HTML cache above (selecting/deselecting shouldn't force

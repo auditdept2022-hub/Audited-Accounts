@@ -2540,7 +2540,10 @@
     unlockBodyScroll();
   }
 
-  async function loadProfiles_(){
+  // isColdStartRetry is INTERNAL ONLY — see the matching note on
+  // loadData(); every real call site (drawer open, ☰ menu, retry link)
+  // calls loadProfiles_() with no arguments.
+  async function loadProfiles_(isColdStartRetry){
     const listEl = document.getElementById('profileList');
     const noteEl = document.getElementById('profileOfflineNote');
     noteEl.style.display = 'none';
@@ -2552,7 +2555,7 @@
     if(cached && cached.sheets.length){
       profilesCache_ = cached.sheets;
       renderProfileList_(profilesCache_);
-    } else {
+    } else if(!isColdStartRetry){
       listEl.innerHTML = '<div class="profile-skeleton"></div><div class="profile-skeleton"></div><div class="profile-skeleton"></div>';
     }
 
@@ -2562,6 +2565,19 @@
       saveSheetsCache_(profilesCache_);
       renderProfileList_(profilesCache_);
     }catch(err){
+      // Same reasoning as loadData()'s AbortError branch: a timeout here
+      // is almost always a one-off Apps Script cold start, so retry once,
+      // automatically, instead of leaving the person to notice and tap
+      // Retry themselves. Only fires once (isColdStartRetry guards a
+      // second timeout from chaining a third attempt).
+      if(err && err.name === 'AbortError' && !isColdStartRetry){
+        if(cached && cached.sheets.length){
+          noteEl.style.display = 'flex';
+          noteEl.textContent = '⚠ Retrying (cold start)…';
+        }
+        setTimeout(() => { loadProfiles_(true); }, 300);
+        return;
+      }
       if(cached && cached.sheets.length){
         // Already showing a working list from cache — don't blow it away
         // over a failed background refresh, just flag that it might be
@@ -3605,7 +3621,13 @@
     }
   }
 
-  async function loadData(){
+  // isColdStartRetry is INTERNAL ONLY — set by loadData itself when it
+  // re-calls itself after a timeout (see the AbortError branch in the
+  // catch block below). Every real call site in this file calls
+  // loadData() with no arguments, so this is always falsy for a
+  // user/timer-initiated load and only becomes true for the one
+  // automatic follow-up attempt.
+  async function loadData(isColdStartRetry){
     if(!API_URL){
       document.getElementById('setupPanel').style.display = 'block';
       document.getElementById('dashPanel').style.display = 'none';
@@ -3703,6 +3725,29 @@
       if(sheetAtStart !== currentSheet || myGen !== loadGeneration){
         return; // stale — the visible branch/request has already moved on, don't show its error
       }
+      // A timeout (AbortError) almost always means Apps Script was cold
+      // and the FIRST request after idle paid that cost — by the time
+      // this catch runs, the instance is usually warm. Rather than
+      // making the person notice the message and tap ⟳ themselves, retry
+      // ONCE automatically here. This is deliberately narrower than the
+      // old "auto-retry everything" behavior that caused 60-75s silent
+      // hangs (see the big comment on fetchJsonRetry_ above):
+      //   - it only ever fires once per load (isColdStartRetry guards
+      //     against a second timeout triggering a third attempt)
+      //   - the status line updates immediately, so nothing is silent —
+      //     if cached data is already on screen the retry just runs
+      //     quietly underneath it with no visible interruption
+      //   - it is NOT used for writes (queueOrSend_ / sendOne_ never
+      //     call loadData, so a queued create/update is never
+      //     double-submitted by this)
+      if(err && err.name === 'AbortError' && !isColdStartRetry){
+        document.getElementById('connStatus').textContent = paintedFromCache
+          ? 'Sync failed — showing cached data. Retrying (cold start)…'
+          : 'Cold start — retrying automatically…';
+        setTimeout(() => { loadData(true); }, 300);
+        return;
+      }
+
       // If we already painted cached data, leave it on screen — a failed
       // background refresh shouldn't yank the table out from under the
       // user. Only fall back to the hard "Connection error" messaging

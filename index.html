@@ -2321,9 +2321,12 @@
     async function fallbackChunk(chunk){
       for(const item of chunk){
         try{
-          const res = await apiCall(singleAction, toSinglePayload(item));
-          const data = await res.json();
-          if(data.error || !data.ok) throw new Error(data.error || 'unexpected response');
+          // apiCallJson_ (fetchJson_) gives this a timeout + safe JSON
+          // parsing, same as every other call — a stalled/HTML response
+          // during an import used to be able to hang the whole import
+          // indefinitely instead of failing this one row and moving on.
+          const data = await apiCallJson_(singleAction, toSinglePayload(item));
+          if(!data.ok) throw new Error('unexpected response');
           succeeded++;
         }catch(err){
           failed++;
@@ -2338,18 +2341,12 @@
       try{
         const payload = {};
         payload[batchKey] = chunk.map(toBatchItem);
-        const res = await apiCall(batchAction, payload);
-        const data = await res.json();
-        if(data.error) {
-          console.warn(`${batchAction} chunk of ${chunk.length} returned an error, retrying one row at a time:`, data.error);
-          await fallbackChunk(chunk);
-          return;
-        }
+        await apiCallJson_(batchAction, payload);
         succeeded += chunk.length;
         done += chunk.length;
         reportProgress();
       }catch(err){
-        console.warn(`${batchAction} chunk of ${chunk.length} threw (likely a request-too-large or network failure), retrying one row at a time:`, err);
+        console.warn(`${batchAction} chunk of ${chunk.length} threw (likely a request-too-large, timeout, or network failure), retrying one row at a time:`, err);
         await fallbackChunk(chunk);
       }
     }
@@ -2406,19 +2403,28 @@
   // spec), so a POST silently turns into a no-op "list" call with no error.
   // GET requests keep their query string across that redirect, so every
   // write action is sent as a GET with the payload JSON-encoded in the URL.
+  function apiUrl_(action, payload){
+    return API_URL + '?action=' + encodeURIComponent(action) + '&sheet=' + encodeURIComponent(currentSheet) + '&payload=' + encodeURIComponent(JSON.stringify(payload)) + '&_=' + Date.now();
+  }
+  // Kept for the couple of call sites (batch import chunks) that want the
+  // raw Response so they can retry on a non-2xx/parse failure themselves.
   function apiCall(action, payload){
-    const url = API_URL + '?action=' + encodeURIComponent(action) + '&sheet=' + encodeURIComponent(currentSheet) + '&payload=' + encodeURIComponent(JSON.stringify(payload)) + '&_=' + Date.now();
-    return fetch(url, { cache: 'no-store' });
+    return fetch(apiUrl_(action, payload), { cache: 'no-store' });
   }
 
-  // Runs one apiCall and parses its JSON, throwing on either a network
-  // failure or a {error:...} response, so callers have one place to
-  // catch "this didn't actually save."
+  // Runs one apiCall and parses its JSON (via fetchJson_, so it also gets
+  // a timeout and safe-parsing), throwing on network failure, a timeout,
+  // bad/non-JSON response, or a {error:...} response — so callers have
+  // one place to catch "this didn't actually save."
   async function apiCallJson_(action, payload){
-    const res = await apiCall(action, payload);
-    const data = await res.json();
-    if(data.error) throw new Error(data.error);
-    return data;
+    return fetchJson_(apiUrl_(action, payload));
+  }
+
+  // Shared helper for the "get the current customer list" call, used by
+  // both loadData() and syncOutbox() — was previously duplicated in each
+  // with its own res.json() (no timeout, raw parse errors).
+  function fetchCustomerList_(sheetName){
+    return fetchJson_(API_URL + '?action=list&sheet=' + encodeURIComponent(sheetName) + '&_=' + Date.now());
   }
 
   // ---- Branch profiles: menu, switch, create, rename, delete ----------
@@ -3098,17 +3104,64 @@
   // second kind needs to be shown to the user, because retrying it will
   // just fail again in exactly the same way forever.
   //   TypeError  = fetch() itself failed (no connection / CORS / DNS)
-  //   SyntaxError = got a response, but res.json() couldn't parse it
+  //   SyntaxError = got a response, but it wasn't valid JSON
   //                 (almost always an Apps Script auth/config problem,
   //                 not a dropped connection — the message says so)
+  //   AbortError  = our own request-timeout fired (see FETCH_TIMEOUT_MS) —
+  //                 the request never got a response in time, most often
+  //                 an Apps Script cold start or a very large sheet
   function isConnectionError_(err){
-    return err instanceof TypeError || err instanceof SyntaxError || !navigator.onLine;
+    return err instanceof TypeError || err instanceof SyntaxError ||
+      (err && err.name === 'AbortError') || !navigator.onLine;
   }
   function connectionErrorLabel_(err){
+    if(err && err.name === 'AbortError'){
+      return 'The request took too long and timed out. Apps Script can be slow on its first request after a while (cold start) — try again.';
+    }
     if(err instanceof SyntaxError){
       return 'The server didn\'t send back valid data — this usually means the Apps Script deployment needs redeploying, or its access isn\'t set to "Anyone with the link."';
     }
     return 'No connection to the server.';
+  }
+
+  // Every network call to Apps Script goes through this. Two things it
+  // fixes that raw fetch() didn't handle:
+  //   1. Timeout — a bare fetch() can hang forever if Apps Script never
+  //      responds (cold start stall, quota issue, etc.), which is what
+  //      "stuck on Loading… forever" looks like. This aborts after
+  //      FETCH_TIMEOUT_MS and turns it into a clear, retryable error.
+  //   2. JSON parsing — Apps Script sometimes answers with an HTML page
+  //      instead of JSON (a Google sign-in/permission prompt when the
+  //      deployment isn't shared as "Anyone with the link", or a Google-
+  //      side error page) rather than our own jsonOut(). res.json() on
+  //      that throws a raw "Unexpected token '<' ... is not valid JSON"
+  //      SyntaxError, which is exactly what shows up to a user as a
+  //      confusing "json error". This reads the body as text first so a
+  //      bad response can be diagnosed (and reported clearly via
+  //      connectionErrorLabel_ above) instead of just re-thrown as-is.
+  const FETCH_TIMEOUT_MS = 25000;
+  async function fetchJson_(url){
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    let res;
+    try{
+      res = await fetch(url, { cache: 'no-store', signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+    const text = await res.text();
+    let data;
+    try{
+      data = JSON.parse(text);
+    }catch(parseErr){
+      throw new SyntaxError(
+        /^\s*</.test(text)
+          ? 'Server returned a sign-in/permission page instead of data — redeploy the Apps Script as a Web App with access set to "Anyone", then update the URL here.'
+          : ('Server response was not valid JSON: ' + parseErr.message)
+      );
+    }
+    if(data && data.error) throw new Error(data.error);
+    return data;
   }
 
   // ---- Queueing ---------------------------------------------------------
@@ -3202,9 +3255,7 @@
     let serverList = null;
     let listErr = null;
     try{
-      const res = await fetch(API_URL + '?action=list&sheet=' + encodeURIComponent(currentSheet) + '&_=' + Date.now(), { cache: 'no-store' });
-      const data = await res.json();
-      if(data.error) throw new Error(data.error);
+      const data = await fetchCustomerList_(currentSheet);
       serverList = data.customers || [];
     }catch(e){ listErr = e; }
 
@@ -3531,13 +3582,13 @@
     }
 
     try{
-      // cache: 'no-store' plus a timestamp query param means the browser
-      // (and any CDN in front of the page, e.g. GitHub Pages) can never
-      // serve back a stale cached response for this request — including
-      // an old failed/404 response from before a deployment was fixed.
-      const res = await fetch(API_URL + '?action=list&sheet=' + encodeURIComponent(currentSheet) + '&_=' + Date.now(), { cache: 'no-store' });
-      const data = await res.json();
-      if(data.error) throw new Error(data.error);
+      // fetchCustomerList_ (via fetchJson_) adds a timeout plus safe
+      // parsing — cache: 'no-store' plus a timestamp query param means
+      // the browser (and any CDN in front of the page, e.g. GitHub
+      // Pages) can never serve back a stale cached response for this
+      // request — including an old failed/404 response from before a
+      // deployment was fixed.
+      const data = await fetchCustomerList_(currentSheet);
       const fresh = data.customers || [];
 
       // Only actually swap in and re-render when the sheet has genuinely
@@ -3560,14 +3611,19 @@
       // If we already painted cached data, leave it on screen — a failed
       // background refresh shouldn't yank the table out from under the
       // user. Only fall back to the hard "Connection error" messaging
-      // when there was nothing to show in the first place.
+      // when there was nothing to show in the first place. Route through
+      // connectionErrorLabel_ whenever it's a connection/parse/timeout
+      // issue so the user sees an actionable explanation ("deployment
+      // needs redeploying / set to Anyone") instead of a raw
+      // "Unexpected token '<'..." JSON parse error.
+      const friendly = isConnectionError_(err) ? connectionErrorLabel_(err) : err.message;
       if(paintedFromCache){
         document.getElementById('connStatus').textContent =
-          'Sync failed — showing cached data. (' + err.message + ')';
+          'Sync failed — showing cached data. (' + friendly + ')';
       } else {
-        document.getElementById('connStatus').textContent = 'Connection error.';
+        document.getElementById('connStatus').textContent = 'Connection error — ' + friendly;
       }
-      toast('Could not load data: ' + err.message);
+      toast('Could not load data: ' + friendly);
     }finally{
       isLoading = false;
     }

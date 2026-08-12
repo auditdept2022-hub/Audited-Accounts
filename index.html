@@ -89,6 +89,9 @@
   .hdr-status{font-size:10.5px;color:#B7C0E8;white-space:nowrap;}
   .hdr-sync-btn{background:none;border:none;color:#9BA6DC;font-size:12px;cursor:pointer;padding:0 2px;line-height:1;transition:color .15s,transform .15s;}
   .hdr-sync-btn:hover{color:#fff;transform:rotate(90deg);}
+  .hdr-sync-btn:disabled{cursor:default;}
+  .hdr-sync-btn.spinning{animation:hdr-sync-spin .8s linear infinite;color:#fff;}
+  @keyframes hdr-sync-spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
   .sub-row-sync{opacity:.6;margin-top:1px;}
   .sub-row-sync .hdr-status{font-size:9.5px;}
   .sub-row-sync .hdr-sync-btn{font-size:10.5px;}
@@ -699,7 +702,7 @@
         </div>
         <div class="sub-row sub-row-sync">
           <span class="hdr-status" id="connStatus">Not connected yet.</span>
-          <button class="hdr-sync-btn" onclick="loadData()" title="Refresh">⟳</button>
+          <button class="hdr-sync-btn" id="hdrSyncBtn" onclick="manualRefresh_()" title="Refresh">⟳</button>
           <span id="pendingWrap" style="display:none;">· <span class="count" id="pendingCount">0</span> pending <button onclick="syncOutbox()">Sync now</button></span>
         </div>
       </div>
@@ -2420,11 +2423,18 @@
     return fetchJson_(apiUrl_(action, payload));
   }
 
+  // Same as apiCallJson_, but retries on transient connection/parse
+  // failures. Only safe for read-only actions (listSheets) — writes must
+  // keep using apiCallJson_ so a hiccup never causes a duplicate write.
+  async function apiCallJsonRead_(action, payload){
+    return fetchJsonRetry_(apiUrl_(action, payload));
+  }
+
   // Shared helper for the "get the current customer list" call, used by
   // both loadData() and syncOutbox() — was previously duplicated in each
   // with its own res.json() (no timeout, raw parse errors).
   function fetchCustomerList_(sheetName){
-    return fetchJson_(API_URL + '?action=list&sheet=' + encodeURIComponent(sheetName) + '&_=' + Date.now());
+    return fetchJsonRetry_(API_URL + '?action=list&sheet=' + encodeURIComponent(sheetName) + '&_=' + Date.now());
   }
 
   // ---- Branch profiles: menu, switch, create, rename, delete ----------
@@ -2467,7 +2477,7 @@
       if(v && v.trim()){ currentSheet = v.trim(); updateActiveProfileLabel_(); return; }
     }catch(e){ /* ignore, fall through to asking the backend */ }
     try{
-      const data = await apiCallJson_('listSheets', {});
+      const data = await apiCallJsonRead_('listSheets', {});
       const sheets = data.sheets || [];
       saveSheetsCache_(sheets);
       currentSheet = sheets[0] || null;
@@ -2547,7 +2557,7 @@
     }
 
     try{
-      const data = await apiCallJson_('listSheets', {});
+      const data = await apiCallJsonRead_('listSheets', {});
       profilesCache_ = data.sheets || [];
       saveSheetsCache_(profilesCache_);
       renderProfileList_(profilesCache_);
@@ -2646,8 +2656,16 @@
     document.getElementById('tableBody').innerHTML = '';
     loadOutbox_();
     updateSyncUI();
-    await loadData();
     toast('Switched to ' + name + '.');
+    // Not awaited: loadData() paints instantly from this branch's local
+    // cache (if it's been visited before, or was warmed by
+    // prefetchOtherBranches_) before it ever touches the network, so the
+    // switch itself never has to wait on an Apps Script round trip. The
+    // live fetch then continues underneath and swaps in fresh data —
+    // or, if you flip branches again quickly, is safely discarded by the
+    // generation/sheet guard inside loadData() instead of racing onto
+    // the screen.
+    loadData();
   }
 
   // Creates a brand-new, blank branch tab with the standard set of
@@ -3164,6 +3182,31 @@
     return data;
   }
 
+  // Retries a READ-ONLY fetchJson_ call a couple of times before giving up.
+  // Only ever used for idempotent GETs (list / listSheets) — never for
+  // writes, where blindly retrying could double-submit a create/update.
+  // Apps Script cold starts and one-off redirect hiccups are common
+  // enough that a single transient failure shouldn't surface as a hard
+  // "sync failed" to the user when the very next attempt, moments later,
+  // usually just works. Each retry waits a bit longer than the last.
+  async function fetchJsonRetry_(url, retries){
+    retries = (retries == null) ? 2 : retries;
+    let lastErr;
+    for(let attempt = 0; attempt <= retries; attempt++){
+      try{
+        return await fetchJson_(url);
+      }catch(err){
+        lastErr = err;
+        // Only retry connection/parse/timeout issues — a real application
+        // error ({error:"..."} from the backend) will just fail identically
+        // again, so surface it immediately instead of stalling on retries.
+        if(attempt === retries || !isConnectionError_(err)) throw err;
+        await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
+      }
+    }
+    throw lastErr;
+  }
+
   // ---- Queueing ---------------------------------------------------------
   // Tries the real network call first (covers "technically online but
   // this one request happened to fail"); only falls back to queueing for
@@ -3503,6 +3546,20 @@
   setInterval(() => { if(navigator.onLine && outbox.length) syncOutbox(); }, 20000);
 
   let isLoading = false;
+  // Set when loadData() is called while a request is already in flight.
+  // Instead of silently dropping that second call (the old behaviour —
+  // this is exactly what made a branch switch or a refresh click during
+  // an in-flight load look "stuck", since nothing ever re-tried), the
+  // in-flight call sees this flag once it finishes and runs exactly one
+  // follow-up load. Any number of extra clicks/switches while locked
+  // coalesce into that single follow-up rather than queueing one each.
+  let reloadQueued = false;
+  // Bumped every time a load actually starts (not queued). Combined with
+  // capturing the target sheet at request time, this lets a response
+  // that comes back late — after the branch was switched or a newer
+  // load has already started — be safely discarded instead of painting
+  // stale/wrong-branch data over whatever the user is now looking at.
+  let loadGeneration = 0;
 
   // ---- Local list cache -----------------------------------------------
   // Every network round trip to an Apps Script /exec URL costs at least
@@ -3518,22 +3575,26 @@
   // the network is the very first load on a given browser/device.
   const LOCAL_CACHE_PREFIX = 'aa_cache_v1:';
 
-  function localCacheKey_(){
-    return LOCAL_CACHE_PREFIX + API_URL + ':' + currentSheet;
+  function localCacheKey_(sheet){
+    return LOCAL_CACHE_PREFIX + API_URL + ':' + (sheet || currentSheet);
   }
 
-  function saveLocalCache_(list){
+  // `sheet` defaults to currentSheet everywhere it's omitted (every
+  // existing call site), but accepting it explicitly lets background
+  // prefetch (see prefetchOtherBranches_) warm the cache for a branch
+  // that isn't the one currently on screen.
+  function saveLocalCache_(list, sheet){
     try{
-      localStorage.setItem(localCacheKey_(), JSON.stringify({ customers: list, ts: Date.now() }));
+      localStorage.setItem(localCacheKey_(sheet), JSON.stringify({ customers: list, ts: Date.now() }));
     }catch(e){
       // storage full/unavailable (private browsing, quota, etc.) — fine,
       // this is purely a speed optimization, not a source of truth
     }
   }
 
-  function loadLocalCache_(){
+  function loadLocalCache_(sheet){
     try{
-      const raw = localStorage.getItem(localCacheKey_());
+      const raw = localStorage.getItem(localCacheKey_(sheet));
       if(!raw) return null;
       const parsed = JSON.parse(raw);
       if(!parsed || !Array.isArray(parsed.customers)) return null;
@@ -3556,8 +3617,28 @@
       document.querySelector('#emptyState div').textContent = 'No branch profiles yet. Open the ☰ menu (top left) to create your first one.';
       return;
     }
-    if(isLoading) return; // avoid piling up duplicate in-flight requests
+    if(isLoading){
+      // A load is already in flight (initial boot, auto-refresh, another
+      // click…). Rather than dropping this request on the floor — which
+      // is what used to leave a just-switched-to branch stuck empty with
+      // no error and no data — remember that a fresh load was asked for
+      // and let the in-flight one trigger a single follow-up the moment
+      // it's done. Any number of repeat calls while locked collapse into
+      // that one follow-up, so mashing refresh or hopping between
+      // branches can never pile up overlapping requests.
+      reloadQueued = true;
+      return;
+    }
     isLoading = true;
+    updateRefreshLock_(true);
+
+    // Captured now, not read again after the await below — if the user
+    // switches branches while this request is in flight, currentSheet
+    // will have moved on by the time the response arrives, and comparing
+    // against this snapshot is what lets us tell a late response for the
+    // OLD branch apart from a fresh one for the branch actually on screen.
+    const sheetAtStart = currentSheet;
+    const myGen = ++loadGeneration;
 
     // Paint instantly from whatever we last saw for this API_URL, if the
     // page hasn't already got rows in memory (e.g. first load in a new
@@ -3565,7 +3646,7 @@
     // while the real fetch below runs quietly underneath it.
     let paintedFromCache = false;
     if(customers.length === 0){
-      const cached = loadLocalCache_();
+      const cached = loadLocalCache_(sheetAtStart);
       if(cached && cached.customers.length){
         customers = cached.customers;
         paintedFromCache = true;
@@ -3582,14 +3663,24 @@
     }
 
     try{
-      // fetchCustomerList_ (via fetchJson_) adds a timeout plus safe
-      // parsing — cache: 'no-store' plus a timestamp query param means
-      // the browser (and any CDN in front of the page, e.g. GitHub
-      // Pages) can never serve back a stale cached response for this
-      // request — including an old failed/404 response from before a
-      // deployment was fixed.
-      const data = await fetchCustomerList_(currentSheet);
+      // fetchCustomerList_ (via fetchJsonRetry_) adds a timeout, a couple
+      // of automatic retries on a transient hiccup, and safe parsing —
+      // cache: 'no-store' plus a timestamp query param means the browser
+      // (and any CDN in front of the page, e.g. GitHub Pages) can never
+      // serve back a stale cached response for this request — including
+      // an old failed/404 response from before a deployment was fixed.
+      const data = await fetchCustomerList_(sheetAtStart);
       const fresh = data.customers || [];
+
+      // The branch on screen (or a newer load) may have moved on while
+      // this was in flight. Still cache the result under the branch it
+      // actually belongs to — it's genuinely useful for the next time
+      // that branch is opened — but never paint it over whatever the
+      // user is looking at now.
+      if(sheetAtStart !== currentSheet || myGen !== loadGeneration){
+        saveLocalCache_(fresh, sheetAtStart);
+        return;
+      }
 
       // Only actually swap in and re-render when the sheet has genuinely
       // changed since our last successful fetch. On a quiet sheet this
@@ -3602,12 +3693,15 @@
         lastListHash = freshHash;
         customers = fresh;
         reapplyOutbox_(); // keep still-unsynced offline edits visible on top of the fresh server data
-        saveLocalCache_(customers);
+        saveLocalCache_(customers, sheetAtStart);
         render();
       }
       document.getElementById('connStatus').textContent = 'synced ' + new Date().toLocaleTimeString();
       updateSyncUI();
     }catch(err){
+      if(sheetAtStart !== currentSheet || myGen !== loadGeneration){
+        return; // stale — the visible branch/request has already moved on, don't show its error
+      }
       // If we already painted cached data, leave it on screen — a failed
       // background refresh shouldn't yank the table out from under the
       // user. Only fall back to the hard "Connection error" messaging
@@ -3626,7 +3720,30 @@
       toast('Could not load data: ' + friendly);
     }finally{
       isLoading = false;
+      updateRefreshLock_(false);
+      if(reloadQueued){
+        reloadQueued = false;
+        loadData(); // run the single coalesced follow-up now that the lock is free
+      }
     }
+  }
+
+  // Visually locks the ⟳ refresh button while a load is in flight — spins
+  // it and disables it — so a click during that window is an obvious
+  // no-op instead of looking unresponsive (which is what used to invite
+  // people to mash it repeatedly).
+  function updateRefreshLock_(loading){
+    const btn = document.getElementById('hdrSyncBtn');
+    if(!btn) return;
+    btn.disabled = loading;
+    btn.classList.toggle('spinning', loading);
+  }
+
+  // Wired to the ⟳ button. A plain wrapper around loadData(), but keeping
+  // it separate from the auto-refresh/switch-branch call sites makes the
+  // intent at each call site explicit.
+  function manualRefresh_(){
+    loadData();
   }
 
   function skeletonHtml(n){
@@ -4591,6 +4708,55 @@
     loadData();
   }, AUTO_REFRESH_MS);
 
+  // ---- Background prefetch of other branches ---------------------------
+  // Switching branches is only instant when that branch's data is already
+  // sitting in localStorage (see loadData()'s cache-paint). The very
+  // first visit to any given branch still has to pay for one real Apps
+  // Script round trip — nothing can avoid that — but once the branch list
+  // is known, every OTHER branch can be quietly warmed in the background
+  // while the person is looking at their current one, so the next switch
+  // (and the one after that) is instant instead of a cold fetch.
+  //
+  // Deliberately conservative: one branch at a time, small gap between
+  // each, skipped entirely while offline or while the tab is hidden, and
+  // never overlapping a real foreground load (isLoading is shared, so a
+  // prefetch in flight still respects the same lock/coalescing as
+  // everything else).
+  let prefetchQueue_ = null;   // null = not yet built; [] once exhausted
+  let prefetchRunning_ = false;
+  function prefetchOtherBranches_(){
+    if(prefetchRunning_ || !API_URL) return;
+    if(!navigator.onLine || document.hidden) return; // resumed by the listeners below
+    if(prefetchQueue_ === null){
+      const sheets = (profilesCache_ && profilesCache_.length)
+        ? profilesCache_
+        : ((loadSheetsCache_() || {}).sheets || []);
+      prefetchQueue_ = sheets.filter(s => s !== currentSheet);
+    }
+    if(!prefetchQueue_.length) return;
+    prefetchRunning_ = true;
+    (async () => {
+      while(prefetchQueue_.length){
+        if(!navigator.onLine || document.hidden) break; // pause; resumed below
+        const s = prefetchQueue_.shift();
+        const cached = loadLocalCache_(s);
+        // Skip a branch we already have a reasonably fresh copy of.
+        if(cached && (Date.now() - cached.ts) < AUTO_REFRESH_MS) continue;
+        try{
+          const data = await fetchCustomerList_(s);
+          saveLocalCache_(data.customers || [], s);
+        }catch(e){
+          // Best-effort — a failed prefetch just means that branch falls
+          // back to a normal live fetch whenever it's actually opened.
+        }
+        await new Promise(r => setTimeout(r, 500)); // stay well out of the way of anything foreground
+      }
+      prefetchRunning_ = false;
+    })();
+  }
+  document.addEventListener('visibilitychange', () => { if(!document.hidden) prefetchOtherBranches_(); });
+  window.addEventListener('online', prefetchOtherBranches_);
+
   // Boot
   if(API_URL){
     (async () => {
@@ -4600,6 +4766,16 @@
       document.getElementById('dashPanel').style.display = 'block';
       await loadData();
       if(outbox.length) syncOutbox();
+      // Warm the branch list, then quietly prefetch the rest, well after
+      // the current branch's own data is already on screen.
+      setTimeout(async () => {
+        try{
+          const data = await apiCallJsonRead_('listSheets', {});
+          profilesCache_ = data.sheets || profilesCache_;
+          saveSheetsCache_(profilesCache_);
+        }catch(e){ /* fall back to whatever's cached, if anything */ }
+        prefetchOtherBranches_();
+      }, 1500);
     })();
   } else {
     document.getElementById('setupPanel').style.display = 'block';

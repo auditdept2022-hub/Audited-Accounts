@@ -2555,6 +2555,7 @@
     if(cached && cached.sheets.length){
       profilesCache_ = cached.sheets;
       renderProfileList_(profilesCache_);
+      schedulePrefetch_();
     } else if(!isColdStartRetry){
       listEl.innerHTML = '<div class="profile-skeleton"></div><div class="profile-skeleton"></div><div class="profile-skeleton"></div>';
     }
@@ -2564,6 +2565,7 @@
       profilesCache_ = data.sheets || [];
       saveSheetsCache_(profilesCache_);
       renderProfileList_(profilesCache_);
+      schedulePrefetch_();
     }catch(err){
       // Same reasoning as loadData()'s AbortError branch: a timeout here
       // is almost always a one-off Apps Script cold start, so retry once,
@@ -3172,7 +3174,7 @@
   //      confusing "json error". This reads the body as text first so a
   //      bad response can be diagnosed (and reported clearly via
   //      connectionErrorLabel_ above) instead of just re-thrown as-is.
-  const FETCH_TIMEOUT_MS = 25000;
+  const FETCH_TIMEOUT_MS = 30000;
   async function fetchJson_(url, timeoutMs){
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs || FETCH_TIMEOUT_MS);
@@ -3618,6 +3620,61 @@
       return parsed;
     }catch(e){
       return null;
+    }
+  }
+
+  // ---- Background branch prefetch ----------------------------------------
+  //
+  // Switching branches used to always cost a live Apps Script round trip
+  // the first time a branch was opened in a session — on a 150-300 row
+  // branch, combined with an Apps Script cold start, that's exactly the
+  // "varies a lot, sometimes just errors out" behavior. loadData() already
+  // paints instantly from a branch's LOCAL cache (loadLocalCache_) when one
+  // exists; this is what keeps that cache warm for branches you HAVEN'T
+  // opened yet this session, so by the time you actually switch to one,
+  // there's already something to paint instantly instead of a blank
+  // skeleton waiting on the network.
+  //
+  // Deliberately conservative so it never competes with something the
+  // person is actually waiting on:
+  //   - runs at most once per page load (prefetchedOnce_)
+  //   - skips a branch entirely if its local cache is already fresh
+  //     (PREFETCH_STALE_MS) — most sessions won't need to fetch anything
+  //   - fetches one branch at a time with a pause between each, and bails
+  //     immediately the moment a real load starts (isLoading), so it never
+  //     queues up behind/ahead of something the user is looking at
+  //   - every failure is silently swallowed — this is a pure speed
+  //     optimization; a branch that fails to prefetch just falls back to
+  //     the exact same on-demand fetch it would have done anyway
+  const PREFETCH_STALE_MS = 3 * 60 * 1000;
+  const PREFETCH_GAP_MS = 600;
+  let prefetchedOnce_ = false;
+
+  function schedulePrefetch_(){
+    if(prefetchedOnce_) return;
+    const candidates = (profilesCache_ && profilesCache_.length)
+      ? profilesCache_
+      : ((loadSheetsCache_() || {}).sheets || []);
+    if(!candidates.length) return; // nothing known yet — try again next time schedulePrefetch_ is called (e.g. once the ☰ menu has loaded the list)
+    prefetchedOnce_ = true;
+    // Idle a moment first so this never competes with the branch actually
+    // on screen finishing its own first paint/sync.
+    setTimeout(() => prefetchOtherBranches_(candidates), 2500);
+  }
+
+  async function prefetchOtherBranches_(names){
+    for(const name of names){
+      if(name === currentSheet) continue;
+      if(isLoading) return; // a real load started — stop and don't get in its way
+      const cached = loadLocalCache_(name);
+      if(cached && (Date.now() - cached.ts) < PREFETCH_STALE_MS) continue; // already warm enough
+      try{
+        const data = await fetchCustomerList_(name);
+        saveLocalCache_(data.customers || [], name);
+      }catch(e){
+        // best-effort — this branch just stays as slow as it was before
+      }
+      await new Promise(r => setTimeout(r, PREFETCH_GAP_MS));
     }
   }
 
@@ -4857,6 +4914,7 @@
       document.getElementById('dashPanel').style.display = 'block';
       await loadData();
       if(outbox.length) syncOutbox();
+      schedulePrefetch_();
     })();
   } else {
     document.getElementById('setupPanel').style.display = 'block';

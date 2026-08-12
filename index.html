@@ -440,6 +440,29 @@
   .history-edit[readonly]:hover{background:#F6F7FD;border-color:#E5E8F7;}
   .history-hint{font-size:11px;color:var(--muted);margin-top:6px;}
   .history-hint code{background:#EEF0F9;padding:1px 5px;border-radius:4px;}
+
+  /* Selectable previous-remarks list — replaces the old plain textarea.
+     Each past remark is its own row you can tap/click to mark for
+     removal (a filled checkbox + red-tinted row), so you can pick
+     exactly which old remarks to delete and leave only the ones you
+     want, then confirm with "Delete selected". */
+  .history-list{display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;padding-right:2px;}
+  .history-list-empty{font-size:12px;font-style:italic;color:#AFB4CF;padding:10px 2px;}
+  .history-entry{display:flex;align-items:flex-start;gap:9px;padding:8px 10px;border:1px solid #E5E8F7;border-radius:9px;background:#F8F9FD;cursor:pointer;user-select:none;transition:background .12s,border-color .12s;}
+  .history-entry:hover{background:#F1F3FC;border-color:#D7DCF0;}
+  .history-entry.marked{background:#FCEAE8;border-color:#F3C3BE;}
+  .history-entry .h-check{flex-shrink:0;width:16px;height:16px;margin-top:1px;border-radius:5px;border:1.5px solid #C7CCE6;background:#fff;display:flex;align-items:center;justify-content:center;transition:background .12s,border-color .12s;}
+  .history-entry.marked .h-check{background:#D1453B;border-color:#D1453B;}
+  .history-entry .h-check svg{width:10px;height:10px;fill:none;stroke:#fff;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;opacity:0;transition:opacity .1s;}
+  .history-entry.marked .h-check svg{opacity:1;}
+  .history-entry .h-text{flex:1 1 auto;font-size:12px;line-height:1.55;color:var(--text);white-space:pre-wrap;word-break:break-word;}
+  .history-entry.marked .h-text{color:#B24A43;text-decoration:line-through;text-decoration-color:#E3A29C;}
+  .history-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;}
+  .history-toolbar .h-count{font-size:11px;color:var(--muted);}
+  .history-toolbar .btn{padding:6px 11px;font-size:11.5px;}
+  .history-toolbar .btn.danger{color:#D1453B;border-color:#F3C3BE;}
+  .history-toolbar .btn.danger:disabled{opacity:.4;cursor:default;}
+  .history-toolbar .btn.danger:not(:disabled):hover{background:#FCEAE8;}
   .draft-status{font-size:11px;color:#9a6b00;background:#FFF6E0;border:1px solid #F3DFA0;border-radius:6px;padding:6px 10px;margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
   .draft-status button{background:none;border:none;color:#9a6b00;text-decoration:underline;cursor:pointer;font-size:11px;padding:0;}
   .modal-foot{padding:16px 26px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;align-items:center;gap:10px;background:#F9FAFD;flex-shrink:0;padding-bottom:calc(16px + var(--safe-b));}
@@ -861,8 +884,16 @@
       </div>
 
       <div class="section" id="historySection">
-        <div class="section-title">Previous audit remarks</div>
-        <textarea id="mHistoryEdit" class="history-edit" placeholder="No earlier remarks on file." readonly></textarea>
+        <div class="section-title">Previous audit remarks <span class="edit-hint">tap a remark to pick it for deletion</span></div>
+        <div class="history-list" id="mHistoryList"></div>
+        <div class="history-toolbar" id="historyToolbar" style="display:none;">
+          <span class="h-count" id="historySelCount">0 selected</span>
+          <button type="button" class="btn danger" id="historyDeleteBtn" onclick="deleteSelectedHistoryEntries_()" disabled>🗑 Delete selected</button>
+        </div>
+        <!-- Hidden: still holds the plain-text value saveModal() actually
+             sends (kept in sync with the picker above), so the
+             create/update payload format is unchanged. -->
+        <textarea id="mHistoryEdit" class="history-edit" style="display:none;"></textarea>
       </div>
 
       <div class="section" style="margin-bottom:0;">
@@ -1366,6 +1397,92 @@
   // calls at all.
   let editorOriginalCurrent = '';
   let editorOriginalHistory = '';
+
+  // ---- Selectable "Previous audit remarks" picker --------------------
+  //
+  // The history textarea used to be one big block of plain text (each
+  // past remark on its own "[date] text" line, newest first). That made
+  // deleting just one old remark fiddly on mobile — you had to
+  // select/backspace raw text by hand. This instead parses that same
+  // text into individual entries, renders each as its own tappable row,
+  // and lets you mark any number of them for deletion. "Delete
+  // selected" removes just the marked entries and rebuilds the hidden
+  // #mHistoryEdit textarea (still plain "[date] text" lines) from
+  // what's left — so saveModal()'s existing editRemarkHistory logic
+  // needs no changes at all.
+  let historyEntries_ = [];
+  let historySelected_ = new Set();
+
+  // Entries are prepended newest-first, each starting a new line with
+  // "[date] " (see addRemark/updateCustomerFull in the backend). A
+  // remark's own text can itself contain line breaks, so we only split
+  // right before a line that starts a fresh "[...]" entry — not on
+  // every newline.
+  function parseHistoryEntries_(text){
+    text = (text || '').trim();
+    if(!text) return [];
+    return text.split(/\n(?=\[[^\]]*\]\s)/).map(s => s.trim()).filter(Boolean);
+  }
+
+  function historyEntriesToText_(){
+    return historyEntries_.join('\n');
+  }
+
+  function renderHistoryList_(){
+    const list = document.getElementById('mHistoryList');
+    const toolbar = document.getElementById('historyToolbar');
+    const countEl = document.getElementById('historySelCount');
+    const delBtn = document.getElementById('historyDeleteBtn');
+
+    if(!historyEntries_.length){
+      list.innerHTML = '<div class="history-list-empty">No earlier remarks on file.</div>';
+      toolbar.style.display = 'none';
+      document.getElementById('mHistoryEdit').value = '';
+      return;
+    }
+
+    toolbar.style.display = 'flex';
+    list.innerHTML = historyEntries_.map((entry, i) => {
+      const marked = historySelected_.has(i);
+      return `<div class="history-entry${marked ? ' marked' : ''}" data-idx="${i}">
+        <span class="h-check"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+        <span class="h-text"></span>
+      </div>`;
+    }).join('');
+    // Set text via textContent (not innerHTML) so remark text is never
+    // interpreted as HTML.
+    Array.from(list.children).forEach((row, i) => {
+      row.querySelector('.h-text').textContent = historyEntries_[i];
+    });
+
+    const selCount = historySelected_.size;
+    countEl.textContent = selCount + ' selected';
+    delBtn.disabled = selCount === 0;
+
+    document.getElementById('mHistoryEdit').value = historyEntriesToText_();
+  }
+
+  document.getElementById('mHistoryList').addEventListener('click', function(e){
+    const row = e.target.closest('.history-entry');
+    if(!row) return;
+    const idx = Number(row.dataset.idx);
+    if(historySelected_.has(idx)) historySelected_.delete(idx);
+    else historySelected_.add(idx);
+    renderHistoryList_();
+  });
+
+  // Removes every currently-marked entry, leaving the rest (including,
+  // if you marked everything but one, exactly the single remark you
+  // wanted to keep). This only updates the in-modal picker + hidden
+  // textarea — nothing is sent to the server until "Save changes".
+  function deleteSelectedHistoryEntries_(){
+    if(!historySelected_.size) return;
+    const removed = historySelected_.size;
+    historyEntries_ = historyEntries_.filter((_, i) => !historySelected_.has(i));
+    historySelected_.clear();
+    renderHistoryList_();
+    toast(removed === 1 ? 'Remark removed — click Save changes to confirm.' : (removed + ' remarks removed — click Save changes to confirm.'));
+  }
 
   // True negative row ids mark a customer that was created offline and
   // hasn't been assigned a real sheet row yet.
@@ -4769,7 +4886,9 @@
     document.getElementById('mCurrentEdit').value = editorOriginalCurrent;
 
     editorOriginalHistory = str_(c.previousRemarks);
-    document.getElementById('mHistoryEdit').value = editorOriginalHistory;
+    historyEntries_ = parseHistoryEntries_(editorOriginalHistory);
+    historySelected_ = new Set();
+    renderHistoryList_();
 
     const draft = loadDraft_(row);
     document.getElementById('mNewRemark').value = draft ? draft.text : '';
@@ -4796,7 +4915,9 @@
     editorOriginalHistory = '';
     document.getElementById('mCurrentDate').textContent = '';
     document.getElementById('mCurrentEdit').value = '';
-    document.getElementById('mHistoryEdit').value = '';
+    historyEntries_ = [];
+    historySelected_ = new Set();
+    renderHistoryList_();
     const draft = loadDraft_(null);
     document.getElementById('mNewRemark').value = draft ? draft.text : '';
     updateDraftStatus_();

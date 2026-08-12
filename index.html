@@ -3306,6 +3306,11 @@
   // another device, changed that row while this one was offline) the
   // item is marked 'conflict' and left for the user to resolve instead
   // of silently overwriting or dropping either side.
+  // Cold-start retries for syncOutbox() specifically (kept separate from
+  // loadData()'s own counter — the two can be mid-retry independently).
+  let syncColdStartRetries = 0;
+  const MAX_SYNC_COLD_START_RETRIES = 2;
+
   async function syncOutbox(){
     if(isSyncing) return;
     if(!outbox.length) return;
@@ -3323,12 +3328,31 @@
 
     if(serverList === null){
       isSyncing = false;
+      // PERFORMANCE FIX: a timed-out first request is almost always an
+      // Apps Script cold start — by the time this catch runs, the
+      // instance is usually already warm underneath. This used to just
+      // sit there as "Sync paused" for up to 20s (the auto-retry
+      // interval) or until the person noticed and tapped "Sync now".
+      // Mirroring loadData()'s cold-start handling, retry quickly
+      // (300ms) instead of waiting out that full interval — same
+      // reasoning: capped retry count, immediate status update so
+      // nothing is silent, and this path is only ever reached for the
+      // read-only list fetch, never for a write, so nothing can be
+      // double-submitted by retrying it.
+      if(listErr && listErr.name === 'AbortError' && syncColdStartRetries < MAX_SYNC_COLD_START_RETRIES){
+        syncColdStartRetries++;
+        document.getElementById('connStatus').textContent = 'Cold start — retrying sync automatically…';
+        setTimeout(() => { syncOutbox(); }, 300);
+        return;
+      }
+      syncColdStartRetries = 0;
       updateSyncUI();
       document.getElementById('connStatus').textContent = isConnectionError_(listErr)
         ? 'Sync paused — ' + connectionErrorLabel_(listErr)
         : 'Sync failed: ' + listErr.message;
       return;
     }
+    syncColdStartRetries = 0;
     const serverByRow = {};
     serverList.forEach(c => { serverByRow[c.row] = c; });
 
@@ -3336,6 +3360,7 @@
     let syncedAny = false;
     let needsFullReload = false; // set true only if an item can't be trusted to patch in locally (see below)
     let hitConnectionError = false;
+    let hitConnectionErrorIsTimeout = false;
     let connErrMsg = '';
 
     for(const item of outbox){
@@ -3420,6 +3445,7 @@
           // further items this pass, but leave this one (and everything
           // behind it) queued to retry as-is.
           hitConnectionError = true;
+          hitConnectionErrorIsTimeout = (err && err.name === 'AbortError');
           connErrMsg = connectionErrorLabel_(err);
           remaining.push(item);
         } else {
@@ -3458,6 +3484,18 @@
     } else if(outbox.some(o => o.status === 'conflict' || o.status === 'error')){
       document.getElementById('connStatus').textContent = 'Some offline changes need your attention.';
     } else if(hitConnectionError){
+      // Same fast-retry treatment as the initial list fetch above: a
+      // timeout mid-loop (one of the queued writes itself hit a cold
+      // Apps Script instance) shouldn't sit and wait out the full 20s
+      // auto-sync interval when the instance is very likely warm again
+      // within a few hundred ms.
+      if(hitConnectionErrorIsTimeout && syncColdStartRetries < MAX_SYNC_COLD_START_RETRIES && outbox.length){
+        syncColdStartRetries++;
+        document.getElementById('connStatus').textContent = 'Cold start — retrying sync automatically…';
+        setTimeout(() => { syncOutbox(); }, 300);
+        return;
+      }
+      syncColdStartRetries = 0;
       document.getElementById('connStatus').textContent = 'Sync paused — ' + connErrMsg;
     } else if(syncedAny){
       toast('Offline changes synced.');
@@ -4930,6 +4968,24 @@
     if(document.getElementById('overlay').classList.contains('open')) return;
     loadData();
   }, AUTO_REFRESH_MS);
+
+  // PERFORMANCE FIX: keep-warm ping. Apps Script spins an idle Web App
+  // deployment down after a period of inactivity — the NEXT request
+  // after that is the "cold start" (the 10-30s stall behind "Sync
+  // paused — the request took too long…"). This fires a trivial, no-op
+  // 'ping' request (see doGet's ping branch — it never touches the
+  // spreadsheet, so it's essentially instant on the server) every 6
+  // minutes while the tab is open, visible, and online, purely to keep
+  // an instance warm so the person's NEXT real action (opening the app,
+  // saving an edit) doesn't have to pay the cold-start cost itself.
+  // Silently ignored on failure — this is a best-effort optimization,
+  // never something that should surface an error or retry.
+  const KEEP_WARM_MS = 6 * 60 * 1000;
+  function keepWarmPing_(){
+    if(!API_URL || document.hidden || !navigator.onLine) return;
+    fetch(API_URL + '?action=ping&_=' + Date.now(), { cache: 'no-store' }).catch(() => {});
+  }
+  setInterval(keepWarmPing_, KEEP_WARM_MS);
 
   // Boot
   if(API_URL){

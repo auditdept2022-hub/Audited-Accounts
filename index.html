@@ -813,6 +813,9 @@
                   <button type="button" class="status-option active" data-value=""><span class="so-label">All remarks</span></button>
                   <button type="button" class="status-option" data-value="pending"><span class="so-label">No remarks yet</span></button>
                   <button type="button" class="status-option" data-value="done"><span class="so-label">Has remarks</span></button>
+                  <button type="button" class="status-option" data-value="noHistory"><span class="so-label">No previous remarks</span></button>
+                  <button type="button" class="status-option" data-value="hasHistory"><span class="so-label">Has previous remarks</span></button>
+                  <button type="button" class="status-option" data-value="none"><span class="so-label">No remarks at all</span></button>
                 </div>
               </div>
             </div>
@@ -4378,12 +4381,18 @@
   // filter, single-select, instead of a native <select> (which can't be
   // styled/positioned consistently across mobile browsers). ----
   let remarkFilterValue_ = '';
+  const REMARK_FILTER_LABELS = {
+    '': 'All remarks',
+    pending: 'No remarks yet',
+    done: 'Has remarks',
+    noHistory: 'No previous remarks',
+    hasHistory: 'Has previous remarks',
+    none: 'No remarks at all'
+  };
   function updateRemarkFilterBtn_(){
     const btn = document.getElementById('remarkFilterBtn');
     if(!btn) return;
-    btn.textContent = remarkFilterValue_ === 'pending' ? 'No remarks yet'
-      : remarkFilterValue_ === 'done' ? 'Has remarks'
-      : 'All remarks';
+    btn.textContent = REMARK_FILTER_LABELS[remarkFilterValue_] || 'All remarks';
   }
   function setRemarkFilter_(value){
     remarkFilterValue_ = value || '';
@@ -4602,8 +4611,12 @@
         if(!selectedStatuses_.has(key)) return false;
       }
       const hasRemark = c.auditorRemarks && str_(c.auditorRemarks).toUpperCase() !== 'NO REMARKS';
+      const hasHistory = !!str_(c.previousRemarks).trim();
       if(remarkF === 'pending' && hasRemark) return false;
       if(remarkF === 'done' && !hasRemark) return false;
+      if(remarkF === 'noHistory' && hasHistory) return false;
+      if(remarkF === 'hasHistory' && !hasHistory) return false;
+      if(remarkF === 'none' && (hasRemark || hasHistory)) return false;
       return true;
     });
   }

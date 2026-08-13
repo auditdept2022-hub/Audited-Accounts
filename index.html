@@ -193,6 +193,11 @@
   .badge.del{background:var(--del-soft);color:var(--del);}
   .badge.rstr{background:var(--rstr-soft);color:var(--rstr);}
   .badge.other{background:#E9EBF6;color:var(--muted);}
+  /* Minimalist account-status counter strip — a row of small "N Label"
+     pairs, one per distinct status text actually found in the branch. */
+  .status-counts{display:flex;flex-wrap:wrap;gap:14px;align-items:center;padding:2px 2px 10px;font-size:11.5px;color:var(--muted);}
+  .status-counts .sc-item{display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap;}
+  .status-counts .sc-num{font-weight:700;color:var(--text);}
   .amount{font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace;font-size:12px;}
   .empty-state{padding:60px 20px;text-align:center;color:var(--muted);}
   .skel-line{height:10px;border-radius:4px;background:linear-gradient(90deg,#EBEDF7 25%,#F5F6FB 37%,#EBEDF7 63%);background-size:400% 100%;animation:skel-shine 1.4s ease infinite;}
@@ -836,6 +841,7 @@
         </div>
       </div>
 
+      <div class="status-counts" id="statusCounts"></div>
 
       <div class="card">
         <div class="bulk-bar" id="bulkBar">
@@ -4148,6 +4154,37 @@
     return 'other';
   }
 
+  // Minimalist branch-wide counter strip: Total + one entry per DISTINCT
+  // Customer Status value actually present in the branch (whatever your
+  // team typed — "DEL", "OD - BN", "CURRENT", "FULLY PAID", etc.), each
+  // with its own count. No grouping and no catch-all "Other" bucket —
+  // every status shown is the literal, specific value from the sheet.
+  // Always reflects the WHOLE branch, not just whatever the search box /
+  // status filter currently narrows the card list down to, so it stays a
+  // stable at-a-glance summary regardless of what's being filtered at
+  // the moment. Sorted by count (most common first), ties broken
+  // alphabetically. Rebuilt from the same `customers` array render()
+  // already has in memory — no extra data fetch.
+  function updateStatusCounts_(){
+    const el = document.getElementById('statusCounts');
+    if(!el) return;
+    if(!customers.length){ el.innerHTML = ''; return; }
+
+    const counts = new Map(); // status text -> count; blank statuses grouped under 'No status'
+    for(let i = 0; i < customers.length; i++){
+      const label = str_(customers[i].customerStatus).trim() || 'No status';
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
+
+    const rows = Array.from(counts.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+
+    let html = `<span class="sc-item"><span class="sc-num">${customers.length}</span> Total</span>`;
+    rows.forEach(([label, n]) => {
+      html += `<span class="sc-item"><span class="sc-num">${n}</span> ${escapeHtml(label)}</span>`;
+    });
+    el.innerHTML = html;
+  }
+
   // ---- Status filter options -------------------------------------------
   // The dropdown used to only ever offer OD / DEL / RSTR — any status text
   // that didn't contain one of those three substrings (a lot of real
@@ -4640,6 +4677,7 @@
 
   function render(){
     populateStatusFilter_();
+    updateStatusCounts_();
     const conflictRows = new Set(outbox.filter(o => o.status === 'conflict' || o.status === 'error').map(o => o.row));
 
     const filtered = getFilteredCustomers();

@@ -4690,6 +4690,41 @@
     return n.toLocaleString('en-PH', {minimumFractionDigits:0, maximumFractionDigits:0});
   }
 
+  // Renders a stored date (ISO "YYYY-MM-DD", or anything Date can parse)
+  // as "Month Day, Year" (e.g. "January 15, 2024") — spelling the month
+  // out avoids the MM/DD vs DD/MM ambiguity of a plain numeric date.
+  // Anything that doesn't parse as a date is shown as-is rather than
+  // silently blanked out.
+  const MONTH_NAMES_ = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  function fmtDateLong_(raw){
+    if(raw === '' || raw == null) return '';
+    const s = String(raw).trim();
+    if(!s) return '';
+    const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(iso){
+      const y = Number(iso[1]), mo = Number(iso[2]), d = Number(iso[3]);
+      if(mo >= 1 && mo <= 12) return `${MONTH_NAMES_[mo - 1]} ${d}, ${y}`;
+    }
+    const parsed = new Date(s);
+    if(!isNaN(parsed.getTime())) return `${MONTH_NAMES_[parsed.getMonth()]} ${parsed.getDate()}, ${parsed.getFullYear()}`;
+    return s; // not a recognizable date — leave untouched
+  }
+
+  // Renders the Term field with an explicit "month(s)" unit so it's
+  // clear at a glance that "36" means 36 months, not some other count.
+  // Only appends the unit onto a bare number; anything already carrying
+  // its own text (e.g. "36 mos", "N/A") is left exactly as stored.
+  function fmtTerm_(raw){
+    if(raw === '' || raw == null) return '';
+    const s = String(raw).trim();
+    if(!s) return '';
+    if(/^\d+(\.\d+)?$/.test(s)){
+      const n = Number(s);
+      return `${s} ${n === 1 ? 'month' : 'months'}`;
+    }
+    return s;
+  }
+
   // Per-row rendered-HTML cache, keyed by sheet row number. render() gets
   // called after every single edit (and on every keystroke in the search
   // box, debounced), but previously rebuilt EVERY row's fact-grid and
@@ -5044,8 +5079,16 @@
         // Read-only reference row. Money fields get the ₱ sign and
         // thousands separators (fmtMoney) so it's unmistakably a peso
         // amount at a glance, same formatting as the record cards use.
+        // Release/Restructure Date is spelled out ("Month Day, Year")
+        // instead of a bare numeric date so it can't be misread as
+        // DD/MM vs MM/DD, and Term gets an explicit "month(s)" unit so
+        // it reads as a duration rather than a bare number.
         const display = f.money
           ? (raw !== '' && raw != null ? '₱' + fmtMoney(raw) : '—')
+          : f.key === 'releaseDate'
+            ? (fmtDateLong_(raw) || '—')
+          : f.key === 'term'
+            ? (fmtTerm_(raw) || '—')
           : (raw !== '' && raw != null && raw !== '' ? String(raw) : '—');
         return `<div class="info-row locked">
           <span class="info-label">${escapeHtml(f.label)}</span>

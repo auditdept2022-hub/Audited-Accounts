@@ -1516,6 +1516,13 @@
   // calls at all.
   let editorOriginalCurrent = '';
   let editorOriginalHistory = '';
+  // Whether #mCurrentEdit started this modal-open LOCKED (there was
+  // already a remark, so the pencil is required to edit it) vs directly
+  // typable (no remark yet, so a click straight into the box should just
+  // work — no pencil needed to fill in a box that's currently empty).
+  // Read by the pencil-click, blur, and delete handlers below so they
+  // only re-lock the box when it's guarding an existing remark.
+  let currentRemarkLockable_ = false;
 
   // BUGFIX: a <textarea>'s .value getter normalizes line breaks (CRLF /
   // lone CR -> LF) the moment a string is assigned into it. If a remark
@@ -1569,7 +1576,13 @@
   });
 
   document.getElementById('mCurrentEdit').addEventListener('blur', function(){
-    this.readOnly = true;
+    // Only snap back to locked (pencil-required) if the box actually
+    // started this modal-open with an existing remark to protect. If it
+    // started empty, it's meant to stay directly clickable/typable the
+    // whole time this modal is open — relocking it on every blur would
+    // mean a second click into it (e.g. after tapping another field)
+    // stops working until the pencil is clicked, defeating the point.
+    if(currentRemarkLockable_) this.readOnly = true;
   });
 
   document.getElementById('mCurrentDeleteBtn').addEventListener('click', function(){
@@ -1577,9 +1590,30 @@
     if(!ta.value.trim()){ toast('There\'s no current remark to delete.'); return; }
     if(!confirm('Delete the current remark? This can\'t be undone once you click Save changes.')) return;
     ta.value = '';
-    ta.readOnly = true;
+    // Once cleared there's nothing left to guard, so the box goes back
+    // to being directly clickable/typable instead of staying locked
+    // behind the pencil.
+    currentRemarkLockable_ = false;
+    ta.readOnly = false;
+    updateCurrentRemarkEditUi_();
     toast('Remark removed — click Save changes to confirm.');
   });
+
+  // Shows/hides the pencil button to match whether the box is currently
+  // guarding an existing remark (locked, pencil needed) or empty and
+  // directly typable (pencil would be redundant, so it's hidden) — and
+  // keeps the "click to add" / "click ✏️ to edit" hint text in sync.
+  function updateCurrentRemarkEditUi_(){
+    const hint = document.querySelector('#remarksSection .edit-hint');
+    const editBtn = document.getElementById('mCurrentEditBtn');
+    if(currentRemarkLockable_){
+      if(hint) hint.textContent = 'click ✏️ to edit';
+      if(editBtn) editBtn.style.display = '';
+    } else {
+      if(hint) hint.textContent = 'click to add';
+      if(editBtn) editBtn.style.display = 'none';
+    }
+  }
 
   // ---- Per-row editable "Previous audit remarks" list -----------------
   //
@@ -5458,7 +5492,13 @@
     editorOriginalCurrent = hasRemark ? str_(c.auditorRemarks) : '';
     const mCurrentEditEl = document.getElementById('mCurrentEdit');
     mCurrentEditEl.value = editorOriginalCurrent;
-    mCurrentEditEl.readOnly = true;
+    // Locked behind the pencil only when there's an existing remark to
+    // protect from an accidental overwrite. When there isn't one yet,
+    // leave it directly clickable/typable — no pencil needed to fill in
+    // a box that's currently empty.
+    currentRemarkLockable_ = !!hasRemark;
+    mCurrentEditEl.readOnly = currentRemarkLockable_;
+    updateCurrentRemarkEditUi_();
 
     editorOriginalHistory = str_(c.previousRemarks);
     historyEntries_ = parseHistoryEntries_(editorOriginalHistory);
@@ -5493,6 +5533,7 @@
     document.getElementById('mCurrentDate').textContent = '';
     const mCurrentEditEl2 = document.getElementById('mCurrentEdit');
     mCurrentEditEl2.value = '';
+    currentRemarkLockable_ = false;
     mCurrentEditEl2.readOnly = true;
     historyEntries_ = [];
     historyEditingIdx_ = -1;

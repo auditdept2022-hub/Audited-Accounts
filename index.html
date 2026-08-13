@@ -152,6 +152,23 @@
   .btn.danger{background:var(--del-soft);color:var(--del);border-color:#F0C3CE;}
   .btn.danger:hover{background:#F6D3DC;}
   .btn:disabled{opacity:.5;cursor:not-allowed;}
+
+  /* Loading spinner for in-flight save/create/delete actions. Used
+     instead of just relying on the plain :disabled opacity-fade (which
+     read as the button going pale/washed-out with no clear sign it was
+     actually doing something) — the label is hidden and a small
+     spinning ring takes its place, so it's obvious a request is in
+     flight until the modal closes or an error toast appears. */
+  .btn.loading{position:relative;color:transparent !important;pointer-events:none;}
+  .btn.loading:disabled{opacity:1;}
+  .btn.loading::after{
+    content:'';position:absolute;left:50%;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;
+    border-radius:50%;border:2px solid transparent;animation:btn-spin .65s linear infinite;
+  }
+  .btn.primary.loading::after{border-color:rgba(255,255,255,.35);border-top-color:#fff;}
+  .btn.danger.loading::after{border-color:rgba(176,48,74,.25);border-top-color:var(--del);}
+  .btn.loading:not(.primary):not(.danger)::after{border-color:rgba(42,61,154,.2);border-top-color:var(--accent);}
+  @keyframes btn-spin{to{transform:rotate(360deg);}}
   .btn.icon{padding:9px 12px;}
 
   /* Record stack — "plate" cards */
@@ -466,27 +483,22 @@
     .info-input{max-width:56%;}
   }
 
-  .current-remark{background:#F6F7FD;border:1px solid #E5E8F7;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.5;}
-  .current-remark .date{font-size:11px;color:var(--accent);font-weight:700;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;}
   textarea{width:100%;border:1px solid #D7DCF0;border-radius:10px;padding:10px 12px;font-size:13px;font-family:inherit;resize:vertical;min-height:76px;outline:none;transition:border-color .15s, box-shadow .15s;background:#F8F9FD;}
-  .history{display:flex;flex-direction:column;gap:10px;max-height:180px;overflow-y:auto;padding-right:4px;}
-  .history-item{border-left:2px solid var(--accent);padding-left:12px;font-size:12.5px;color:var(--text);}
-  .history-item .date{font-size:10.5px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.4px;}
 
-  /* Directly-editable current remark & history (edit modal).
-     Kept visually flat/plain (no box, no border) by default so they
-     read as plain text and don't invite taps meant for "Add new
-     remark" below — the box only appears once you actually hover or
-     focus into the field, at which point it's obviously editable. */
-  .current-remark-date{font-size:11px;color:var(--accent);font-weight:700;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px;}
+  /* Directly-editable current remark (edit modal). Wrapped in the same
+     .history-entry card used by the "Previous audit remarks" rows below
+     — same border/background/radius, same date-badge + icon-button
+     layout — so the current remark and each past remark read as one
+     consistent visual pattern instead of two different designs. */
   .edit-hint{font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted-2);font-size:10px;font-style:italic;}
+  .current-remark-entry{align-items:flex-start;}
   .current-remark-edit{
-    background:transparent;border-color:transparent;min-height:44px;cursor:text;
+    display:block;width:100%;background:transparent;border:none;padding:0;margin:0;
+    min-height:20px;font-size:12px;line-height:1.55;color:var(--text);cursor:text;
   }
-  .current-remark-edit:hover{background:#F6F7FD;border-color:#E5E8F7;}
-  .current-remark-edit:focus{background:#F6F7FD;border-color:var(--accent);box-shadow:0 0 0 3px rgba(42,61,154,.12);}
-  .current-remark-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:7px;}
-  .current-remark-actions .btn{padding:5px 10px;font-size:11.5px;}
+  .current-remark-edit::placeholder{color:#AFB4CF;font-style:italic;}
+  .current-remark-edit:hover,
+  .current-remark-edit:focus{background:transparent;border:none;box-shadow:none;}
   .history-edit{min-height:90px;max-height:90px;overflow-y:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.6;resize:none;}
   .history-edit[readonly]{
     background:transparent;border-color:transparent;color:var(--muted);cursor:default;
@@ -947,11 +959,15 @@
 
       <div class="section" id="remarksSection">
         <div class="section-title">Current remark <span class="edit-hint">click to edit</span></div>
-        <div class="current-remark-date" id="mCurrentDate"></div>
-        <textarea id="mCurrentEdit" class="current-remark-edit" placeholder="No remarks recorded yet."></textarea>
-        <div class="current-remark-actions">
-          <button type="button" class="btn" id="mCurrentEditBtn" title="Edit this remark">✏️ Edit</button>
-          <button type="button" class="btn danger" id="mCurrentDeleteBtn" title="Delete this remark">🗑 Delete</button>
+        <div class="history-entry current-remark-entry">
+          <div class="h-body">
+            <span class="h-date" id="mCurrentDate"></span>
+            <textarea id="mCurrentEdit" class="current-remark-edit" placeholder="No remarks recorded yet."></textarea>
+          </div>
+          <div class="h-actions">
+            <button type="button" class="h-btn edit" id="mCurrentEditBtn" title="Edit this remark">✏️</button>
+            <button type="button" class="h-btn delete" id="mCurrentDeleteBtn" title="Delete this remark">🗑</button>
+          </div>
         </div>
       </div>
 
@@ -5443,6 +5459,7 @@
 
     const btn = document.getElementById('saveBtn');
     btn.disabled = true;
+    btn.classList.add('loading');
     const originalLabel = btn.textContent;
     btn.textContent = modalMode === 'create' ? 'Creating…' : 'Saving…';
 
@@ -5506,6 +5523,7 @@
       toast('Could not save: ' + err.message);
     }finally{
       btn.disabled = false;
+      btn.classList.remove('loading');
       btn.textContent = originalLabel;
     }
   }
@@ -5525,6 +5543,7 @@
 
     const btn = document.getElementById('deleteBtn');
     btn.disabled = true;
+    btn.classList.add('loading');
     const originalLabel = btn.textContent;
     btn.textContent = 'Deleting…';
 
@@ -5538,6 +5557,7 @@
       toast('Could not delete: ' + err.message);
     }finally{
       btn.disabled = false;
+      btn.classList.remove('loading');
       btn.textContent = originalLabel;
     }
   }

@@ -1699,18 +1699,26 @@
   }
 
   // Reads an .xls/.xlsx file into one matrix per sheet, via SheetJS.
-  // Lazily injects xlsx.full.min.js on first actual need (an Excel
-  // import, or an .xlsx export) instead of loading it unconditionally in
-  // <head> on every page visit. _xlsxLoadPromise caches the in-flight/
-  // resolved load so a second call (e.g. import right after export)
-  // reuses the same load instead of injecting the <script> tag twice.
+  // Lazily injects the library on first actual need (an Excel import, or
+  // an .xlsx export) instead of loading it unconditionally in <head> on
+  // every page visit. _xlsxLoadPromise caches the in-flight/resolved
+  // load so a second call (e.g. import right after export) reuses the
+  // same load instead of injecting the <script> tag twice.
+  //
+  // This is xlsx-js-style, not plain SheetJS — same read/write API and
+  // used identically everywhere in this file, but it also actually
+  // writes cell styles (wrap text, alignment, etc.) to the .xlsx file.
+  // The plain community "xlsx" build silently drops any `.s` style
+  // object on write (styling is a Pro-only feature there), which is why
+  // exportCSV()'s Previous-Remarks wrap-text formatting below needs this
+  // fork instead.
   let _xlsxLoadPromise = null;
   function ensureXlsxLoaded_(){
     if(typeof XLSX !== 'undefined') return Promise.resolve();
     if(_xlsxLoadPromise) return _xlsxLoadPromise;
     _xlsxLoadPromise = new Promise((resolve, reject)=>{
       const s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.src = 'https://unpkg.com/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
       s.onload = () => resolve();
       s.onerror = () => { _xlsxLoadPromise = null; reject(new Error('Failed to load Excel library — check your connection and try again.')); };
       document.head.appendChild(s);
@@ -1845,9 +1853,19 @@
     }
 
     const headers = FIELDS.map(f => f.label).concat(['Date of Audit', 'Auditor Remarks', 'Previous Remarks']);
+    const prevCol = headers.length - 1; // 'Previous Remarks' — always the last column
+
     const rows = customers.map(c=>{
       const row = FIELDS.map(f => (c[f.key] !== undefined && c[f.key] !== null) ? c[f.key] : '');
-      row.push(c.dateOfAudit || '', c.auditorRemarks || '', c.previousRemarks || '');
+      // A brand-new / never-audited row carries the literal placeholder
+      // "NO REMARKS" in Auditor Remarks so the app card view always has
+      // something to display — but that placeholder doesn't belong in an
+      // exported sheet meant for an auditor to fill in by hand. Leave the
+      // cell blank instead whenever no real remark has been made yet.
+      const auditorRemarks = (c.auditorRemarks && String(c.auditorRemarks).trim().toUpperCase() !== 'NO REMARKS')
+        ? c.auditorRemarks
+        : '';
+      row.push(c.dateOfAudit || '', auditorRemarks, c.previousRemarks || '');
       return row;
     });
 
@@ -1855,11 +1873,11 @@
     // Auto-fit each column to its own longest actual value (header
     // included) instead of a guessed fixed width — a hardcoded width is
     // always wrong for someone's data sooner or later (a long business
-    // name, a long engine number). Remarks columns are capped so one
-    // huge paragraph can't blow the sheet out sideways; everything else
-    // just fits its content.
+    // name, a long engine number). Previous Remarks gets a smaller cap
+    // than the rest since it wraps within its cell (see below) rather
+    // than stretching sideways to fit a long audit history.
     const allRows = [headers, ...rows];
-    const capByHeader = { 'Auditor Remarks': 60, 'Previous Remarks': 60 };
+    const capByHeader = { 'Auditor Remarks': 60, 'Previous Remarks': 45 };
     ws['!cols'] = headers.map((h, colIdx)=>{
       let maxLen = h.length;
       allRows.forEach(r=>{
@@ -1870,6 +1888,21 @@
       const cap = capByHeader[h] || 42;
       return { wch: Math.min(Math.max(maxLen + 2, 12), cap) };
     });
+
+    // Previous Remarks holds a growing, newline-separated audit history —
+    // wrap it within its own cell instead of letting the column keep
+    // stretching sideways. Deliberately NOT setting an explicit row
+    // height here: Excel auto-sizes a wrapped cell's row height to fit
+    // its content, and keeps re-fitting it live as the column is resized
+    // — but only as long as no explicit height has been set. Setting one
+    // (even a generous one) would lock that row's height, so widening
+    // the column later wouldn't shrink it back down and would leave
+    // blank space in the cell instead.
+    rows.forEach((r, i)=>{
+      const addr = XLSX.utils.encode_cell({ r: i + 1, c: prevCol });
+      if(ws[addr]) ws[addr].s = { alignment: { wrapText: true, vertical: 'top' } };
+    });
+
     // Keeps the header row visible while scrolling a long list.
     ws['!freeze'] = { xSplit: 0, ySplit: 1 };
 

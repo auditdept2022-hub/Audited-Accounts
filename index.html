@@ -187,6 +187,13 @@
   .rec-remarks .rtext{color:var(--text);}
   .rec-remarks .rtext.none{font-style:italic;color:#AFB4CF;}
   .rec-remarks .rlabel{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#A5ABC8;margin-bottom:6px;}
+  /* Per-line CURRENT / PREV badge — the current (auditor) remark and each
+     previous-remark line otherwise look identical (just a date + text),
+     so on an undated entry there was no way to tell at a glance which was
+     which. This tags every line explicitly. */
+  .rec-remarks .rtag{flex-shrink:0;font-size:8.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;padding:1.5px 5px;border-radius:5px;white-space:nowrap;height:fit-content;}
+  .rec-remarks .rtag.cur{background:var(--accent-soft);color:var(--accent);}
+  .rec-remarks .rtag.prev{background:#EDEFF6;color:#8B94B3;}
 
   .badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;}
   .badge.od{background:var(--od-soft);color:var(--od);}
@@ -807,15 +814,23 @@
               </div>
             </div>
             <div class="status-switch" id="remarkSwitch">
-              <button class="btn" id="remarkFilterBtn" onclick="toggleRemarkMenu_(event)" title="Filter by remarks status">All remarks</button>
+              <button class="btn" id="remarkFilterBtn" onclick="toggleRemarkMenu_(event)" title="Filter by one or more remarks statuses">All remarks</button>
               <div class="status-menu" id="remarkMenu">
-                <div class="status-menu-list">
-                  <button type="button" class="status-option active" data-value=""><span class="so-label">All remarks</span></button>
-                  <button type="button" class="status-option" data-value="pending"><span class="so-label">No remarks yet</span></button>
-                  <button type="button" class="status-option" data-value="done"><span class="so-label">Has remarks</span></button>
-                  <button type="button" class="status-option" data-value="noHistory"><span class="so-label">No previous remarks</span></button>
-                  <button type="button" class="status-option" data-value="hasHistory"><span class="so-label">Has previous remarks</span></button>
-                  <button type="button" class="status-option" data-value="none"><span class="so-label">No remarks at all</span></button>
+                <div class="status-menu-actions">
+                  <span>Remarks</span>
+                  <div class="status-menu-links">
+                    <button type="button" class="status-menu-link" data-act="remark-clear">Clear</button>
+                  </div>
+                </div>
+                <div class="status-menu-list" id="remarkMenuList">
+                  <button type="button" class="status-option active" data-value=""><input type="checkbox" checked><span class="so-label">All remarks</span></button>
+                  <button type="button" class="status-option" data-value="hasHistory"><input type="checkbox"><span class="so-label">With previous remarks</span></button>
+                  <button type="button" class="status-option" data-value="noHistory"><input type="checkbox"><span class="so-label">Without previous remarks</span></button>
+                  <button type="button" class="status-option" data-value="done"><input type="checkbox"><span class="so-label">With current remarks</span></button>
+                  <button type="button" class="status-option" data-value="both"><input type="checkbox"><span class="so-label">With previous &amp; current remarks</span></button>
+                </div>
+                <div class="status-menu-ok-row">
+                  <button type="button" class="status-menu-ok" data-act="remark-ok">OK</button>
                 </div>
               </div>
             </div>
@@ -4378,44 +4393,112 @@
   });
 
   // ---- Remarks filter — same custom dropdown-menu shell as the status
-  // filter, single-select, instead of a native <select> (which can't be
-  // styled/positioned consistently across mobile browsers). ----
-  let remarkFilterValue_ = '';
+  // filter, MULTI-select via checkboxes + staged pending set + OK button
+  // (instead of a native <select>, which can't be styled/positioned
+  // consistently across mobile browsers, and instead of the old
+  // single-select radio-style behavior). ----
+  //
+  // '' (All remarks) is mutually exclusive with every other option: ticking
+  // it clears everything else, and ticking any other option clears it. The
+  // remaining four options combine with OR — e.g. ticking both "Without
+  // previous remarks" and "With current remarks" shows any customer that
+  // matches either. Selection is never allowed to end up fully empty; it
+  // falls back to '' (All remarks) instead.
   const REMARK_FILTER_LABELS = {
     '': 'All remarks',
-    pending: 'No remarks yet',
-    done: 'Has remarks',
-    noHistory: 'No previous remarks',
-    hasHistory: 'Has previous remarks',
-    none: 'No remarks at all'
+    hasHistory: 'With previous remarks',
+    noHistory: 'Without previous remarks',
+    done: 'With current remarks',
+    both: 'With previous & current remarks'
   };
+  const selectedRemarks_ = new Set(['']);   // applied selection — what's actually filtering the list
+  let pendingRemarks_ = new Set(['']);      // staged selection — what the open menu's checkboxes show
+
+  function syncRemarkCheckboxes_(){
+    document.querySelectorAll('#remarkMenuList .status-option').forEach(opt=>{
+      const on = pendingRemarks_.has(opt.dataset.value);
+      opt.classList.toggle('active', on);
+      const cb = opt.querySelector('input[type=checkbox]');
+      if(cb) cb.checked = on;
+    });
+  }
+
   function updateRemarkFilterBtn_(){
     const btn = document.getElementById('remarkFilterBtn');
     if(!btn) return;
-    btn.textContent = REMARK_FILTER_LABELS[remarkFilterValue_] || 'All remarks';
+    const sel = selectedRemarks_;
+    if(!sel.size || sel.has('')){
+      btn.textContent = 'All remarks';
+    } else if(sel.size === 1){
+      btn.textContent = REMARK_FILTER_LABELS[Array.from(sel)[0]] || 'All remarks';
+    } else {
+      btn.textContent = sel.size + ' remarks filters';
+    }
   }
-  function setRemarkFilter_(value){
-    remarkFilterValue_ = value || '';
-    document.querySelectorAll('#remarkMenu .status-option').forEach(opt=>{
-      opt.classList.toggle('active', opt.dataset.value === remarkFilterValue_);
-    });
+
+  // Ticking a box only edits the STAGED selection (pendingRemarks_) — the
+  // visible customer list is untouched until OK is pressed, same as the
+  // status filter.
+  function toggleRemarkOption_(value){
+    value = value || '';
+    if(value === ''){
+      // "All remarks" is exclusive — picking it clears everything else.
+      pendingRemarks_ = new Set(['']);
+    } else {
+      pendingRemarks_.delete('');
+      if(pendingRemarks_.has(value)) pendingRemarks_.delete(value);
+      else pendingRemarks_.add(value);
+      if(!pendingRemarks_.size) pendingRemarks_.add(''); // never leave it fully empty
+    }
+    syncRemarkCheckboxes_();
+  }
+
+  function clearRemarkFilter_(){
+    pendingRemarks_ = new Set(['']);
+    syncRemarkCheckboxes_();
+  }
+
+  // Commits the staged selection: copies pendingRemarks_ over
+  // selectedRemarks_, actually re-filters the list, and closes the menu.
+  function applyRemarkFilter_(){
+    selectedRemarks_.clear();
+    pendingRemarks_.forEach(v => selectedRemarks_.add(v));
     updateRemarkFilterBtn_();
     closeRemarkMenu_();
     render();
   }
+
   function toggleRemarkMenu_(e){
     if(e) e.stopPropagation();
     const menu = document.getElementById('remarkMenu');
-    if(menu.classList.contains('open')) closeRemarkMenu_();
-    else openPositionedMenu(menu, document.getElementById('remarkFilterBtn'));
+    if(menu.classList.contains('open')){
+      closeRemarkMenu_();
+    } else {
+      // Stage a fresh copy of the last-applied selection every time the
+      // menu is (re)opened, so ticking boxes and then dismissing the menu
+      // without pressing OK never leaks into the applied filter.
+      pendingRemarks_ = new Set(selectedRemarks_);
+      syncRemarkCheckboxes_();
+      openPositionedMenu(menu, document.getElementById('remarkFilterBtn'));
+    }
   }
   function closeRemarkMenu_(){
     closePositionedMenu(document.getElementById('remarkMenu'));
   }
   document.getElementById('remarkMenu').addEventListener('click', (e)=>{
     e.stopPropagation();
+    const actBtn = e.target.closest('[data-act]');
+    if(actBtn){
+      if(actBtn.dataset.act === 'remark-clear') clearRemarkFilter_();
+      else if(actBtn.dataset.act === 'remark-ok') applyRemarkFilter_();
+      return;
+    }
     const opt = e.target.closest('.status-option');
-    if(opt) setRemarkFilter_(opt.dataset.value);
+    if(opt) toggleRemarkOption_(opt.dataset.value);
+  });
+  // Enter applies the staged selection too, same as tapping OK.
+  document.getElementById('remarkMenu').addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){ e.preventDefault(); applyRemarkFilter_(); }
   });
   document.addEventListener('click', (e)=>{
     if(!e.target.closest('#remarkSwitch')) closeRemarkMenu_();
@@ -4597,7 +4680,8 @@
 
   function getFilteredCustomers(){
     const q = document.getElementById('searchBox').value.trim().toLowerCase();
-    const remarkF = remarkFilterValue_;
+    const remarkSel = selectedRemarks_;
+    const remarkFilterActive = remarkSel.size && !remarkSel.has('');
 
     return customers.filter(c=>{
       if(c._pendingDelete) return false; // queued for deletion, hide immediately
@@ -4610,13 +4694,18 @@
         const key = cs ? cs : STATUS_BLANK_VALUE;
         if(!selectedStatuses_.has(key)) return false;
       }
-      const hasRemark = c.auditorRemarks && str_(c.auditorRemarks).toUpperCase() !== 'NO REMARKS';
-      const hasHistory = !!str_(c.previousRemarks).trim();
-      if(remarkF === 'pending' && hasRemark) return false;
-      if(remarkF === 'done' && !hasRemark) return false;
-      if(remarkF === 'noHistory' && hasHistory) return false;
-      if(remarkF === 'hasHistory' && !hasHistory) return false;
-      if(remarkF === 'none' && (hasRemark || hasHistory)) return false;
+      if(remarkFilterActive){
+        const hasRemark = c.auditorRemarks && str_(c.auditorRemarks).toUpperCase() !== 'NO REMARKS';
+        const hasHistory = !!str_(c.previousRemarks).trim();
+        // OR across whichever boxes are ticked — a customer only needs to
+        // match ONE of the selected remark criteria to be shown.
+        const matches =
+          (remarkSel.has('hasHistory') && hasHistory) ||
+          (remarkSel.has('noHistory') && !hasHistory) ||
+          (remarkSel.has('done') && hasRemark) ||
+          (remarkSel.has('both') && hasRemark && hasHistory);
+        if(!matches) return false;
+      }
       return true;
     });
   }
@@ -4767,10 +4856,10 @@
       }
 
       let remarksHtml = `<div class="rlabel">Auditor remarks</div>` +
-        `<div class="rline"><div class="rdate">${escapeHtml(c.dateOfAudit || 'Undated')}</div>` +
+        `<div class="rline"><span class="rtag cur">Current</span><div class="rdate">${escapeHtml(c.dateOfAudit || 'Undated')}</div>` +
         `<div class="rtext ${hasRemark ? '' : 'none'}">${hasRemark ? escapeHtml(c.auditorRemarks) : 'No remarks yet'}</div></div>`;
       for(let j = 0; j < hist.length; j++){
-        remarksHtml += `<div class="rline"><div class="rdate">${escapeHtml(hist[j].date || 'Undated')}</div><div class="rtext">${escapeHtml(hist[j].remark)}</div></div>`;
+        remarksHtml += `<div class="rline"><span class="rtag prev">Prev</span><div class="rdate">${escapeHtml(hist[j].date || 'Undated')}</div><div class="rtext">${escapeHtml(hist[j].remark)}</div></div>`;
       }
 
       const pendingTag = isConflict

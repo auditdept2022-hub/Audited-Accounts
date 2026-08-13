@@ -3549,7 +3549,42 @@
   // it fails again, identically, on every retry, with the user never
   // finding out why.
 
+  // Undoes exactly what applyOptimisticCreate_/Update_/Delete_ did to the
+  // in-memory `customers` array, for the one case that now needs it: an
+  // online send that reached the server fine but came back with a real
+  // application error (not a dropped connection). Without this, the
+  // optimistic apply below would keep showing a change on screen that
+  // never actually saved, with nothing but a toast to say otherwise.
+  function rollbackOptimistic_(item){
+    if(item.kind === 'create'){
+      customers = customers.filter(x => x.row !== item.tempRow);
+    } else if(item.kind === 'update'){
+      const c = customers.find(x => x.row === item.row);
+      if(c && item.snapshot){ Object.assign(c, item.snapshot); delete c._pending; }
+    } else if(item.kind === 'delete'){
+      const c = customers.find(x => x.row === item.row);
+      if(c) delete c._pendingDelete;
+    }
+    saveLocalCache_(customers);
+  }
+
+  // PERFORMANCE FIX: this used to apply the change to `customers` and
+  // call render() ONLY after the network round trip finished (the
+  // online branch awaited sendOne_ before touching the screen at all).
+  // That's what made every save/edit/highlight feel "slow" even after
+  // the backend was sped up — the UI was never actually optimistic when
+  // online, only when offline. Now the optimistic apply + render happens
+  // FIRST, unconditionally, so the change is visible the instant you
+  // make it; the live send then happens in the background and either
+  // confirms it (silently swaps _pending off) or, on a genuine
+  // application error (not just a slow/dropped connection), rolls the
+  // optimistic apply back and surfaces the error via the caller's catch.
   async function queueOrSend_(item){
+    if(item.kind === 'create') applyOptimisticCreate_(item);
+    else if(item.kind === 'update') applyOptimisticUpdate_(item);
+    else if(item.kind === 'delete') applyOptimisticDelete_(item);
+    render();
+
     if(navigator.onLine){
       try{
         const result = await sendOne_(item);
@@ -3561,16 +3596,17 @@
         render();
         return result;
       }catch(err){
-        if(!isConnectionError_(err)) throw err; // real error — let the caller show it
-        // else fall through to queue below
+        if(!isConnectionError_(err)){
+          rollbackOptimistic_(item);
+          render();
+          throw err; // real error — let the caller show it
+        }
+        // else fall through to queue below — the optimistic apply already
+        // on screen doubles as this item's "pending" state.
       }
     }
     outbox.push(item);
     saveOutbox_();
-    if(item.kind === 'create') applyOptimisticCreate_(item);
-    else if(item.kind === 'update') applyOptimisticUpdate_(item);
-    else if(item.kind === 'delete') applyOptimisticDelete_(item);
-    render();
     updateSyncUI();
     return { queued: true };
   }

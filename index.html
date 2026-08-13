@@ -4155,36 +4155,37 @@
     return 'other';
   }
 
-  // Minimalist branch-wide counter strip: one colored entry per DISTINCT
-  // Customer Status value actually present in the branch (whatever your
-  // team typed — "DEL", "OD - BN", "CURRENT", "FULLY PAID", etc.), each
-  // with its own count, followed by Total last. No grouping and no
+  // Minimalist counter strip: one colored entry per DISTINCT Customer
+  // Status value present in the list currently being shown (whatever
+  // your team typed — "DEL", "OD - BN", "CURRENT", "FULLY PAID", etc.),
+  // each with its own count, followed by Total last. No grouping and no
   // catch-all "Other" bucket — every status shown is the literal,
-  // specific value from the sheet. Always reflects the WHOLE branch, not
-  // just whatever the search box / status filter currently narrows the
-  // card list down to, so it stays a stable at-a-glance summary
-  // regardless of what's being filtered at the moment. Sorted by count
-  // (most common first), ties broken alphabetically. Rebuilt from the
-  // same `customers` array render() already has in memory — no extra
-  // data fetch.
+  // specific value from the sheet.
   //
-  // Colors: cycled from SC_PALETTE by position so each status gets a
-  // distinct, consistent color for as long as the branch's set of
-  // statuses doesn't change (same status = same color across renders,
-  // since the sort order is stable). Total isn't part of that cycle —
-  // it's a fixed, distinct color (SC_TOTAL_COLOR) so it always reads as
-  // "the anchor number", not just one more status among others.
+  // Takes the SAME `filtered` array render() just built from
+  // getFilteredCustomers(), so this always follows the current status
+  // filter / search box exactly like the card list below it does — pick
+  // "DEL" in the status filter and this strip narrows to just DEL (and
+  // Total updates to match), instead of staying pinned to whole-branch
+  // numbers that disagree with what's actually on screen.
+  //
+  // Sorted by count (most common first), ties broken alphabetically.
+  // Colors are cycled from SC_PALETTE by position so each status gets a
+  // distinct, consistent color for as long as the visible set of
+  // statuses doesn't change. Total isn't part of that cycle — it's a
+  // fixed, distinct color (SC_TOTAL_COLOR) so it always reads as "the
+  // anchor number", not just one more status among others.
   const SC_PALETTE = ['#B0304A','#2A3D9A','#1F7A5C','#B5542A','#9C7A2E','#6C4FB6','#1D8FA6','#B8934A'];
   const SC_TOTAL_COLOR = '#16215A';
 
-  function updateStatusCounts_(){
+  function updateStatusCounts_(list){
     const el = document.getElementById('statusCounts');
     if(!el) return;
-    if(!customers.length){ el.innerHTML = ''; return; }
+    if(!list || !list.length){ el.innerHTML = ''; return; }
 
     const counts = new Map(); // status text -> count; blank statuses grouped under 'No status'
-    for(let i = 0; i < customers.length; i++){
-      const label = str_(customers[i].customerStatus).trim() || 'No status';
+    for(let i = 0; i < list.length; i++){
+      const label = str_(list[i].customerStatus).trim() || 'No status';
       counts.set(label, (counts.get(label) || 0) + 1);
     }
 
@@ -4195,7 +4196,7 @@
       const color = SC_PALETTE[i % SC_PALETTE.length];
       html += `<span class="sc-item"><span class="sc-num" style="color:${color}">${n}</span> ${escapeHtml(label)}</span>`;
     });
-    html += `<span class="sc-item sc-total"><span class="sc-num" style="color:${SC_TOTAL_COLOR}">${customers.length}</span> Total</span>`;
+    html += `<span class="sc-item sc-total"><span class="sc-num" style="color:${SC_TOTAL_COLOR}">${list.length}</span> Total</span>`;
     el.innerHTML = html;
   }
 
@@ -4691,10 +4692,10 @@
 
   function render(){
     populateStatusFilter_();
-    updateStatusCounts_();
     const conflictRows = new Set(outbox.filter(o => o.status === 'conflict' || o.status === 'error').map(o => o.row));
 
     const filtered = getFilteredCustomers();
+    updateStatusCounts_(filtered);
 
     const emptyEl = document.getElementById('emptyState');
     emptyEl.style.display = filtered.length ? 'none' : 'block';

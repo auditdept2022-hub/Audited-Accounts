@@ -390,8 +390,10 @@
   .overlay.open{display:flex;}
   .modal{background:#fff;border-radius:18px;max-width:720px;width:100%;overflow:hidden;box-shadow:var(--shadow-lg);max-height:calc(100dvh - 80px);display:flex;flex-direction:column;}
   .modal-head{padding:20px 26px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-start;background:linear-gradient(180deg,#F7F8FD,#FFFFFF);flex-shrink:0;}
-  .modal-head h2{margin:0;font-size:18px;font-family:'Spectral',serif;font-weight:600;color:var(--ink);}
-  .modal-head .meta{color:var(--muted);font-size:12px;margin-top:3px;font-family:'JetBrains Mono',monospace;}
+  .mh-titlewrap{min-width:0;flex:1 1 auto;overflow:hidden;}
+  .mh-right{display:flex;align-items:center;gap:10px;flex-shrink:0;margin-left:12px;}
+  .modal-head h2{margin:0;font-size:18px;font-family:'Spectral',serif;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .modal-head .meta{color:var(--muted);font-size:12px;margin-top:3px;font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .modal-close{border:none;background:none;font-size:20px;cursor:pointer;color:var(--muted);line-height:1;padding:4px;border-radius:6px;touch-action:manipulation;}
   .modal-close:hover{background:#EEF0F9;}
   .modal-body{padding:24px 26px;overflow-y:auto;flex:1;min-height:0;-webkit-overflow-scrolling:touch;}
@@ -409,6 +411,39 @@
   .field-locked .input.locked{
     background:#F1F2F8;color:var(--muted);cursor:not-allowed;border-color:#E4E7F3;
     font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace;font-size:12.5px;
+  }
+
+  /* Compact card grid used inside the customer modal — each field is its
+     own small card (label above, value below) instead of a label/value
+     row. This reads far better on mobile: labels and values no longer
+     fight for horizontal space, long values wrap naturally within their
+     own card instead of squeezing against the label, and grouping
+     related fields (Loan Terms, Financial Summary, Status) under their
+     own heading makes a long field list easy to scan instead of one
+     undifferentiated list top to bottom. */
+  .info-card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:16px;}
+  .info-card-grid:last-child{margin-bottom:0;}
+  .info-card{background:#F8F9FD;border:1px solid var(--line);border-radius:10px;padding:8px 11px;min-width:0;display:flex;flex-direction:column;gap:3px;justify-content:center;min-height:46px;}
+  .info-card.span2{grid-column:1 / -1;}
+  .info-card .k{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted-2);}
+  .info-card .v{font-size:13px;font-weight:600;color:var(--ink);overflow-wrap:anywhere;word-break:break-word;line-height:1.35;}
+  .info-card .v.mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}
+  .info-card .v.dim{color:#AFB4CF;font-weight:500;font-style:italic;}
+  .info-card.money{background:#F2F4FC;border-color:#E1E5F7;}
+  .info-card.money .v{color:var(--accent-dark);}
+  .info-card.editable{background:#fff;border-color:#D7DCF0;}
+  .info-card.editable:hover{border-color:#C9D1EE;}
+  .info-card.editable:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(42,61,154,.12);background:#fff;}
+  .info-card .card-input{border:none;background:transparent;padding:0;font-size:13px;font-weight:600;color:var(--ink);width:100%;outline:none;font-family:inherit;}
+  .info-card .v .badge{padding:2px 8px;font-size:9.5px;}
+  .info-group-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 8px;display:flex;align-items:center;gap:8px;}
+  .info-group-title::after{content:'';flex:1;height:1px;background:var(--line);}
+  .info-card-grid + .info-group-title{margin-top:2px;}
+  @media(max-width:480px){
+    .info-card-grid{gap:6px;}
+    .info-card{padding:7px 9px;min-height:42px;}
+    .info-card .v{font-size:12.5px;}
+    .info-card .k{font-size:8.5px;}
   }
 
   /* Compact key/value list used inside the customer modal in place of the
@@ -895,10 +930,12 @@
 <div class="overlay" id="overlay">
   <div class="modal">
     <div class="modal-head">
-      <div>
+      <div class="mh-titlewrap">
         <h2 id="mTitle">Account &amp; unit information</h2>
       </div>
-      <button class="modal-close" onclick="closeModal()">✕</button>
+      <div class="mh-right">
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
     </div>
     <div class="modal-body">
 
@@ -5066,44 +5103,78 @@
 
   // ---- Form rendering ---------------------------------------------------
 
+  // Groups the flat FIELDS list into labeled clusters so the modal reads
+  // as a few short, scannable sections (Customer & Unit / Loan Terms /
+  // Financial Summary / Status) instead of one long undifferentiated
+  // list — mirrors how the record cards' own fact-grid is organized.
+  const FIELD_GROUPS = [
+    { title: 'Customer & Unit',    keys: ['customer', 'model', 'engineNo'] },
+    { title: 'Loan Terms',         keys: ['releaseDate', 'dueDate', 'term'] },
+    { title: 'Financial Summary',  keys: ['ma', 'begBal', 'dueThisMonth', 'paymentAdv', 'penaltyDue'] },
+    { title: 'Status',             keys: ['customerStatus', 'unitStatus', 'paymentMode'] },
+  ];
+
   function buildFieldGrid(values){
     const grid = document.getElementById('fieldGrid');
     // Locking only applies when editing an EXISTING customer — a brand
     // new record has nothing to lock yet, so every field stays editable.
     const isEdit = modalMode === 'edit';
-    const rowsHtml = FIELDS.map(f=>{
-      const raw = values && values[f.key] !== undefined ? values[f.key] : '';
-      const locked = isEdit && f.lockedOnEdit;
+    const byKey = {};
+    FIELDS.forEach(f => { byKey[f.key] = f; });
 
-      if(locked){
-        // Read-only reference row. Money fields get the ₱ sign and
-        // thousands separators (fmtMoney) so it's unmistakably a peso
-        // amount at a glance, same formatting as the record cards use.
-        // Release/Restructure Date is spelled out ("Month Day, Year")
-        // instead of a bare numeric date so it can't be misread as
-        // DD/MM vs MM/DD, and Term gets an explicit "month(s)" unit so
-        // it reads as a duration rather than a bare number.
-        const display = f.money
-          ? (raw !== '' && raw != null ? '₱' + fmtMoney(raw) : '—')
-          : f.key === 'releaseDate'
-            ? (fmtDateLong_(raw) || '—')
-          : f.key === 'term'
-            ? (fmtTerm_(raw) || '—')
-          : (raw !== '' && raw != null && raw !== '' ? String(raw) : '—');
-        return `<div class="info-row locked">
-          <span class="info-label">${escapeHtml(f.label)}</span>
-          <span class="info-value">${escapeHtml(display)}</span>
+    const groupsHtml = FIELD_GROUPS.map(group => {
+      const cardsHtml = group.keys.map(key => {
+        const f = byKey[key];
+        if(!f) return '';
+        const raw = values && values[f.key] !== undefined ? values[f.key] : '';
+        const locked = isEdit && f.lockedOnEdit;
+        const spanClass = f.span === 2 ? ' span2' : '';
+
+        if(locked){
+          // Read-only reference card. Money fields get the ₱ sign and
+          // thousands separators (fmtMoney) so it's unmistakably a peso
+          // amount at a glance, same formatting as the record cards use.
+          // Release/Restructure Date is spelled out ("Month Day, Year")
+          // instead of a bare numeric date so it can't be misread as
+          // DD/MM vs MM/DD, and Term gets an explicit "month(s)" unit so
+          // it reads as a duration rather than a bare number. Customer
+          // Status reuses the same colored badge used on the record
+          // cards so it's recognizable at a glance instead of plain text.
+          let valueHtml;
+          if(f.key === 'customerStatus' && raw !== '' && raw != null){
+            valueHtml = `<span class="v"><span class="badge ${statusGroup(raw)}">${escapeHtml(String(raw))}</span></span>`;
+          } else {
+            const isEmpty = raw === '' || raw == null;
+            const display = f.money
+              ? (isEmpty ? '—' : '₱' + fmtMoney(raw))
+              : f.key === 'releaseDate'
+                ? (fmtDateLong_(raw) || '—')
+              : f.key === 'term'
+                ? (fmtTerm_(raw) || '—')
+              : (isEmpty ? '—' : String(raw));
+            const monoClass = (f.money || f.key === 'releaseDate' || f.key === 'dueDate' || f.key === 'term' || f.key === 'engineNo') ? ' mono' : '';
+            const dimClass = display === '—' ? ' dim' : '';
+            valueHtml = `<span class="v${monoClass}${dimClass}">${escapeHtml(display)}</span>`;
+          }
+          return `<div class="info-card${f.money ? ' money' : ''}${spanClass}">
+            <span class="k">${escapeHtml(f.label)}</span>
+            ${valueHtml}
+          </div>`;
+        }
+
+        const ph = f.placeholder ? ` placeholder="${escapeHtml(f.placeholder)}"` : '';
+        const step = f.type === 'number' ? ' step="0.01"' : '';
+        return `<div class="info-card editable${spanClass}">
+          <span class="k">${escapeHtml(f.label)}${f.required ? ' *' : ''}</span>
+          <input class="card-input" data-key="${f.key}" type="${f.type}" value="${escapeHtml(raw)}"${ph}${step}>
         </div>`;
-      }
+      }).join('');
 
-      const ph = f.placeholder ? ` placeholder="${escapeHtml(f.placeholder)}"` : '';
-      const step = f.type === 'number' ? ' step="0.01"' : '';
-      return `<div class="info-row editable">
-        <span class="info-label">${escapeHtml(f.label)}${f.required ? ' *' : ''}</span>
-        <input class="info-input" data-key="${f.key}" type="${f.type}" value="${escapeHtml(raw)}"${ph}${step}>
-      </div>`;
+      return `<div class="info-group-title">${escapeHtml(group.title)}</div>
+        <div class="info-card-grid">${cardsHtml}</div>`;
     }).join('');
-    grid.innerHTML = `<div class="info-list">${rowsHtml}</div>`;
+
+    grid.innerHTML = groupsHtml;
   }
 
   function collectFieldValues(){
@@ -5211,6 +5282,11 @@
     document.getElementById('saveBtn').textContent = 'Save changes';
     document.getElementById('deleteBtnWrap').style.display = 'flex';
 
+    // Header stays a generic, static label — the customer's name, model,
+    // and engine no. already live in the Customer & Unit cards right
+    // below, so repeating them up here was redundant.
+    document.getElementById('mTitle').textContent = 'Account & unit information';
+
     buildFieldGrid(c);
 
     const hasRemark = c.auditorRemarks && str_(c.auditorRemarks).toUpperCase() !== 'NO REMARKS';
@@ -5242,6 +5318,8 @@
     document.getElementById('newRemarkLabel').textContent = 'Initial remark (optional)';
     document.getElementById('saveBtn').textContent = 'Create customer';
     document.getElementById('deleteBtnWrap').style.display = 'none';
+
+    document.getElementById('mTitle').textContent = 'New customer';
 
     buildFieldGrid({});
     editorOriginalCurrent = '';

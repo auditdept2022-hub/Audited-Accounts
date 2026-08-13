@@ -478,13 +478,7 @@
      read as plain text and don't invite taps meant for "Add new
      remark" below — the box only appears once you actually hover or
      focus into the field, at which point it's obviously editable. */
-  .current-remark-date{font-size:11px;color:var(--accent);font-weight:700;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px;}
   .edit-hint{font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted-2);font-size:10px;font-style:italic;}
-  .current-remark-edit{
-    background:transparent;border-color:transparent;min-height:44px;cursor:text;
-  }
-  .current-remark-edit:hover{background:#F6F7FD;border-color:#E5E8F7;}
-  .current-remark-edit:focus{background:#F6F7FD;border-color:var(--accent);box-shadow:0 0 0 3px rgba(42,61,154,.12);}
   .history-edit{min-height:90px;max-height:90px;overflow-y:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.6;resize:none;}
   .history-edit[readonly]{
     background:transparent;border-color:transparent;color:var(--muted);cursor:default;
@@ -944,9 +938,12 @@
       </div>
 
       <div class="section" id="remarksSection">
-        <div class="section-title">Current remark <span class="edit-hint">click to edit</span></div>
-        <div class="current-remark-date" id="mCurrentDate"></div>
-        <textarea id="mCurrentEdit" class="current-remark-edit" placeholder="No remarks recorded yet."></textarea>
+        <div class="section-title">Current remark <span class="edit-hint">✏️ edit or 🗑 delete</span></div>
+        <div class="history-list" id="mCurrentList"></div>
+        <!-- Hidden: still holds the plain-text value saveModal() actually
+             sends (kept in sync with the card above), so the
+             create/update payload format is unchanged. -->
+        <textarea id="mCurrentEdit" class="history-edit" style="display:none;"></textarea>
       </div>
 
       <div class="section" id="historySection">
@@ -1459,6 +1456,99 @@
   // calls at all.
   let editorOriginalCurrent = '';
   let editorOriginalHistory = '';
+
+  // ---- Current remark, edited the same way as a history entry ---------
+  //
+  // This used to be a plain textarea you clicked into and typed over
+  // directly, which was a different interaction than every entry in
+  // "Previous audit remarks" below it (explicit ✏️ edit / 🗑 delete
+  // buttons on a small card). Now it renders through the exact same
+  // card markup/classes as a history-entry (.history-entry/.h-date/
+  // .h-text/.h-actions/.h-btn/.h-edit-textarea/.h-edit-actions) — same
+  // buttons, same edit-in-place textarea, same delete confirmation — so
+  // there's only one pattern to learn for both sections. The hidden
+  // #mCurrentEdit textarea is kept in sync with currentRemarkText_ on
+  // every render, so saveModal()'s existing read of its .value (and the
+  // diff against editorOriginalCurrent) needs no changes at all.
+  let currentRemarkText_ = '';
+  let currentRemarkDate_ = '';
+  let currentEditing_ = false;
+
+  function renderCurrentRemark_(){
+    const list = document.getElementById('mCurrentList');
+    const hasText = currentRemarkText_ && currentRemarkText_.trim() !== '';
+
+    if(!hasText && !currentEditing_){
+      list.innerHTML = '<div class="history-list-empty">No current remark on file — add one below.</div>';
+      document.getElementById('mCurrentEdit').value = '';
+      return;
+    }
+
+    if(currentEditing_){
+      list.innerHTML = `<div class="history-entry editing" data-idx="0">
+        <span class="h-date"></span>
+        <textarea class="h-edit-textarea"></textarea>
+        <div class="h-edit-actions">
+          <button type="button" class="btn" data-act="cancel">Cancel</button>
+          <button type="button" class="btn primary" data-act="save">Save</button>
+        </div>
+      </div>`;
+    } else {
+      list.innerHTML = `<div class="history-entry" data-idx="0">
+        <div class="h-body">
+          <span class="h-date"></span>
+          <span class="h-text"></span>
+        </div>
+        <div class="h-actions">
+          <button type="button" class="h-btn edit" data-act="edit" title="Edit this remark">✏️</button>
+          <button type="button" class="h-btn delete" data-act="delete" title="Delete this remark">🗑</button>
+        </div>
+      </div>`;
+    }
+
+    // Set text via textContent/.value (not innerHTML) so remark text is
+    // never interpreted as HTML.
+    const dateEl = list.querySelector('.h-date');
+    if(currentRemarkDate_) dateEl.textContent = currentRemarkDate_; else dateEl.remove();
+    if(currentEditing_){
+      const ta = list.querySelector('.h-edit-textarea');
+      ta.value = currentRemarkText_;
+      ta.focus();
+      ta.selectionStart = ta.selectionEnd = ta.value.length;
+    } else {
+      list.querySelector('.h-text').textContent = currentRemarkText_;
+    }
+
+    document.getElementById('mCurrentEdit').value = currentRemarkText_;
+  }
+
+  document.getElementById('mCurrentList').addEventListener('click', function(e){
+    const btn = e.target.closest('[data-act]');
+    if(!btn) return;
+    const act = btn.dataset.act;
+
+    if(act === 'edit'){
+      currentEditing_ = true;
+      renderCurrentRemark_();
+    } else if(act === 'cancel'){
+      currentEditing_ = false;
+      renderCurrentRemark_();
+    } else if(act === 'save'){
+      const ta = document.querySelector('#mCurrentList .h-edit-textarea');
+      const newText = (ta.value || '').trim();
+      if(!newText){ toast('Remark text can\'t be empty — delete it instead if you want it gone.'); return; }
+      currentRemarkText_ = newText;
+      currentEditing_ = false;
+      renderCurrentRemark_();
+      toast('Remark updated — click Save changes to confirm.');
+    } else if(act === 'delete'){
+      if(!confirm('Delete the current remark? This can\'t be undone once you click Save changes.')) return;
+      currentRemarkText_ = '';
+      currentEditing_ = false;
+      renderCurrentRemark_();
+      toast('Remark removed — click Save changes to confirm.');
+    }
+  });
 
   // ---- Per-row editable "Previous audit remarks" list -----------------
   //
@@ -5326,9 +5416,11 @@
     buildFieldGrid(c);
 
     const hasRemark = c.auditorRemarks && str_(c.auditorRemarks).toUpperCase() !== 'NO REMARKS';
-    document.getElementById('mCurrentDate').textContent = hasRemark ? (c.dateOfAudit || 'Undated') : '';
     editorOriginalCurrent = hasRemark ? str_(c.auditorRemarks) : '';
-    document.getElementById('mCurrentEdit').value = editorOriginalCurrent;
+    currentRemarkText_ = editorOriginalCurrent;
+    currentRemarkDate_ = hasRemark ? (c.dateOfAudit || 'Undated') : '';
+    currentEditing_ = false;
+    renderCurrentRemark_();
 
     editorOriginalHistory = str_(c.previousRemarks);
     historyEntries_ = parseHistoryEntries_(editorOriginalHistory);
@@ -5360,8 +5452,10 @@
     buildFieldGrid({});
     editorOriginalCurrent = '';
     editorOriginalHistory = '';
-    document.getElementById('mCurrentDate').textContent = '';
-    document.getElementById('mCurrentEdit').value = '';
+    currentRemarkText_ = '';
+    currentRemarkDate_ = '';
+    currentEditing_ = false;
+    renderCurrentRemark_();
     historyEntries_ = [];
     historyEditingIdx_ = -1;
     renderHistoryList_();

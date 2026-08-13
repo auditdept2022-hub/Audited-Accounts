@@ -1466,6 +1466,30 @@
   let editorOriginalCurrent = '';
   let editorOriginalHistory = '';
 
+  // BUGFIX: a <textarea>'s .value getter normalizes line breaks (CRLF /
+  // lone CR -> LF) the moment a string is assigned into it. If a remark
+  // on the sheet contains \r\n (common with text pasted from Excel/Word,
+  // or imported), the snapshot taken straight from the server
+  // (editorOriginalCurrent/editorOriginalHistory, still \r\n) would never
+  // string-equal the same text read back out of the textarea (now \n
+  // only) — so saveModal() concluded "the user edited this" and fired
+  // editCurrentRemark/editRemarkHistory on EVERY save, even when nobody
+  // touched the box. Comparing through this normalizer (line-ending +
+  // trim) fixes that false positive while still catching real edits.
+  function normForCompare_(v){
+    return str_(v).replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  }
+
+  // A customer with no remark yet is now stored as a BLANK cell (see the
+  // matching Code.gs change) instead of the literal text "NO REMARKS".
+  // This helper treats either form as "no remark" so rows created before
+  // this change (which still say "NO REMARKS" on the sheet) keep working
+  // exactly like freshly-blank ones, everywhere this is checked.
+  function isBlankRemark_(v){
+    const s = str_(v).trim();
+    return s === '' || s.toUpperCase() === 'NO REMARKS';
+  }
+
   // ---- Current remark: standalone Edit / Delete buttons -----------------
   //
   // These are two small, self-contained handlers — NOT a rebuild of the
@@ -1925,12 +1949,12 @@
 
     const rows = customers.map(c=>{
       const row = FIELDS.map(f => (c[f.key] !== undefined && c[f.key] !== null) ? c[f.key] : '');
-      // A brand-new / never-audited row carries the literal placeholder
-      // "NO REMARKS" in Auditor Remarks so the app card view always has
-      // something to display — but that placeholder doesn't belong in an
-      // exported sheet meant for an auditor to fill in by hand. Leave the
-      // cell blank instead whenever no real remark has been made yet.
-      const auditorRemarks = (c.auditorRemarks && String(c.auditorRemarks).trim().toUpperCase() !== 'NO REMARKS')
+      // A brand-new / never-audited row has a blank Auditor Remarks cell
+      // (isBlankRemark_ also treats a legacy literal "NO REMARKS" — from
+      // rows created before that became the default — the same way), so
+      // the exported sheet stays blank and ready for an auditor to fill
+      // in by hand either way.
+      const auditorRemarks = (c.auditorRemarks && !isBlankRemark_(c.auditorRemarks))
         ? c.auditorRemarks
         : '';
       row.push(c.dateOfAudit || '', auditorRemarks, c.previousRemarks || '');
@@ -2304,8 +2328,8 @@
   // accounts, so a re-import never leaves a stale balance sitting there
   // from before. Run Import Balances right after to fill them back in.
   // Auditor Remarks, Previous Audit Remarks and Date of Audit are never
-  // written by this flow either — only createCustomer's own
-  // "NO REMARKS" default applies to brand-new rows.
+  // written by this flow either — createCustomer just leaves Auditor
+  // Remarks blank for brand-new rows, same as the modal's "create" path.
   //
   // Accounts that exist on the dashboard but are simply absent from a
   // given import file are left alone (never deleted) — re-importing a
@@ -3344,7 +3368,7 @@
   function applyOptimisticCreate_(item){
     customers.unshift(Object.assign({
       row: item.tempRow,
-      auditorRemarks: item.remark ? (item.auditor ? item.remark + '  — ' + item.auditor : item.remark) : 'NO REMARKS',
+      auditorRemarks: item.remark ? (item.auditor ? item.remark + '  — ' + item.auditor : item.remark) : '',
       dateOfAudit: item.remark ? todayStr_() : '',
       previousRemarks: '',
       _pending: true
@@ -3363,10 +3387,10 @@
       c.previousRemarks = item.historyEdit;
     }
     if(item.currentEdit !== undefined && item.currentEdit !== null){
-      c.auditorRemarks = item.currentEdit || 'NO REMARKS';
+      c.auditorRemarks = item.currentEdit;
     }
     if(item.remark){
-      if(c.auditorRemarks && str_(c.auditorRemarks).toUpperCase() !== 'NO REMARKS'){
+      if(c.auditorRemarks && !isBlankRemark_(c.auditorRemarks)){
         const entry = '[' + (c.dateOfAudit || 'undated') + '] ' + c.auditorRemarks;
         c.previousRemarks = c.previousRemarks ? entry + '\n' + c.previousRemarks : entry;
       }
@@ -3397,7 +3421,7 @@
   function applyConfirmedCreate_(item, result){
     customers.unshift(Object.assign({
       row: (result && result.row) || item.tempRow,
-      auditorRemarks: item.remark ? (item.auditor ? item.remark + '  — ' + item.auditor : item.remark) : 'NO REMARKS',
+      auditorRemarks: item.remark ? (item.auditor ? item.remark + '  — ' + item.auditor : item.remark) : '',
       dateOfAudit: item.remark ? todayStr_() : '',
       previousRemarks: ''
     }, item.fields));
@@ -3412,10 +3436,10 @@
       c.previousRemarks = item.historyEdit;
     }
     if(item.currentEdit !== undefined && item.currentEdit !== null){
-      c.auditorRemarks = item.currentEdit || 'NO REMARKS';
+      c.auditorRemarks = item.currentEdit;
     }
     if(item.remark){
-      if(c.auditorRemarks && str_(c.auditorRemarks).toUpperCase() !== 'NO REMARKS'){
+      if(c.auditorRemarks && !isBlankRemark_(c.auditorRemarks)){
         const entry = '[' + (c.dateOfAudit || 'undated') + '] ' + c.auditorRemarks;
         c.previousRemarks = c.previousRemarks ? entry + '\n' + c.previousRemarks : entry;
       }
@@ -4867,7 +4891,7 @@
         if(!selectedStatuses_.has(key)) return false;
       }
       if(remarkFilterActive){
-        const hasRemark = c.auditorRemarks && str_(c.auditorRemarks).toUpperCase() !== 'NO REMARKS';
+        const hasRemark = c.auditorRemarks && !isBlankRemark_(c.auditorRemarks);
         const hasHistory = !!str_(c.previousRemarks).trim();
         // OR across whichever boxes are ticked — a customer only needs to
         // match ONE of the selected remark criteria to be shown.
@@ -5004,7 +5028,7 @@
       }
 
       const g = statusGroup(c.customerStatus);
-      const hasRemark = c.auditorRemarks && str_(c.auditorRemarks).toUpperCase() !== 'NO REMARKS';
+      const hasRemark = c.auditorRemarks && !isBlankRemark_(c.auditorRemarks);
       const hist = parseHistory(c.previousRemarks);
 
       const facts = [
@@ -5356,7 +5380,7 @@
 
     buildFieldGrid(c);
 
-    const hasRemark = c.auditorRemarks && str_(c.auditorRemarks).toUpperCase() !== 'NO REMARKS';
+    const hasRemark = c.auditorRemarks && !isBlankRemark_(c.auditorRemarks);
     document.getElementById('mCurrentDate').textContent = hasRemark ? (c.dateOfAudit || 'Undated') : '';
     editorOriginalCurrent = hasRemark ? str_(c.auditorRemarks) : '';
     document.getElementById('mCurrentEdit').value = editorOriginalCurrent;
@@ -5449,8 +5473,8 @@
         // call entirely for an unrelated field-only or new-remark-only save.
         const currentEditVal = document.getElementById('mCurrentEdit').value.trim();
         const historyEditVal = document.getElementById('mHistoryEdit').value.trim();
-        const currentEdit = currentEditVal !== editorOriginalCurrent.trim() ? currentEditVal : undefined;
-        const historyEdit = historyEditVal !== editorOriginalHistory.trim() ? historyEditVal : undefined;
+        const currentEdit = normForCompare_(currentEditVal) !== normForCompare_(editorOriginalCurrent) ? currentEditVal : undefined;
+        const historyEdit = normForCompare_(historyEditVal) !== normForCompare_(editorOriginalHistory) ? historyEditVal : undefined;
 
         const item = {
           id: genId_(),

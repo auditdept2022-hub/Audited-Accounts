@@ -1406,14 +1406,16 @@
   }
 
   // Goes through the exact same queueOrSend_ path every other edit uses:
-  // tries to save live first, and — if that fails because there's no
-  // connection (not because of a real server error) — queues it in the
-  // offline outbox instead of giving up. The outbox is what makes "set
-  // it on the phone while offline, it syncs to the PC once back online"
-  // work: it's persisted to localStorage, retried automatically every
-  // 20s once navigator.onLine flips back to true, and merged into the
-  // list on every subsequent load so it isn't lost or overwritten by a
-  // background refresh in the meantime.
+  // queued into the offline outbox immediately (persisted to
+  // localStorage) and synced in the background — online or offline. The
+  // outbox is what makes "set it on the phone while offline, it syncs to
+  // the PC once back online" work: it's retried automatically every 20s
+  // once navigator.onLine flips back to true, and merged into the list
+  // on every subsequent load so it isn't lost or overwritten by a
+  // background refresh in the meantime. No toast on the happy path here
+  // (marker taps are quick/frequent — the color swatch updating on the
+  // card is feedback enough); updateSyncUI's pending indicator covers
+  // the rest.
   async function setMark_(row, color){
     const c = customers.find(x => x.row === row);
     if(!c) return;
@@ -1436,8 +1438,7 @@
     };
 
     try{
-      const result = await queueOrSend_(item);
-      if(result && result.queued) toast('Offline — marker will sync automatically once you\'re back online.');
+      await queueOrSend_(item);
     }catch(err){
       toast('Could not save the color marker: ' + err.message);
     }
@@ -3709,20 +3710,17 @@
   }
 
   // ---- Queueing ---------------------------------------------------------
-  // Tries the real network call first (covers "technically online but
-  // this one request happened to fail"); only falls back to queueing for
-  // later when that attempt fails because of a CONNECTION problem. A
-  // real application error (e.g. "Customer name is required") is
-  // surfaced immediately instead — silently queuing it would just mean
-  // it fails again, identically, on every retry, with the user never
-  // finding out why.
+  // Every change (online or offline) is queued into the offline outbox
+  // first and applied to the screen optimistically; the actual network
+  // send always happens afterwards through syncOutbox(), never inline
+  // in queueOrSend_ itself. See the comment on queueOrSend_ below for why.
 
   // Undoes exactly what applyOptimisticCreate_/Update_/Delete_ did to the
-  // in-memory `customers` array, for the one case that now needs it: an
-  // online send that reached the server fine but came back with a real
-  // application error (not a dropped connection). Without this, the
-  // optimistic apply below would keep showing a change on screen that
-  // never actually saved, with nothing but a toast to say otherwise.
+  // in-memory `customers` array. Used when a queued item comes back from
+  // syncOutbox() with a real application error (not a dropped
+  // connection) — without this, the optimistic apply would keep showing
+  // a change on screen that never actually saved, with nothing but a
+  // toast/error flag on the outbox item to say otherwise.
   function rollbackOptimistic_(item){
     if(item.kind === 'create'){
       customers = customers.filter(x => x.row !== item.tempRow);
@@ -3736,52 +3734,55 @@
     saveLocalCache_(customers);
   }
 
-  // PERFORMANCE FIX: this used to apply the change to `customers` and
-  // call render() ONLY after the network round trip finished (the
-  // online branch awaited sendOne_ before touching the screen at all).
-  // That's what made every save/edit/highlight feel "slow" even after
-  // the backend was sped up — the UI was never actually optimistic when
-  // online, only when offline. Now the optimistic apply + render happens
-  // FIRST, unconditionally, so the change is visible the instant you
-  // make it; the live send then happens in the background and either
-  // confirms it (silently swaps _pending off) or, on a genuine
-  // application error (not just a slow/dropped connection), rolls the
-  // optimistic apply back and surfaces the error via the caller's catch.
+  // CHANGED: this used to try a LIVE send first and await it before the
+  // Save/Delete button could re-enable or the modal could close. That's
+  // what caused "the sheet already has the remark, but the app is still
+  // stuck on Saving…": Apps Script can finish writing the row and then
+  // still take a long time handing its HTTP response back, so the
+  // client's fetch would eventually time out (FETCH_TIMEOUT_MS, 30s)
+  // while the button just sat there. Once that timeout fired it was
+  // treated as a connection failure and fell through to the queue below
+  // anyway — so a slow-but-successful write could end up queued and
+  // then REPLAYED, i.e. saved twice.
+  //
+  // Now every change — online or offline — is queued FIRST (instant,
+  // local, can't hang) and the optimistic apply/render happens
+  // immediately, so the caller (saveModal, setMark_, etc.) returns right
+  // away. The actual network send happens afterwards via syncOutbox(),
+  // fired in the background without being awaited here. syncOutbox()
+  // already has everything needed to do this safely and only once:
+  //   - isSyncing/outbox-empty guards so overlapping calls collapse
+  //   - a per-row `snapshot` drift check before replaying an update, so
+  //     if this exact change somehow already reached the sheet another
+  //     way, a mismatch is caught as a conflict instead of silently
+  //     double-writing
+  //   - its own cold-start retry and connection-error handling
+  // This is also what makes "Sync now" meaningful even while online:
+  // every save always goes through the outbox/sync path instead of a
+  // separate one-off live call, so there's always something for a sync
+  // to actually do and its status/timing is visible the same way
+  // regardless of connection.
   async function queueOrSend_(item){
     if(item.kind === 'create') applyOptimisticCreate_(item);
     else if(item.kind === 'update') applyOptimisticUpdate_(item);
     else if(item.kind === 'delete') applyOptimisticDelete_(item);
     render();
 
-    if(navigator.onLine){
-      try{
-        const result = await sendOne_(item);
-        // Patch the one record we just wrote instead of re-fetching the
-        // whole list — see the note above applyConfirmedCreate_.
-        if(item.kind === 'create') applyConfirmedCreate_(item, result);
-        else if(item.kind === 'update') applyConfirmedUpdate_(item);
-        else if(item.kind === 'delete') applyConfirmedDelete_(item);
-        render();
-        return result;
-      }catch(err){
-        if(!isConnectionError_(err)){
-          rollbackOptimistic_(item);
-          render();
-          throw err; // real error — let the caller show it
-        }
-        // else fall through to queue below — the optimistic apply already
-        // on screen doubles as this item's "pending" state.
-      }
-    }
     outbox.push(item);
     saveOutbox_();
     updateSyncUI();
+
+    // Fire-and-forget: don't await this. syncOutbox() checks
+    // navigator.onLine and isSyncing itself, so calling it here
+    // unconditionally is safe whether we're online or not right now.
+    syncOutbox();
+
     return { queued: true };
   }
 
-  // Sends one item for real, right now (used both for the "try live
-  // first" path and for replaying queued items during sync). Throws on
-  // any failure — network or server-side.
+  // Sends one item for real, right now (called only from inside
+  // syncOutbox() as it replays queued items). Throws on any failure —
+  // network or server-side.
   // PERFORMANCE FIX: a "create with an opening remark" or "update with a
   // history/current-remark correction and/or a new remark" used to fire
   // 2-4 SEQUENTIAL apiCallJson_ round trips (each one a full Apps Script
@@ -3998,7 +3999,7 @@
     }
 
     if(syncedAny && !outbox.length){
-      toast('Offline changes synced.');
+      toast('Changes synced.');
     } else if(outbox.some(o => o.status === 'conflict' || o.status === 'error')){
       document.getElementById('connStatus').textContent = 'Some offline changes need your attention.';
     } else if(hitConnectionError){
@@ -4016,7 +4017,7 @@
       syncColdStartRetries = 0;
       document.getElementById('connStatus').textContent = 'Sync paused — ' + connErrMsg;
     } else if(syncedAny){
-      toast('Offline changes synced.');
+      toast('Changes synced.');
     }
   }
 
@@ -5592,8 +5593,8 @@
           auditor: auditor || null,
           status: 'pending'
         };
-        const result = await queueOrSend_(item);
-        toast(result && result.queued ? 'No connection — saved on this device, will sync automatically.' : 'Customer added.');
+        await queueOrSend_(item);
+        toast('Customer added — syncing…');
         clearDraft_(null);
       } else {
         const c = customers.find(x => x.row === activeRow);
@@ -5626,8 +5627,8 @@
             Object.fromEntries(Object.keys(fields).map(k => [k, c[k]]))
           ) : null
         };
-        const result = await queueOrSend_(item);
-        toast(result && result.queued ? 'No connection — saved on this device, will sync automatically.' : 'Changes saved.');
+        await queueOrSend_(item);
+        toast('Changes saved — syncing…');
         clearDraft_(activeRow);
       }
       closeModal();
@@ -5664,8 +5665,8 @@
 
     try{
       const item = { id: genId_(), kind: 'delete', row: activeRow, status: 'pending' };
-      const result = await queueOrSend_(item);
-      toast(result && result.queued ? 'No connection — will delete once back online.' : 'Customer deleted.');
+      await queueOrSend_(item);
+      toast('Customer deleted — syncing…');
       clearDraft_(activeRow);
       closeModal();
     }catch(err){

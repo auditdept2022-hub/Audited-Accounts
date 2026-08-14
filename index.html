@@ -879,11 +879,16 @@
     .sub-row{font-size:9.5px;gap:5px;row-gap:3px;}
     /* Branch name: was forced to a single line with a hard 110px cap,
        which chopped anything longer than a couple words into "…". It
-       now wraps naturally and can take the full width of its row
-       instead of being squeezed next to the online dot/status — those
-       simply drop to their own line (sub-row already flex-wraps) when
-       there isn't room beside a longer name. */
-    .brand .sub{font-size:11px;white-space:normal;overflow-wrap:anywhere;flex:1 1 auto;min-width:0;}
+       now wraps naturally instead of being squeezed next to the online
+       dot/status — those simply drop to their own line (sub-row already
+       flex-wraps) when there isn't room beside a longer name.
+       flex:0 1 auto (not 1 1 auto) is deliberate: the name only takes as
+       much width as its own text needs and can still shrink/wrap, but it
+       no longer flex-GROWS to consume the entire row. With flex-grow:1 it
+       filled all the row's leftover space even for a short name, shoving
+       the "· Online" dot/status off to the far edge with a big empty gap
+       in between instead of sitting right after the name. */
+    .brand .sub{font-size:11px;white-space:normal;overflow-wrap:anywhere;flex:0 1 auto;min-width:0;}
     .hdr-status{font-size:9.5px;}
     .sub-row-sync .hdr-status{font-size:9px;white-space:normal;overflow-wrap:anywhere;}
     #pendingWrap, #pendingWrap button{font-size:9.5px;}

@@ -877,7 +877,13 @@
     .hamburger-btn{flex-shrink:0;}
     .brand .mark{font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
     .sub-row{font-size:9.5px;gap:5px;row-gap:3px;}
-    .brand .sub{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px;}
+    /* Branch name: was forced to a single line with a hard 110px cap,
+       which chopped anything longer than a couple words into "…". It
+       now wraps naturally and can take the full width of its row
+       instead of being squeezed next to the online dot/status — those
+       simply drop to their own line (sub-row already flex-wraps) when
+       there isn't room beside a longer name. */
+    .brand .sub{font-size:11px;white-space:normal;overflow-wrap:anywhere;flex:1 1 auto;min-width:0;}
     .hdr-status{font-size:9.5px;}
     .sub-row-sync .hdr-status{font-size:9px;white-space:normal;overflow-wrap:anywhere;}
     #pendingWrap, #pendingWrap button{font-size:9.5px;}
@@ -887,11 +893,11 @@
       border-top:1px solid rgba(255,255,255,.10);gap:10px;
     }
     .hdr-clock{
-      flex-direction:row;align-items:baseline;justify-content:flex-start;
+      flex-direction:column;align-items:flex-start;justify-content:center;
       padding-right:0;
     }
     .hdr-clock-time{font-size:19px;}
-    .hdr-clock-date{font-size:10.5px;margin-top:0;}
+    .hdr-clock-date{font-size:10.5px;margin-top:1px;}
     .hdr-bell{width:30px;height:30px;}
 
     /* ---- Toolbar: was a single horizontally-scrolling row on
@@ -6652,7 +6658,11 @@
         };
         await queueOrSend_(item);
         toast('Customer added — syncing…');
-        logActivity_('success', 'Customer added', (fields.customer ? fields.customer : 'New customer') + ' added to "' + currentSheet + '".');
+        logActivity_(
+          'success', 'Customer added',
+          (fields.customer ? fields.customer : 'New customer') + ' added to "' + currentSheet + '".' + (remark ? ' Initial remark included.' : ''),
+          remark ? [ { label: 'Initial remark', items: [remark] } ] : null
+        );
         clearDraft_(null);
       } else {
         const c = customers.find(x => x.row === activeRow);
@@ -6687,7 +6697,35 @@
         };
         await queueOrSend_(item);
         toast('Changes saved — syncing…');
-        logActivity_('success', 'Customer updated', (c ? c.customer : 'row ' + activeRow) + ' saved.');
+
+        // ---- Build a proper activity-log entry for this save --------------
+        // "Customer updated" used to be a flat one-liner with no way to
+        // tell what actually changed — in particular, a new auditor
+        // remark just silently disappeared into "saved" with no trace in
+        // the log. This instead lists exactly what changed (field
+        // updates, a new stacked remark, a direct edit to the current
+        // remark, or a history edit), and — since the new remark's full
+        // text is the thing people actually want to check later — puts
+        // it in an expandable group instead of truncating it away.
+        const changedFieldLabels = Object.keys(fields)
+          .filter(k => k !== 'marker' && normForCompare_(str_(fields[k])) !== normForCompare_(c ? str_(c[k]) : ''))
+          .map(fieldLabel_);
+        const markerChanged = c && (fields.marker || '') !== (c.marker || '');
+
+        const summaryParts = [];
+        if(remark) summaryParts.push('added a new remark');
+        if(currentEdit !== undefined) summaryParts.push('edited the current remark');
+        if(historyEdit !== undefined) summaryParts.push('edited the remark history');
+        if(changedFieldLabels.length) summaryParts.push(`updated ${changedFieldLabels.length} field${changedFieldLabels.length === 1 ? '' : 's'} (${changedFieldLabels.join(', ')})`);
+        if(markerChanged) summaryParts.push('changed the color marker');
+        const detail = summaryParts.length ? summaryParts.join('; ') + '.' : 'Saved with no detected changes.';
+
+        const groups = [];
+        if(remark) groups.push({ label: 'New remark added', items: [remark] });
+        if(currentEdit !== undefined) groups.push({ label: 'Current remark edited to', items: [currentEdit || '(cleared)'] });
+        if(historyEdit !== undefined) groups.push({ label: 'Remark history edited to', items: [historyEdit || '(cleared)'] });
+
+        logActivity_('success', 'Customer updated', (c ? c.customer : 'row ' + activeRow) + ' — ' + detail, groups);
         clearDraft_(activeRow);
       }
       closeModal();

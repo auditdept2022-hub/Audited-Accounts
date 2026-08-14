@@ -72,7 +72,7 @@
     background:
       radial-gradient(1100px 220px at 12% -60%, rgba(90,110,220,.30), transparent 60%),
       linear-gradient(120deg, var(--panel-2) 0%, var(--panel) 55%, var(--panel-3) 100%);
-    color:#EDEFF9;padding:calc(20px + var(--safe-t)) 32px 20px;display:flex;align-items:flex-start;justify-content:space-between;gap:20px;
+    color:#EDEFF9;padding:calc(20px + var(--safe-t)) 32px 20px;display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:20px;
     box-shadow:0 2px 20px rgba(4,8,32,.35);position:sticky;top:0;z-index:40;
     border-bottom:1px solid rgba(255,255,255,.08);
   }
@@ -131,27 +131,40 @@
   #pendingWrap button:hover{color:#fff;}
   #pendingWrap .count{background:var(--gold);color:#2A2005;border-radius:10px;padding:1px 6px;font-weight:700;font-size:10px;}
 
-  /* Status-counts strip, embedded directly in the header as a third row
-     below the sync/refresh line — same info that used to sit above the
-     card list, just tucked into the header itself so it's always
-     visible at a glance. A thin dashed divider separates it from the
-     sync line above; sizing is deliberately restrained (small type,
-     tight gaps) so it reads as a quiet stat line, not another loud
-     header element, on both desktop and phone widths. */
+  /* Status-counts strip, embedded directly in the header as its own
+     full-width row beneath brand + clock — a proper chip/pill per
+     status instead of a plain dot-separated text line. Chips wrap as a
+     tidy grid with even gaps regardless of how many end up per row, so
+     it never produces the ragged, uneven line-wrapping a plain text
+     strip gets once there are more than a couple statuses. It's a
+     direct child of .topband (flex-basis:100%) rather than living
+     inside the narrow .brand column, so it always gets the header's
+     full width to lay out in — that's what keeps it from being
+     squeezed into 3+ cramped lines on medium/narrow widths. */
   .hdr-status-counts{
-    display:flex;flex-wrap:wrap;gap:0 0;align-items:baseline;
-    margin-top:7px;padding-top:7px;
-    border-top:1px dashed rgba(255,255,255,.14);
-    font-size:11px;line-height:1.5;
+    flex-basis:100%;
+    display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;
+    margin-top:14px;padding-top:12px;
+    border-top:1px solid rgba(255,255,255,.12);
   }
   .hdr-status-counts:empty{display:none;border-top:none;margin-top:0;padding-top:0;}
-  .hdr-status-counts .sc-item{display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap;}
-  .hdr-status-counts .sc-item + .sc-item::before{content:'·';margin:0 8px;color:#4D5788;font-weight:700;}
-  .hdr-status-counts .sc-num{font-weight:800;}
-  .hdr-status-counts .sc-label{color:#B7C0E8;font-weight:500;}
-  .hdr-status-counts .sc-item.sc-total{margin-left:8px;padding-left:12px;border-left:1px solid rgba(255,255,255,.16);}
-  .hdr-status-counts .sc-item.sc-total .sc-num{color:#fff;}
-  .hdr-status-counts .sc-item.sc-total .sc-label{color:#fff;font-weight:700;}
+  .hdr-status-counts .sc-item{
+    display:inline-flex;align-items:baseline;gap:5px;
+    background:rgba(255,255,255,.07);
+    border:1px solid rgba(255,255,255,.14);
+    border-radius:20px;padding:4px 10px 4px 11px;
+    white-space:nowrap;line-height:1.3;
+    transition:background .15s ease,border-color .15s ease;
+  }
+  .hdr-status-counts .sc-num{font-weight:800;font-family:'JetBrains Mono',monospace;font-size:12px;}
+  .hdr-status-counts .sc-label{color:#C3CBEE;font-weight:700;letter-spacing:.3px;text-transform:uppercase;font-size:9px;}
+  .hdr-status-counts .sc-item.sc-total{
+    background:linear-gradient(160deg,var(--accent),var(--accent-dark));
+    border-color:transparent;
+    box-shadow:0 2px 8px rgba(29,44,116,.35);
+  }
+  .hdr-status-counts .sc-item.sc-total .sc-num,
+  .hdr-status-counts .sc-item.sc-total .sc-label{color:#fff;}
   .import-status{font-size:11.5px;color:var(--muted);white-space:nowrap;}
   /* Sits in the quiet strip between the header and the toolbar card,
      instead of crowding the Import buttons — empty (0-height) until
@@ -878,7 +891,7 @@
       padding:calc(12px + var(--safe-t)) 14px 12px;
       gap:10px;
     }
-    .brand{justify-content:flex-start;gap:10px;min-width:0;flex-basis:100%;}
+    .brand{justify-content:flex-start;gap:10px;min-width:0;flex-basis:100%;order:1;}
     .brand .names{min-width:0;}
     .hamburger-btn{flex-shrink:0;}
     .brand .mark{font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -895,37 +908,32 @@
        the "· Online" dot/status off to the far edge with a big empty gap
        in between instead of sitting right after the name. */
     .brand .sub{font-size:11px;white-space:normal;overflow-wrap:anywhere;flex:0 1 auto;min-width:0;}
+    .sub-row-sync{margin-top:0;}
     .hdr-status{font-size:9.5px;}
     .sub-row-sync .hdr-status{font-size:9px;white-space:normal;overflow-wrap:anywhere;}
     #pendingWrap, #pendingWrap button{font-size:9.5px;}
     .hdr-clock-wrap{
       flex-shrink:0;flex-direction:row;flex-basis:100%;align-items:center;
-      justify-content:space-between;width:100%;margin-top:2px;padding-top:8px;
-      border-top:1px solid rgba(255,255,255,.10);gap:10px;
+      justify-content:space-between;width:100%;margin-top:1px;padding-top:5px;
+      border-top:1px solid rgba(255,255,255,.10);gap:8px;order:2;
     }
     .hdr-clock{
       flex-direction:column;align-items:flex-start;justify-content:center;
       padding-right:0;
     }
-    .hdr-clock-time{font-size:19px;}
-    .hdr-clock-date{font-size:10.5px;margin-top:1px;}
-    .hdr-bell{width:30px;height:30px;}
+    .hdr-clock-time{font-size:17px;}
+    .hdr-clock-date{font-size:10px;margin-top:0;}
+    .hdr-bell{width:28px;height:28px;}
 
-    /* Header status-counts row: same content as desktop, just tightened
-       up so it wraps cleanly instead of running wide on a narrow phone —
-       smaller type, tighter middot spacing, smaller Total divider gap.
-       Bleeds out to the screen edges (negative margin cancels the
-       topband's own side padding, inner padding brought back to 0) so
-       it gets the full width to work with instead of being squeezed
-       inside the header's normal gutters — this is what keeps two
-       count pairs per line instead of wrapping after just one. */
-    .hdr-status-counts{
-      font-size:9.5px;margin-top:6px;padding-top:6px;
-      margin-left:calc(-14px - var(--safe-l));
-      padding-left:0;
-    }
-    .hdr-status-counts .sc-item + .sc-item::before{margin:0 6px;}
-    .hdr-status-counts .sc-item.sc-total{margin-left:6px;padding-left:9px;}
+    /* Header status-counts row: the chips are already full-width and
+       self-wrapping (see base rule), so mobile just needs a touch
+       less padding/gap to fit more chips per row on a narrow screen.
+       order:3 now puts it last, below the (tightened) clock row —
+       account status leads, the clock trails it. */
+    .hdr-status-counts{order:3;gap:5px 6px;margin-top:10px;padding-top:9px;}
+    .hdr-status-counts .sc-item{padding:3px 8px 3px 9px;}
+    .hdr-status-counts .sc-num{font-size:11px;}
+    .hdr-status-counts .sc-label{font-size:8.5px;}
 
     /* ---- Toolbar: was a single horizontally-scrolling row on
        mobile (overflow-x:auto), which hid buttons off-screen and
@@ -1059,7 +1067,6 @@
           <button class="hdr-sync-btn" id="hdrSyncBtn" onclick="manualRefresh_()" title="Refresh">⟳</button>
           <span id="pendingWrap" style="display:none;">· <span class="count" id="pendingCount">0</span> pending <button onclick="openSyncModal()">View sync</button></span>
         </div>
-        <div class="hdr-status-counts" id="statusCounts"></div>
       </div>
     </div>
     <div class="hdr-clock-wrap">
@@ -1075,6 +1082,7 @@
         <span class="hdr-bell-badge" id="hdrBellBadge">0</span>
       </button>
     </div>
+    <div class="hdr-status-counts" id="statusCounts"></div>
   </header>
 
   <main class="main">

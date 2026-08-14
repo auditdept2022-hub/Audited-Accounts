@@ -897,10 +897,10 @@
       <div class="toolbar" style="margin-top:6px;">
         <div class="toolbar-extra" id="toolbarExtra">
         <div class="left">
-          <button class="btn" onclick="document.getElementById('importAccountsInput').click()" title="Import a flat account list (.csv/.xls/.xlsx/.pdf) with a header row like Acct Type/Status Customer, Release/ Rstr Date, Model, Engine No, Due Date, Term, MA, Beg Bal, Customer Status, etc. Reads only Customer, Model, Engine No, Release/Rstr Date, Due Date, Term, MA, Beg Bal &amp; Customer Status from each row. PDF support is best-effort (reconstructed from text position, not a real grid) — scanned/image-only PDFs aren't supported; use CSV/Excel if a PDF doesn't import cleanly. This PERMANENTLY CLEARS every existing record in the branch first, then adds every row from the file as a brand-new customer — it never matches/merges with what's already there. Due This Month / Payment (Adv) / Penalty Due are always set to 0 (use Import Balances afterward to fill them in); Unit status, Payment mode, Date of Audit, Auditor Remarks &amp; Previous Audit Remarks always start blank.">⇪ Import Accounts</button>
-          <input type="file" id="importAccountsInput" accept=".csv,.xls,.xlsx,.pdf" multiple style="display:none">
-          <button class="btn" onclick="document.getElementById('importBalancesInput').click()" title="Import CSV or Excel (.xls/.xlsx) files. Matches customers by name (and engine no. when the file has one, so same-name/different-unit customers are told apart) and updates ONLY Due This Month, Payment (Adv) &amp; Penalty Due. Accepts either a plain file with literal 'Due This Month' etc. headers, or the same STA-style ledger report Import Accounts reads (CU/OD/DEL/TTL/Adv columns). Any remarks/Auditor Remarks column in the file is ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Balances</button>
-          <input type="file" id="importBalancesInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
+          <button class="btn" onclick="document.getElementById('importAccountsInput').click()" title="Import a flat account list (.csv/.xls/.xlsx) with a header row like Acct Type/Status Customer, Release/ Rstr Date, Model, Engine No, Due Date, Term, MA, Beg Bal, Customer Status, etc. Reads only Customer, Model, Engine No, Release/Rstr Date, Due Date, Term, MA, Beg Bal &amp; Customer Status from each row. This PERMANENTLY CLEARS every existing record in the branch first, then adds every row from the file as a brand-new customer — it never matches/merges with what's already there. Due This Month / Payment (Adv) / Penalty Due are always set to 0 (use Import Balances afterward to fill them in); Unit status, Payment mode, Date of Audit, Auditor Remarks &amp; Previous Audit Remarks always start blank.">⇪ Import Accounts</button>
+          <input type="file" id="importAccountsInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
+          <button class="btn" onclick="document.getElementById('importBalancesInput').click()" title="Import CSV, Excel (.xls/.xlsx) or PDF files. Matches customers by name (and engine no. when the file has one, so same-name/different-unit customers are told apart) and updates ONLY Due This Month, Payment (Adv) &amp; Penalty Due. Accepts either a plain file with literal 'Due This Month' etc. headers, or the same STA-style ledger report Import Accounts reads (CU/OD/DEL/TTL/Adv columns). PDF support is best-effort (reconstructed from text position, not a real grid) — scanned/image-only PDFs aren't supported; use CSV/Excel if a PDF doesn't import cleanly. Any remarks/Auditor Remarks column in the file is ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Balances</button>
+          <input type="file" id="importBalancesInput" accept=".csv,.xls,.xlsx,.pdf" multiple style="display:none">
           <button class="btn" onclick="document.getElementById('importRemarksInput').click()" title="Import CSV or Excel (.xls/.xlsx) files. Matches customers by name (and engine no. when the file has one). Takes ONLY the customer name and a Remarks/Auditor Remarks column and adds each one as a new line directly into Previous Audit Remarks (no date stamp). The current Auditor Remarks and Date of Audit are never touched. Any balance columns in the file are ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Remarks</button>
           <input type="file" id="importRemarksInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
           <span id="importStatus" class="import-status"></span>
@@ -2016,7 +2016,7 @@
     }));
   }
 
-  // ---- PDF import (Import Accounts) --------------------------------
+  // ---- PDF import (Import Balances) --------------------------------
   //
   // Loaded on demand, same lazy pattern as ensureXlsxLoaded_ above.
   // pdf.js is what actually reads the PDF; it also needs a separate
@@ -2472,8 +2472,15 @@
           // ensureXlsxLoaded_() call injects it — don't bail out before
           // that's even attempted.
           matrices = (await excelToMatrices_(file)).map(s => s.matrix);
+        } else if(ext === 'pdf'){
+          // Best-effort text-position table reconstruction — see the
+          // comment above pdfToMatrices_ for how/why this can be less
+          // reliable than CSV/Excel for an unusual layout. The resulting
+          // matrix still goes through the same shape-1/shape-2 detection
+          // below (plain headers, or the STA-style ledger fallback).
+          matrices = (await pdfToMatrices_(file)).map(s => s.matrix);
         } else {
-          toast(file.name + ': unsupported file type (use .csv, .xls, or .xlsx).');
+          toast(file.name + ': unsupported file type (use .csv, .xls, .xlsx, or .pdf).');
           continue;
         }
 
@@ -2500,7 +2507,13 @@
           fileRecords = fileRecords.concat(records);
         });
 
-        if(!anyHeaderFound){ toast(file.name + ': no recognizable customer/balance/remarks columns found.'); continue; }
+        if(!anyHeaderFound){
+          const hint = ext === 'pdf'
+            ? ': no recognizable customer/balance/remarks columns found (couldn\u2019t reconstruct a table from this PDF\u2019s text layout — scanned/image-only PDFs aren\u2019t supported; try CSV/Excel instead).'
+            : ': no recognizable customer/balance/remarks columns found.';
+          toast(file.name + hint);
+          continue;
+        }
         if(!fileRecords.length) toast(file.name + ': columns found, but no data rows matched.');
         allRecords = allRecords.concat(fileRecords);
       }catch(err){
@@ -2859,22 +2872,14 @@
         } else if(ext === 'csv'){
           const text = await readFileAsText_(file);
           sheets = [{ name: file.name, matrix: csvToMatrix_(text) }];
-        } else if(ext === 'pdf'){
-          // Best-effort text-position table reconstruction — see the
-          // comment above pdfToMatrices_ for how/why this can be less
-          // reliable than CSV/Excel for an unusual layout.
-          sheets = await pdfToMatrices_(file);
         } else {
-          toast(file.name + ': unsupported file type (use .csv, .xls, .xlsx, or .pdf).');
+          toast(file.name + ': unsupported file type (use .csv, .xls, or .xlsx).');
           continue;
         }
         let fileRecords = [];
         sheets.forEach(({ matrix }) => { fileRecords = fileRecords.concat(parseAccountsMatrix_(matrix)); });
         if(!fileRecords.length){
-          const hint = ext === 'pdf'
-            ? ': couldn\u2019t reconstruct a table from this PDF\u2019s text layout (scanned/image-only PDFs aren\u2019t supported \u2014 try CSV/Excel instead).'
-            : ': doesn\u2019t look like an STA-style account report (couldn\u2019t find the expected columns/sections).';
-          toast(file.name + hint);
+          toast(file.name + ': doesn\u2019t look like an STA-style account report (couldn\u2019t find the expected columns/sections).');
           continue;
         }
         allRecords = allRecords.concat(fileRecords);

@@ -5182,7 +5182,23 @@
     return s; // not a recognizable date — leave untouched
   }
 
-  // Renders the Term field with an explicit "month(s)" unit so it's
+  const MONTH_NAMES_ = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  // Release / Restructure Date keeps the spelled-out "Month Day, Year"
+  // style specifically (e.g. "March 25, 2026") — the rest of the app
+  // (Due Date, remark dates) uses the numeric fmtDateMDY_ above instead.
+  function fmtDateSpelled_(raw){
+    if(raw === '' || raw == null) return '';
+    const s = String(raw).trim();
+    if(!s) return '';
+    const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(iso){
+      const y = Number(iso[1]), mo = Number(iso[2]), d = Number(iso[3]);
+      if(mo >= 1 && mo <= 12) return `${MONTH_NAMES_[mo - 1]} ${d}, ${y}`;
+    }
+    const parsed = new Date(s);
+    if(!isNaN(parsed.getTime())) return `${MONTH_NAMES_[parsed.getMonth()]} ${parsed.getDate()}, ${parsed.getFullYear()}`;
+    return s; // not a recognizable date — leave untouched
+  }
   // clear at a glance that "36" means 36 months, not some other count.
   // Only appends the unit onto a bare number; anything already carrying
   // its own text (e.g. "36 mos", "N/A") is left exactly as stored.
@@ -5385,7 +5401,7 @@
       const facts = [
         ['Model', c.model || '—'],
         ['Engine No', c.engineNo || '—'],
-        ['Release / Rstr Date', fmtDateMDY_(c.releaseDate) || '—'],
+        ['Release / Rstr Date', fmtDateSpelled_(c.releaseDate) || '—'],
         ['Due Date', fmtDateMDY_(c.dueDate) || '—'],
         ['Term', c.term || '—'],
         ['MA', c.ma !== '' && c.ma != null ? '₱' + fmtMoney(c.ma) : '—'],
@@ -5590,7 +5606,9 @@
             const isEmpty = raw === '' || raw == null;
             const display = f.money
               ? (isEmpty ? '—' : '₱' + fmtMoney(raw))
-              : (f.key === 'releaseDate' || f.key === 'dueDate')
+              : f.key === 'releaseDate'
+                ? (fmtDateSpelled_(raw) || '—')
+              : f.key === 'dueDate'
                 ? (fmtDateMDY_(raw) || '—')
               : f.key === 'term'
                 ? (fmtTerm_(raw) || '—')

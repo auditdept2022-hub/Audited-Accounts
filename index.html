@@ -96,6 +96,33 @@
   .hdr-sync-btn:disabled{cursor:default;}
   .hdr-sync-btn.spinning{animation:hdr-sync-spin .8s linear infinite;color:#fff;}
   @keyframes hdr-sync-spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+
+  /* ---- Sync progress popup ------------------------------------------
+     Replaces the old "Sync now" button. Syncing itself already happens
+     automatically in the background (queued the instant a change is
+     made, retried on an interval, retried when the connection comes
+     back) — this popup doesn't trigger anything that wasn't already
+     going to happen, it just gives visibility into it: what's queued,
+     what's actively being sent right now, and what's already landed. */
+  .sync-modal{max-width:480px;}
+  .sync-progress-row{display:flex;align-items:center;gap:10px;padding:11px 14px;margin-bottom:14px;background:var(--accent-soft);border:1px solid var(--line);border-radius:10px;}
+  .sync-progress-spinner{width:16px;height:16px;border-radius:50%;border:2px solid #C7CEEE;border-top-color:var(--accent);animation:hdr-sync-spin .8s linear infinite;flex-shrink:0;}
+  .sync-progress-text{font-size:12.5px;color:var(--ink);font-weight:600;}
+  .sync-item-list{display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow-y:auto;}
+  .sync-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;}
+  .sync-item .si-icon{font-size:15px;width:20px;text-align:center;flex-shrink:0;}
+  .sync-item .si-body{flex:1;min-width:0;}
+  .sync-item .si-title{font-size:12.5px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .sync-item .si-sub{font-size:11px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .sync-item .si-status{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:20px;flex-shrink:0;white-space:nowrap;display:flex;align-items:center;gap:5px;}
+  .sync-item .si-status.pending{background:#EEF0FA;color:#6672B0;}
+  .sync-item .si-status.syncing{background:#E7EEFE;color:#3457D5;}
+  .sync-item .si-status.synced{background:var(--ok-soft);color:var(--ok);}
+  .sync-item .si-status.error{background:var(--del-soft);color:var(--del);}
+  .sync-item .si-status.conflict{background:var(--gold-soft);color:var(--gold);}
+  .sync-item .si-spinner{width:9px;height:9px;border-radius:50%;border:2px solid rgba(52,87,213,.25);border-top-color:#3457D5;animation:hdr-sync-spin .8s linear infinite;flex-shrink:0;}
+  .sync-empty{padding:34px 10px;text-align:center;color:var(--muted);font-size:13px;}
+  .sync-modal-meta{color:var(--muted);font-size:12px;margin-top:3px;}
   .sub-row-sync{opacity:.6;margin-top:1px;}
   .sub-row-sync .hdr-status{font-size:9.5px;}
   .sub-row-sync .hdr-sync-btn{font-size:10.5px;}
@@ -827,7 +854,7 @@
         <div class="sub-row sub-row-sync">
           <span class="hdr-status" id="connStatus">Not connected yet.</span>
           <button class="hdr-sync-btn" id="hdrSyncBtn" onclick="manualRefresh_()" title="Refresh">⟳</button>
-          <span id="pendingWrap" style="display:none;">· <span class="count" id="pendingCount">0</span> pending <button onclick="syncOutbox()">Sync now</button></span>
+          <span id="pendingWrap" style="display:none;">· <span class="count" id="pendingCount">0</span> pending <button onclick="openSyncModal()">View sync</button></span>
         </div>
       </div>
     </div>
@@ -1007,7 +1034,7 @@
       </div>
 
       <div class="section" id="historySection">
-        <div class="section-title">Previous audit remarks <span class="edit-hint">✏️ edit or 🗑 delete a remark</span></div>
+        <div class="section-title">Previous audit remarks <span class="edit-hint">🔒 locked — auto-logged</span></div>
         <div class="history-list" id="mHistoryList"></div>
         <!-- Hidden: still holds the plain-text value saveModal() actually
              sends (kept in sync with the list above), so the
@@ -1038,6 +1065,34 @@
       <div class="right">
         <button class="btn" onclick="closeModal()">Cancel</button>
         <button class="btn primary" id="saveBtn" onclick="saveModal()">Save changes</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="syncOverlay">
+  <div class="modal sync-modal">
+    <div class="modal-head">
+      <div>
+        <h2>Syncing changes</h2>
+        <div class="sync-modal-meta">Changes save to this device instantly and sync to the sheet automatically — this just shows what's happening.</div>
+      </div>
+      <button class="modal-close" onclick="closeSyncModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="sync-progress-row" id="syncProgressRow" style="display:none;">
+        <div class="sync-progress-spinner"></div>
+        <div class="sync-progress-text" id="syncProgressText">Syncing…</div>
+      </div>
+      <div id="syncItemList" class="sync-item-list"></div>
+    </div>
+    <div class="modal-foot">
+      <div class="left">
+        <span class="hdr-status" id="syncModalStatus"></span>
+      </div>
+      <div class="right">
+        <button class="btn" id="syncRetryBtn" onclick="syncOutbox()">Retry now</button>
+        <button class="btn primary" onclick="closeSyncModal()">Close</button>
       </div>
     </div>
   </div>
@@ -1481,7 +1536,7 @@
   // internet, a flaky connection, mid-drive dead zone, whatever — the
   // entry just stays queued instead of the change being lost, and gets
   // retried automatically the moment the browser regains connectivity
-  // (or when the user hits "Sync now"). The outbox itself lives in
+  // (or when the user opens the sync popup). The outbox itself lives in
   // localStorage so it survives a full page reload/crash/browser close
   // too, not just a dropped request.
   //
@@ -1547,6 +1602,28 @@
   function isBlankRemark_(v){
     const s = str_(v).trim();
     return s === '' || s.toUpperCase() === 'NO REMARKS';
+  }
+
+  // ---- Add-new-remark: stacks onto the CURRENT remark, never moves it --
+  //
+  // A new remark used to push whatever was already in "Current remark"
+  // down into "Previous audit remarks" and replace it. That's no longer
+  // how this works: a new remark is now appended on top of the existing
+  // current remark (newest entry first, each stamped "[date] text"), and
+  // Previous audit remarks is left completely untouched by this action —
+  // it's a locked, auto-logged history now, not something "Add new
+  // remark" writes into. Mirrors the matching Code.gs change in
+  // addRemark_/updateCustomerFull.
+  function appendRemarkOntoCurrent_(existingCurrent, existingDate, newRemark, auditor, today){
+    const stamped = auditor ? newRemark + '  — ' + auditor : newRemark;
+    const newEntry = '[' + today + '] ' + stamped;
+    if(existingCurrent && !isBlankRemark_(existingCurrent)){
+      const oldFormatted = /^\[[^\]]*\]\s/.test(existingCurrent)
+        ? existingCurrent
+        : '[' + (existingDate || 'undated') + '] ' + existingCurrent;
+      return newEntry + '\n' + oldFormatted;
+    }
+    return newEntry;
   }
 
   // ---- Current remark: locked by default, editable only via the pencil --
@@ -1677,25 +1754,16 @@
       return;
     }
 
+    // Previous audit remarks is a locked, auto-logged history now — no
+    // per-entry edit/delete controls, just a plain read-only list. Each
+    // remark lands here automatically once it's no longer the current
+    // remark (see addRemark_/updateCustomerFull on the backend); nothing
+    // in this section is ever hand-edited from the dashboard.
     list.innerHTML = historyEntries_.map((entry, i) => {
-      if(i === historyEditingIdx_){
-        return `<div class="history-entry editing" data-idx="${i}">
-          <span class="h-date"></span>
-          <textarea class="h-edit-textarea"></textarea>
-          <div class="h-edit-actions">
-            <button type="button" class="btn" data-act="cancel">Cancel</button>
-            <button type="button" class="btn primary" data-act="save">Save</button>
-          </div>
-        </div>`;
-      }
       return `<div class="history-entry" data-idx="${i}">
         <div class="h-body">
           <span class="h-date"></span>
           <span class="h-text"></span>
-        </div>
-        <div class="h-actions">
-          <button type="button" class="h-btn edit" data-act="edit" title="Edit this remark">✏️</button>
-          <button type="button" class="h-btn delete" data-act="delete" title="Delete this remark">🗑</button>
         </div>
       </div>`;
     }).join('');
@@ -1706,52 +1774,11 @@
       const { date, text } = splitHistoryEntry_(historyEntries_[i]);
       const dateEl = row.querySelector('.h-date');
       if(date) dateEl.textContent = date; else dateEl.remove();
-      if(i === historyEditingIdx_){
-        const ta = row.querySelector('.h-edit-textarea');
-        ta.value = text;
-      } else {
-        row.querySelector('.h-text').textContent = text;
-      }
+      row.querySelector('.h-text').textContent = text;
     });
 
     document.getElementById('mHistoryEdit').value = historyEntriesToText_();
-
-    if(historyEditingIdx_ >= 0){
-      const ta = list.querySelector('.history-entry.editing .h-edit-textarea');
-      if(ta){ ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; }
-    }
   }
-
-  document.getElementById('mHistoryList').addEventListener('click', function(e){
-    const btn = e.target.closest('[data-act]');
-    if(!btn) return;
-    const row = btn.closest('.history-entry');
-    const idx = Number(row.dataset.idx);
-    const act = btn.dataset.act;
-
-    if(act === 'edit'){
-      historyEditingIdx_ = idx;
-      renderHistoryList_();
-    } else if(act === 'cancel'){
-      historyEditingIdx_ = -1;
-      renderHistoryList_();
-    } else if(act === 'save'){
-      const ta = row.querySelector('.h-edit-textarea');
-      const newText = (ta.value || '').trim();
-      if(!newText){ toast('Remark text can\'t be empty — delete it instead if you want it gone.'); return; }
-      const { date } = splitHistoryEntry_(historyEntries_[idx]);
-      historyEntries_[idx] = joinHistoryEntry_(date, newText);
-      historyEditingIdx_ = -1;
-      renderHistoryList_();
-      toast('Remark updated — click Save changes to confirm.');
-    } else if(act === 'delete'){
-      if(!confirm('Delete this remark? This can\'t be undone once you click Save changes.')) return;
-      historyEntries_.splice(idx, 1);
-      if(historyEditingIdx_ === idx) historyEditingIdx_ = -1;
-      renderHistoryList_();
-      toast('Remark removed — click Save changes to confirm.');
-    }
-  });
 
   // True negative row ids mark a customer that was created offline and
   // hasn't been assigned a real sheet row yet.
@@ -3008,6 +3035,111 @@
     unlockBodyScroll();
   }
 
+  // ---- Sync progress popup ------------------------------------------
+  // Opening this doesn't start anything that wasn't already going to
+  // happen — every change already queues and auto-syncs itself in the
+  // background (see queueOrSend_/syncOutbox). This just makes that
+  // background activity visible, and gives a "Retry now" nudge for the
+  // case sync is currently paused (offline / connection error).
+  let syncModalOpen_ = false;
+
+  function openSyncModal(){
+    syncModalOpen_ = true;
+    document.getElementById('syncOverlay').classList.add('open');
+    lockBodyScroll();
+    renderSyncList_();
+    if(navigator.onLine && outbox.length) syncOutbox();
+  }
+
+  function closeSyncModal(){
+    syncModalOpen_ = false;
+    document.getElementById('syncOverlay').classList.remove('open');
+    unlockBodyScroll();
+  }
+
+  // Short, human-readable summary of what one queued item will do —
+  // shown as a row in the sync popup so it's obvious WHO/WHAT is about
+  // to sync, not just a bare count.
+  function describeOutboxItem_(item){
+    const name = (item.fields && item.fields.customer) || (item.snapshot && item.snapshot.customer) || 'Unnamed customer';
+    if(item.kind === 'create'){
+      return { icon: '＋', title: name, sub: 'New customer' + (item.remark ? ' · with opening remark' : '') };
+    }
+    if(item.kind === 'delete'){
+      return { icon: '🗑', title: name, sub: 'Deleting this customer' };
+    }
+    // update
+    const bits = [];
+    const fieldCount = item.fields ? Object.keys(item.fields).filter(k => k !== 'marker').length : 0;
+    if(fieldCount) bits.push(fieldCount + ' field' + (fieldCount > 1 ? 's' : '') + ' updated');
+    if(item.remark) bits.push('new remark added');
+    if(item.currentEdit !== undefined && item.currentEdit !== null) bits.push('current remark edited');
+    if(item.historyEdit !== undefined && item.historyEdit !== null) bits.push('history edited');
+    if(item.fields && item.fields.marker !== undefined) bits.push('highlight changed');
+    return { icon: '✎', title: name, sub: bits.length ? bits.join(', ') : 'Update' };
+  }
+
+  function syncItemStatusMeta_(item){
+    if(item.status === 'syncing') return { cls: 'syncing', label: 'Syncing', spinner: true };
+    if(item.status === 'conflict') return { cls: 'conflict', label: 'Needs review', spinner: false };
+    if(item.status === 'error') return { cls: 'error', label: 'Failed', spinner: false };
+    return { cls: 'pending', label: 'Queued', spinner: false };
+  }
+
+  // Rebuilds the popup's item list + overall progress line from the
+  // current `outbox` / `isSyncing` state. Safe to call often — it's a
+  // no-op render, not a network call — called from updateSyncUI() so the
+  // popup stays live while it's open, and once more whenever it opens.
+  function renderSyncList_(){
+    if(!syncModalOpen_) return;
+
+    const list = document.getElementById('syncItemList');
+    const progressRow = document.getElementById('syncProgressRow');
+    const progressText = document.getElementById('syncProgressText');
+    const statusEl = document.getElementById('syncModalStatus');
+    const retryBtn = document.getElementById('syncRetryBtn');
+
+    if(!outbox.length){
+      list.innerHTML = '<div class="sync-empty">Nothing to sync — everything\'s saved. ✓</div>';
+      progressRow.style.display = 'none';
+      statusEl.textContent = '';
+      retryBtn.style.display = 'none';
+      return;
+    }
+
+    retryBtn.style.display = '';
+    const syncingCount = outbox.filter(o => o.status === 'syncing').length;
+    if(isSyncing || syncingCount){
+      progressRow.style.display = 'flex';
+      const done = outbox.length - outbox.filter(o => !o.status || o.status === 'syncing' || o.status === 'pending').length;
+      progressText.textContent = 'Syncing ' + (done + 1) + ' of ' + outbox.length + '…';
+    } else {
+      progressRow.style.display = 'none';
+    }
+
+    if(!navigator.onLine){
+      statusEl.textContent = 'Offline — will resume automatically once you\'re back online.';
+    } else if(outbox.some(o => o.status === 'conflict' || o.status === 'error')){
+      statusEl.textContent = 'Some changes need your attention — see the banner on the main screen.';
+    } else {
+      statusEl.textContent = '';
+    }
+
+    list.innerHTML = outbox.map(item => {
+      const { icon, title, sub } = describeOutboxItem_(item);
+      const meta = syncItemStatusMeta_(item);
+      return `<div class="sync-item">
+        <span class="si-icon">${icon}</span>
+        <div class="si-body">
+          <div class="si-title">${escapeHtml(title)}</div>
+          <div class="si-sub">${escapeHtml(sub)}</div>
+        </div>
+        <span class="si-status ${meta.cls}">${meta.spinner ? '<span class="si-spinner"></span>' : ''}${meta.label}</span>
+      </div>`;
+    }).join('');
+  }
+
+
   // isColdStartRetry is INTERNAL ONLY — see the matching note on
   // loadData(); every real call site (drawer open, ☰ menu, retry link)
   // calls loadProfiles_() with no arguments.
@@ -3415,6 +3547,7 @@
     const wrap = document.getElementById('pendingWrap');
     wrap.style.display = pending ? 'inline' : 'none';
     document.getElementById('pendingCount').textContent = pending;
+    renderSyncList_();
 
     const conflicts = outbox.filter(o => o.status === 'conflict');
     const errored = outbox.filter(o => o.status === 'error');
@@ -3501,12 +3634,9 @@
       if(isBlankRemark_(item.currentEdit)) c.dateOfAudit = '';
     }
     if(item.remark){
-      if(c.auditorRemarks && !isBlankRemark_(c.auditorRemarks)){
-        const entry = '[' + (c.dateOfAudit || 'undated') + '] ' + c.auditorRemarks;
-        c.previousRemarks = c.previousRemarks ? entry + '\n' + c.previousRemarks : entry;
-      }
-      c.auditorRemarks = item.auditor ? item.remark + '  — ' + item.auditor : item.remark;
-      c.dateOfAudit = todayStr_();
+      const today = todayStr_();
+      c.auditorRemarks = appendRemarkOntoCurrent_(c.auditorRemarks, c.dateOfAudit, item.remark, item.auditor, today);
+      c.dateOfAudit = today;
     }
     c._pending = true;
     saveLocalCache_(customers);
@@ -3553,12 +3683,9 @@
       if(isBlankRemark_(item.currentEdit)) c.dateOfAudit = '';
     }
     if(item.remark){
-      if(c.auditorRemarks && !isBlankRemark_(c.auditorRemarks)){
-        const entry = '[' + (c.dateOfAudit || 'undated') + '] ' + c.auditorRemarks;
-        c.previousRemarks = c.previousRemarks ? entry + '\n' + c.previousRemarks : entry;
-      }
-      c.auditorRemarks = item.auditor ? item.remark + '  — ' + item.auditor : item.remark;
-      c.dateOfAudit = todayStr_();
+      const today = todayStr_();
+      c.auditorRemarks = appendRemarkOntoCurrent_(c.auditorRemarks, c.dateOfAudit, item.remark, item.auditor, today);
+      c.dateOfAudit = today;
     }
     // Confirmed means it's no longer just a locally-queued guess — clear
     // the "syncing…" badge this row may have been carrying since it was
@@ -3757,7 +3884,7 @@
   //     way, a mismatch is caught as a conflict instead of silently
   //     double-writing
   //   - its own cold-start retry and connection-error handling
-  // This is also what makes "Sync now" meaningful even while online:
+  // This is also what makes the sync popup meaningful even while online:
   // every save always goes through the outbox/sync path instead of a
   // separate one-off live call, so there's always something for a sync
   // to actually do and its status/timing is visible the same way
@@ -3836,6 +3963,7 @@
     if(!navigator.onLine) { updateSyncUI(); return; }
     isSyncing = true;
     document.getElementById('connStatus').textContent = 'Syncing offline changes…';
+    renderSyncList_();
 
     // Fresh server truth to diff conflict snapshots against.
     let serverList = null;
@@ -3851,7 +3979,7 @@
       // Apps Script cold start — by the time this catch runs, the
       // instance is usually already warm underneath. This used to just
       // sit there as "Sync paused" for up to 20s (the auto-retry
-      // interval) or until the person noticed and tapped "Sync now".
+      // interval) or until the person noticed and opened the sync popup.
       // Mirroring loadData()'s cold-start handling, retry quickly
       // (300ms) instead of waiting out that full interval — same
       // reasoning: capped retry count, immediate status update so
@@ -3925,6 +4053,12 @@
           }
         }
 
+        // Mark this one as actively in-flight so the sync popup can show
+        // a live spinner on exactly the item currently being sent, not
+        // just an overall "syncing" state.
+        item.status = 'syncing';
+        renderSyncList_();
+
         const result = await sendOne_(item);
 
         if(item.kind === 'create'){
@@ -3962,7 +4096,10 @@
         if(isConnectionError_(err)){
           // Can't reach the server at all right now — stop sending
           // further items this pass, but leave this one (and everything
-          // behind it) queued to retry as-is.
+          // behind it) queued to retry as-is. Clear the 'syncing' flag
+          // set just above so the popup shows it as queued again, not
+          // stuck mid-spin.
+          item.status = undefined;
           hitConnectionError = true;
           hitConnectionErrorIsTimeout = (err && err.name === 'AbortError');
           connErrMsg = connectionErrorLabel_(err);

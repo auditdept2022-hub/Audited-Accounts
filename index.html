@@ -231,10 +231,29 @@
   .fact .v.money{font-variant-numeric:tabular-nums;}
 
   .rec-remarks{background:#F6F7FC;border:1px solid #E9EBF7;border-radius:10px;padding:11px 13px;margin-top:2px;}
-  .rec-remarks .rline{display:flex;gap:8px;font-size:12px;line-height:1.5;}
+  /* align-items:flex-start keeps the date/tag pinned to the top of the
+     line once rtext below wraps to more than one line — the default
+     (stretch) would otherwise stretch those siblings' boxes down to
+     match, which looked fine for one-line remarks but odd once a
+     remark actually wraps. */
+  .rec-remarks .rline{display:flex;gap:8px;font-size:12px;line-height:1.5;align-items:flex-start;}
   .rec-remarks .rline + .rline{margin-top:6px;padding-top:6px;border-top:1px dashed #E2E5F5;}
   .rec-remarks .rdate{flex-shrink:0;font-size:9.5px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.3px;font-family:'JetBrains Mono',monospace;white-space:nowrap;}
-  .rec-remarks .rtext{color:var(--text);}
+  /* Was plain `color:var(--text)` with no sizing/whitespace rules — as a
+     flex-row child with no flex-basis/min-width, a long remark either
+     forced the whole row wider than the card (min-width:auto is a flex
+     item's default, so it never shrank below its own content) or, once
+     it did wrap, ran together onto visually-squashed lines. flex:1 +
+     min-width:0 lets it actually claim the row's remaining width and
+     wrap within it; white-space:pre-wrap preserves the blank lines
+     between stacked "[date] remark" entries (a stacked remark is one
+     string with real newlines in it) instead of collapsing them into
+     one run-on line; overflow-wrap/word-break handle a long unbroken
+     token (a run-on account number, a URL) without it poking out past
+     the card edge. The box itself has no max-height anywhere here, so
+     it already grows to fit however many lines a remark needs — this
+     is what stops it from clipping/ellipsis-ing long remarks.  */
+  .rec-remarks .rtext{color:var(--text);flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;}
   .rec-remarks .rtext.none{font-style:italic;color:#AFB4CF;}
   .rec-remarks .rlabel{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#A5ABC8;margin-bottom:6px;}
   /* Per-line CURRENT / PREV badge — the current (auditor) remark and each
@@ -1612,6 +1631,26 @@
   function isBlankRemark_(v){
     const s = str_(v).trim();
     return s === '' || s.toUpperCase() === 'NO REMARKS';
+  }
+
+  // ---- Display-only fix: drop the redundant leading date stamp ----------
+  //
+  // The CURRENT remark is always shown right next to its own "Date of
+  // Audit" (the rdate/mCurrentDate label). But appendRemarkOntoCurrent_
+  // also stamps that same date onto the front of the remark text itself
+  // ("[2026-08-14] did the walkthrough…"), so the date ends up printed
+  // twice for the newest entry: once as the label, once again as the
+  // first thing inside the text. Older entries stacked underneath the
+  // current one keep their own "[date]" prefix because THAT is the only
+  // place their date lives — this only strips the bracket when it's an
+  // exact match for the date already shown right next to it, and only at
+  // the very start of the string, so multi-entry history inside the same
+  // cell is untouched.
+  function stripRedundantDateStamp_(remarks, dateOfAudit){
+    const s = str_(remarks);
+    if(!s || !dateOfAudit) return s;
+    const prefix = '[' + dateOfAudit + '] ';
+    return s.startsWith(prefix) ? s.slice(prefix.length) : s;
   }
 
   // ---- Add-new-remark: stacks onto the CURRENT remark, never moves it --
@@ -3979,8 +4018,25 @@
   // of silently overwriting or dropping either side.
   // Cold-start retries for syncOutbox() specifically (kept separate from
   // loadData()'s own counter — the two can be mid-retry independently).
+  //
+  // PERFORMANCE FIX: this used to give up after 2 automatic retries, after
+  // which a cold-start timeout just sat as "Sync paused" until the next
+  // fixed 20-second auto-sync tick or a manual "Retry now" click. With a
+  // large outbox (many queued account edits at once), a sync pass can
+  // take long enough that it straddles a cold Apps Script instance more
+  // than twice in a row, so a hard cap meant a big batch could visibly
+  // stall partway through for no reason the person could see. Retries are
+  // now UNLIMITED as long as there's still something queued and the
+  // browser reports itself online — syncColdStartBackoff_ below spaces
+  // them out a little further each time (capped at 8s) so a genuinely
+  // stuck connection still doesn't hammer the server, but the overwhelmingly
+  // common case — a transient cold start — now resolves itself completely
+  // automatically, no matter how many accounts are queued, without the
+  // person ever needing to notice or step in.
   let syncColdStartRetries = 0;
-  const MAX_SYNC_COLD_START_RETRIES = 2;
+  function syncColdStartBackoff_(retryCount){
+    return Math.min(300 * Math.pow(1.6, retryCount), 8000);
+  }
 
   async function syncOutbox(){
     if(isSyncing) return;
@@ -4011,10 +4067,11 @@
       // nothing is silent, and this path is only ever reached for the
       // read-only list fetch, never for a write, so nothing can be
       // double-submitted by retrying it.
-      if(listErr && listErr.name === 'AbortError' && syncColdStartRetries < MAX_SYNC_COLD_START_RETRIES){
+      if(listErr && listErr.name === 'AbortError' && navigator.onLine){
+        const delay = syncColdStartBackoff_(syncColdStartRetries);
         syncColdStartRetries++;
         document.getElementById('connStatus').textContent = 'Cold start — retrying sync automatically…';
-        setTimeout(() => { syncOutbox(); }, 300);
+        setTimeout(() => { syncOutbox(); }, delay);
         return;
       }
       syncColdStartRetries = 0;
@@ -4170,10 +4227,11 @@
       // Apps Script instance) shouldn't sit and wait out the full 20s
       // auto-sync interval when the instance is very likely warm again
       // within a few hundred ms.
-      if(hitConnectionErrorIsTimeout && syncColdStartRetries < MAX_SYNC_COLD_START_RETRIES && outbox.length){
+      if(hitConnectionErrorIsTimeout && outbox.length && navigator.onLine){
+        const delay = syncColdStartBackoff_(syncColdStartRetries);
         syncColdStartRetries++;
         document.getElementById('connStatus').textContent = 'Cold start — retrying sync automatically…';
-        setTimeout(() => { syncOutbox(); }, 300);
+        setTimeout(() => { syncOutbox(); }, delay);
         return;
       }
       syncColdStartRetries = 0;
@@ -5341,9 +5399,10 @@
         factsHtml += `<div class="fact"><div class="k">${escapeHtml(facts[j][0])}</div><div class="v">${escapeHtml(String(facts[j][1]))}</div></div>`;
       }
 
+      const curRemarkDisplay = hasRemark ? stripRedundantDateStamp_(c.auditorRemarks, c.dateOfAudit) : '';
       let remarksHtml = `<div class="rlabel">Auditor remarks</div>` +
         `<div class="rline"><span class="rtag cur">Current</span><div class="rdate">${escapeHtml(c.dateOfAudit || 'Undated')}</div>` +
-        `<div class="rtext ${hasRemark ? '' : 'none'}">${hasRemark ? escapeHtml(c.auditorRemarks) : 'No remarks yet'}</div></div>`;
+        `<div class="rtext ${hasRemark ? '' : 'none'}">${hasRemark ? escapeHtml(curRemarkDisplay) : 'No remarks yet'}</div></div>`;
       for(let j = 0; j < hist.length; j++){
         remarksHtml += `<div class="rline"><span class="rtag prev">Prev</span><div class="rdate">${escapeHtml(hist[j].date || 'Undated')}</div><div class="rtext">${escapeHtml(hist[j].remark)}</div></div>`;
       }
@@ -5672,7 +5731,13 @@
 
     const hasRemark = c.auditorRemarks && !isBlankRemark_(c.auditorRemarks);
     document.getElementById('mCurrentDate').textContent = hasRemark ? (c.dateOfAudit || 'Undated') : '';
-    editorOriginalCurrent = hasRemark ? str_(c.auditorRemarks) : '';
+    // Same redundant-date fix as the card view: the date is already shown
+    // right above in mCurrentDate, so don't also show/edit it baked into
+    // the text itself. If the box is left untouched, currentEdit still
+    // stays undefined below (unmodified compared to this same stripped
+    // baseline) so nothing gets rewritten on the sheet just from opening
+    // the modal.
+    editorOriginalCurrent = hasRemark ? stripRedundantDateStamp_(c.auditorRemarks, c.dateOfAudit) : '';
     const mCurrentEditEl = document.getElementById('mCurrentEdit');
     mCurrentEditEl.value = editorOriginalCurrent;
     // Locked behind the pencil only when there's an existing remark to

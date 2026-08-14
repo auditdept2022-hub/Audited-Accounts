@@ -467,11 +467,22 @@
      as a "loading" delay. display stays flex at all times (position:
      fixed + visibility:hidden + pointer-events:none costs nothing while
      closed), so no JS timing changes are needed for the close animation
-     to play out. */
-  .overlay{position:fixed;inset:0;background:rgba(8,12,34,.58);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;z-index:50;backdrop-filter:blur(2px);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .16s ease,visibility 0s linear .16s;}
+     to play out.
+     No backdrop-filter here on purpose — blurring everything behind a
+     full-screen overlay (the header, the whole customer list) every
+     frame of the fade is one of the more expensive things a browser can
+     be asked to do, especially on mid-range phones, and it's exactly
+     what made opening the hamburger/profile menu feel laggy. A flat,
+     slightly darker scrim reads almost identically without the cost.
+     transform/opacity are used for the animation (GPU-composited, cheap)
+     instead of anything that forces a repaint every frame, and
+     translateZ(0) promotes both layers onto their own compositor layer
+     up front so the first frame of the animation is already smooth
+     instead of stuttering while the browser sets that up mid-transition. */
+  .overlay{position:fixed;inset:0;background:rgba(8,12,34,.66);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;z-index:50;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .16s ease,visibility 0s linear .16s;transform:translateZ(0);}
   .overlay.open{opacity:1;visibility:visible;pointer-events:auto;transition:opacity .16s ease;}
-  .modal{background:#fff;border-radius:18px;max-width:720px;width:100%;overflow:hidden;box-shadow:var(--shadow-lg);max-height:calc(100dvh - 80px);display:flex;flex-direction:column;transform:translateY(10px) scale(.98);opacity:0;transition:transform .18s cubic-bezier(.2,.8,.3,1),opacity .16s ease;}
-  .overlay.open .modal{transform:translateY(0) scale(1);opacity:1;}
+  .modal{background:#fff;border-radius:18px;max-width:720px;width:100%;overflow:hidden;box-shadow:var(--shadow-lg);max-height:calc(100dvh - 80px);display:flex;flex-direction:column;transform:translateY(10px) scale(.98) translateZ(0);opacity:0;transition:transform .18s cubic-bezier(.2,.8,.3,1),opacity .16s ease;will-change:transform,opacity;}
+  .overlay.open .modal{transform:translateY(0) scale(1) translateZ(0);opacity:1;}
   .modal-head{padding:20px 26px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-start;background:linear-gradient(180deg,#F7F8FD,#FFFFFF);flex-shrink:0;}
   .mh-titlewrap{min-width:0;flex:1 1 auto;overflow:hidden;}
   .mh-right{display:flex;align-items:center;gap:10px;flex-shrink:0;margin-left:12px;}

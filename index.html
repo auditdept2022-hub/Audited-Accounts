@@ -1958,6 +1958,17 @@
   // (marker taps are quick/frequent — the color swatch updating on the
   // card is feedback enough); updateSyncUI's pending indicator covers
   // the rest.
+  // Human label for a marker color key — reused by setMark_'s activity
+  // log entry and anywhere else a marker value needs to read as a word
+  // instead of a raw key/hex.
+  function markColorLabel_(color){
+    if(color === 'green') return 'Green';
+    if(color === 'yellow') return 'Yellow';
+    if(color === 'red') return 'Red';
+    if(color === 'sky') return 'Sky blue';
+    return 'No color';
+  }
+
   async function setMark_(row, color){
     const c = customers.find(x => x.row === row);
     if(!c) return;
@@ -1981,6 +1992,7 @@
 
     try{
       await queueOrSend_(item);
+      logActivity_('success', 'Color marker changed', (c.customer || 'row ' + row) + ': ' + markColorLabel_(prev) + ' → ' + markColorLabel_(color) + '.');
     }catch(err){
       toast('Could not save the color marker: ' + err.message);
       logActivity_('error', 'Could not save color marker', err.message);
@@ -5108,6 +5120,10 @@
   async function resolveConflict(id, choice){
     const item = outbox.find(o => o.id === id);
     if(!item) return;
+    const label = (() => {
+      const c = customers.find(x => x.row === item.row);
+      return c ? c.customer : ('row ' + item.row);
+    })();
     if(choice === 'discard'){
       // Discarding "my" version: drop the queued change entirely and
       // reload fresh from the sheet, so the version left standing is
@@ -5120,6 +5136,7 @@
       updateSyncUI();
       await loadData();
       toast('Discarded your offline change.');
+      logActivity_('info', 'Sync conflict resolved', label + ': kept the sheet\u2019s version, discarded your offline change.');
     } else if(choice === 'retry'){
       // A per-item error (server rejected it) — try exactly the same
       // change again as-is. Useful once you've fixed the underlying
@@ -5129,6 +5146,7 @@
       saveOutbox_();
       updateSyncUI();
       syncOutbox();
+      logActivity_('info', 'Retrying queued change', label + ': retrying the save that previously failed.');
     } else {
       // Keep mine (conflict resolution): drop the stale snapshot and the
       // frozen "sheet version" we showed for comparison, so the next
@@ -5141,6 +5159,7 @@
       saveOutbox_();
       updateSyncUI();
       syncOutbox();
+      logActivity_('info', 'Sync conflict resolved', label + ': kept your offline change, overwriting what was on the sheet.');
     }
   }
 
@@ -5952,6 +5971,7 @@
       saveLocalCache_(customers);
       render();
       document.getElementById('connStatus').textContent = 'synced ' + new Date().toLocaleTimeString();
+      logActivity_('success', 'Branch sorted', `Sorted "${currentSheet}" by ${fieldLabel_(sortBy)} (${dir === 'desc' ? 'descending' : 'ascending'}).`);
     }catch(err){
       toast('Could not sort: ' + err.message);
       logActivity_('error', 'Sort failed', err.message);

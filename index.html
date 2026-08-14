@@ -138,10 +138,112 @@
   .import-status-bar .import-status:empty{display:none;}
   .import-status-bar .import-status{display:block;padding:2px 2px 0;white-space:normal;}
 
-  /* Embedded live date/time on the header's right edge. */
+  /* Embedded live date/time on the header's right edge, plus the
+     activity-log bell tucked underneath it. */
+  .hdr-clock-wrap{display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex-shrink:0;}
   .hdr-clock{display:flex;flex-direction:column;align-items:flex-end;flex-shrink:0;font-variant-numeric:tabular-nums;line-height:1.15;padding-right:2px;}
   .hdr-clock-time{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:25px;color:#fff;letter-spacing:.5px;}
   .hdr-clock-date{font-size:12.5px;color:#9BA6DC;letter-spacing:.5px;text-transform:uppercase;margin-top:3px;}
+
+  /* Activity-log bell — small icon button under the clock. Badge shows
+     the unread count and turns red the moment any unread entry is an
+     error, so a problem is visible at a glance without opening the log. */
+  .hdr-bell{
+    position:relative;display:flex;align-items:center;justify-content:center;
+    width:32px;height:32px;border-radius:9px;flex-shrink:0;
+    background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);
+    color:#B7C0E8;cursor:pointer;padding:0;touch-action:manipulation;
+    transition:background .15s ease,border-color .15s ease,color .15s ease,transform .08s ease;
+  }
+  .hdr-bell:hover{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.26);color:#fff;}
+  .hdr-bell:active{transform:scale(.92);}
+  .hdr-bell svg{width:16px;height:16px;display:block;}
+  .hdr-bell-badge{
+    position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;padding:0 4px;
+    display:none;align-items:center;justify-content:center;
+    background:var(--accent-dark);color:#fff;border:2px solid var(--panel);
+    border-radius:9px;font-size:9.5px;font-weight:800;line-height:1;
+    font-family:'JetBrains Mono',monospace;
+  }
+  .hdr-bell.has-error{border-color:rgba(228,84,74,.55);}
+  .hdr-bell.has-error .hdr-bell-badge{background:#E4544A;}
+  @keyframes hdr-bell-ring{
+    0%,100%{transform:rotate(0deg);}
+    15%{transform:rotate(15deg);}
+    30%{transform:rotate(-12deg);}
+    45%{transform:rotate(9deg);}
+    60%{transform:rotate(-6deg);}
+    75%{transform:rotate(3deg);}
+  }
+  .hdr-bell.ring svg{animation:hdr-bell-ring .55s ease;transform-origin:50% 15%;}
+
+  /* ---- Activity log modal — reuses the .sync-item look/feel but with
+     a type-colored icon chip (success/error/warning/info) per entry. ---- */
+  .activity-list{display:flex;flex-direction:column;gap:8px;max-height:56vh;overflow-y:auto;}
+  .activity-empty{padding:38px 12px;text-align:center;color:var(--muted);font-size:13px;line-height:1.5;}
+  .activity-item{display:flex;align-items:flex-start;gap:11px;padding:11px 12px;border:1px solid var(--line);border-radius:11px;background:#fff;}
+  .activity-item .ai-icon{
+    width:28px;height:28px;border-radius:8px;flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;
+    font-size:13px;font-weight:800;
+  }
+  .activity-item.type-success .ai-icon{background:var(--ok-soft);color:var(--ok);}
+  .activity-item.type-error .ai-icon{background:var(--del-soft);color:var(--del);}
+  .activity-item.type-warning .ai-icon{background:var(--gold-soft);color:var(--gold);}
+  .activity-item.type-info .ai-icon{background:var(--accent-soft);color:var(--accent);}
+  .activity-item .ai-body{flex:1;min-width:0;}
+  .activity-item .ai-title{font-size:12.5px;font-weight:700;color:var(--ink);}
+  .activity-item .ai-detail{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.5;white-space:pre-wrap;word-break:break-word;}
+  .activity-item .ai-time{font-size:10px;color:var(--muted-2);margin-top:6px;font-family:'JetBrains Mono',monospace;letter-spacing:.2px;}
+  .activity-modal-meta{color:var(--muted);font-size:12px;margin-top:3px;}
+  .activity-clear-btn{background:none;border:none;color:var(--del);font-size:11.5px;font-weight:700;cursor:pointer;padding:4px 2px;}
+  .activity-clear-btn:hover{text-decoration:underline;}
+  .activity-clear-btn:disabled{color:var(--muted-2);cursor:not-allowed;text-decoration:none;}
+
+  /* ---- Clickable activity entries — an import (or sync conflict) that
+     has extra detail behind it (which customers didn't match, which
+     rows failed, or a queued change waiting on a decision) can be
+     expanded in place instead of only showing a one-line summary. ---- */
+  .activity-item.has-detail{cursor:pointer;user-select:none;}
+  .activity-item.has-detail:hover{border-color:var(--accent);background:#FBFBFF;}
+  .activity-item .ai-toprow{display:flex;align-items:flex-start;gap:8px;}
+  .activity-item .ai-toprow .ai-title{flex:1;}
+  .activity-item .ai-chevron{flex-shrink:0;font-size:10px;color:var(--muted-2);margin-top:2px;transition:transform .15s ease;}
+  .activity-item.expanded .ai-chevron{transform:rotate(90deg);}
+  .activity-item .ai-hint{font-size:10.5px;color:var(--accent);margin-top:5px;font-weight:600;}
+  .activity-item.expanded .ai-hint{display:none;}
+  .activity-detail{display:none;margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);}
+  .activity-item.expanded .activity-detail{display:block;}
+  .activity-detail-group + .activity-detail-group{margin-top:10px;}
+  .activity-detail-label{font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:5px;}
+  .activity-detail-chips{display:flex;flex-wrap:wrap;gap:5px;}
+  .activity-detail-chip{background:var(--panel,#F3F4FB);border:1px solid var(--line);border-radius:7px;padding:3px 8px;font-size:11.5px;color:var(--text);}
+  .activity-detail-more{font-size:11px;color:var(--muted-2);padding:3px 2px;}
+  .activity-detail-action{margin-top:9px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer;}
+  .activity-detail-action:hover{opacity:.9;}
+
+  /* ---- Redesigned confirmation dialog — replaces the browser's native
+     confirm() popup (which can't be styled at all) with one that matches
+     the rest of the app: an icon that signals intent (warning vs plain
+     question), readable paragraph spacing for multi-part messages, and a
+     clearly weighted primary action instead of two identical OS buttons. ---- */
+  .confirm-modal{max-width:440px;}
+  .confirm-modal .modal-body{padding:22px 26px 6px;}
+  .confirm-icon-row{display:flex;justify-content:center;margin-bottom:14px;}
+  .confirm-icon{
+    width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:22px;font-weight:800;background:var(--accent-soft);color:var(--accent);
+  }
+  .confirm-modal.confirm-danger .confirm-icon{background:var(--del-soft);color:var(--del);}
+  .confirm-title{font-family:'Spectral',serif;font-size:18px;font-weight:700;color:var(--ink);text-align:center;margin:0 0 10px;}
+  .confirm-body{font-size:13px;line-height:1.6;color:var(--text);}
+  .confirm-body p{margin:0 0 12px;}
+  .confirm-body p:last-child{margin-bottom:0;}
+  .confirm-modal .modal-foot{justify-content:center;gap:10px;}
+  .confirm-modal .modal-foot .btn{flex:1;justify-content:center;padding:11px 18px;font-size:13px;}
+  .confirm-cancel-btn{background:#fff;}
+  .confirm-ok-btn.danger{background:var(--del);border-color:var(--del);color:#fff;}
+  .confirm-ok-btn.danger:hover{background:#961F38;border-color:#961F38;}
 
   /* Main — fluid width so it always fills the current screen instead of
      capping out and leaving dead space on wider monitors; side padding
@@ -779,13 +881,18 @@
     .hdr-status{font-size:9.5px;}
     .sub-row-sync .hdr-status{font-size:9px;white-space:normal;overflow-wrap:anywhere;}
     #pendingWrap, #pendingWrap button{font-size:9.5px;}
+    .hdr-clock-wrap{
+      flex-shrink:0;flex-direction:row;flex-basis:100%;align-items:center;
+      justify-content:space-between;width:100%;margin-top:2px;padding-top:8px;
+      border-top:1px solid rgba(255,255,255,.10);gap:10px;
+    }
     .hdr-clock{
-      flex-shrink:0;flex-direction:row;flex-basis:100%;align-items:baseline;
-      justify-content:space-between;width:100%;margin-top:2px;padding-top:8px;padding-right:0;
-      border-top:1px solid rgba(255,255,255,.10);
+      flex-direction:row;align-items:baseline;justify-content:flex-start;
+      padding-right:0;
     }
     .hdr-clock-time{font-size:19px;}
     .hdr-clock-date{font-size:10.5px;margin-top:0;}
+    .hdr-bell{width:30px;height:30px;}
 
     /* ---- Toolbar: was a single horizontally-scrolling row on
        mobile (overflow-x:auto), which hid buttons off-screen and
@@ -876,6 +983,8 @@
   @media(max-width:480px){
     .hdr-clock-time{font-size:17px;}
     .hdr-clock-date{font-size:11px;}
+    .hdr-bell{width:28px;height:28px;}
+    .hdr-bell svg{width:14px;height:14px;}
   }
 
   @media(max-width:420px){
@@ -929,9 +1038,18 @@
         </div>
       </div>
     </div>
-    <div class="hdr-clock" id="hdrClock" title="Local date &amp; time">
-      <div class="hdr-clock-time" id="hdrClockTime">--:--</div>
-      <div class="hdr-clock-date" id="hdrClockDate">— — —</div>
+    <div class="hdr-clock-wrap">
+      <div class="hdr-clock" id="hdrClock" title="Local date &amp; time">
+        <div class="hdr-clock-time" id="hdrClockTime">--:--</div>
+        <div class="hdr-clock-date" id="hdrClockDate">— — —</div>
+      </div>
+      <button class="hdr-bell" id="hdrBellBtn" onclick="openActivityLog()" title="Activity log">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+        </svg>
+        <span class="hdr-bell-badge" id="hdrBellBadge">0</span>
+      </button>
     </div>
   </header>
 
@@ -1206,6 +1324,43 @@
   </div>
 </div>
 
+<div class="overlay" id="activityOverlay">
+  <div class="modal activity-modal">
+    <div class="modal-head">
+      <div>
+        <h2>Activity Log</h2>
+        <div class="activity-modal-meta">Imports, exports, and anything that succeeded or failed — newest first.</div>
+      </div>
+      <button class="modal-close" onclick="closeActivityLog()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="activityList" class="activity-list"></div>
+    </div>
+    <div class="modal-foot">
+      <div class="left">
+        <button class="activity-clear-btn" id="activityClearBtn" onclick="clearActivityLog_()">Clear log</button>
+      </div>
+      <div class="right">
+        <button class="btn primary" onclick="closeActivityLog()">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="confirmOverlay">
+  <div class="modal confirm-modal" id="confirmModalEl">
+    <div class="modal-body">
+      <div class="confirm-icon-row"><span class="confirm-icon" id="confirmIcon">?</span></div>
+      <h3 class="confirm-title" id="confirmTitle">Please confirm</h3>
+      <div class="confirm-body" id="confirmBody"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn confirm-cancel-btn" id="confirmCancelBtn">Cancel</button>
+      <button class="btn primary confirm-ok-btn" id="confirmOkBtn">Confirm</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1233,6 +1388,254 @@
   }
   tickHeaderClock_();
   setInterval(tickHeaderClock_, 1000);
+
+  // ---- Activity log ------------------------------------------------------
+  // A small, persistent (localStorage) history of things the dashboard
+  // actually did — imports, exports, branch changes, saves/deletes — and
+  // anything that failed along the way, so an error isn't just a toast
+  // that vanishes after 2.6s. Opened from the bell icon under the header
+  // clock. Kept deliberately separate from `outbox`/the sync popup, which
+  // is about what's still QUEUED to sync, not a record of what already
+  // happened.
+  const ACTIVITY_LOG_KEY = 'aa_activity_log_v1';
+  const ACTIVITY_LOG_MAX = 200;
+  let activityLog_ = [];
+  let activityUnread_ = 0;
+  let activityModalOpen_ = false;
+  // Which entries (by id) are currently expanded to show their detail
+  // (e.g. the actual list of unmatched/failed customer names) — kept in
+  // memory only (not persisted), reset each time the modal is closed.
+  let activityExpanded_ = new Set();
+
+  function loadActivityLog_(){
+    try{
+      const raw = localStorage.getItem(ACTIVITY_LOG_KEY);
+      if(raw){
+        const parsed = JSON.parse(raw);
+        activityLog_ = Array.isArray(parsed.entries) ? parsed.entries : [];
+        activityUnread_ = Number(parsed.unread) || 0;
+      }
+    }catch(e){ activityLog_ = []; activityUnread_ = 0; }
+    updateActivityBadge_();
+  }
+
+  function saveActivityLog_(){
+    try{
+      localStorage.setItem(ACTIVITY_LOG_KEY, JSON.stringify({ entries: activityLog_.slice(0, ACTIVITY_LOG_MAX), unread: activityUnread_ }));
+    }catch(e){ /* best-effort — a full localStorage shouldn't break the app */ }
+  }
+
+  // type: 'success' | 'error' | 'warning' | 'info'
+  // groups (optional): [{ label, items: [string,...] }, ...] — extra
+  // detail behind the one-line summary, e.g. the actual customer names
+  // that didn't match during an import, or which rows failed to save.
+  // Only entries that have at least one non-empty group get the
+  // expand/collapse chevron in the list.
+  // action (optional): a short string keyword naming a follow-up button
+  // to show inside the expanded detail — currently only 'openSync'
+  // ("View sync" — jumps straight to the sync popup for a conflict/sync
+  // error). Kept as a plain string (not a function) since entries are
+  // persisted to localStorage as JSON.
+  function logActivity_(type, title, detail, groups, action){
+    const cleanGroups = (groups || [])
+      .map(g => ({ label: g.label, items: (g.items || []).filter(Boolean) }))
+      .filter(g => g.items.length);
+    const entry = {
+      id: 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+      type: type || 'info',
+      title: title || '',
+      detail: detail || '',
+      groups: cleanGroups.length ? cleanGroups : undefined,
+      action: action || undefined,
+      ts: Date.now(),
+      branch: (typeof currentSheet !== 'undefined' && currentSheet) ? currentSheet : ''
+    };
+    activityLog_.unshift(entry);
+    if(activityLog_.length > ACTIVITY_LOG_MAX) activityLog_.length = ACTIVITY_LOG_MAX;
+    if(!activityModalOpen_) activityUnread_++;
+    saveActivityLog_();
+    updateActivityBadge_();
+    if(activityModalOpen_) renderActivityList_();
+
+    const bell = document.getElementById('hdrBellBtn');
+    if(bell){
+      bell.classList.remove('ring');
+      void bell.offsetWidth; // restart the CSS animation
+      bell.classList.add('ring');
+    }
+  }
+
+  function updateActivityBadge_(){
+    const bell = document.getElementById('hdrBellBtn');
+    const badge = document.getElementById('hdrBellBadge');
+    if(!bell || !badge) return;
+    const hasUnreadError = activityLog_.slice(0, activityUnread_).some(e => e.type === 'error');
+    bell.classList.toggle('has-error', hasUnreadError);
+    if(activityUnread_ > 0){
+      badge.style.display = 'flex';
+      badge.textContent = activityUnread_ > 99 ? '99+' : String(activityUnread_);
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+
+  function activityIconGlyph_(type){
+    if(type === 'success') return '✓';
+    if(type === 'error') return '!';
+    if(type === 'warning') return '⚠';
+    return 'i';
+  }
+
+  // Cap how many individual names are shown per detail group before
+  // collapsing the rest into a "+N more" line — a bad file can produce
+  // hundreds of unmatched rows, and rendering all of them as chips would
+  // make the modal unusably long.
+  const ACTIVITY_DETAIL_CHIP_CAP = 40;
+
+  function renderActivityList_(){
+    const list = document.getElementById('activityList');
+    const clearBtn = document.getElementById('activityClearBtn');
+    if(!list) return;
+    if(clearBtn) clearBtn.disabled = !activityLog_.length;
+    if(!activityLog_.length){
+      list.innerHTML = '<div class="activity-empty">No activity yet — imports, exports, saves, and any errors will show up here.</div>';
+      return;
+    }
+    list.innerHTML = activityLog_.map(e => {
+      const time = new Date(e.ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const hasDetail = (e.groups && e.groups.length) || e.action;
+      const expanded = activityExpanded_.has(e.id);
+      const totalItems = (e.groups || []).reduce((n, g) => n + g.items.length, 0);
+
+      const detailHtml = hasDetail ? `<div class="activity-detail">
+        ${(e.groups || []).map(g => {
+          const shown = g.items.slice(0, ACTIVITY_DETAIL_CHIP_CAP);
+          const extra = g.items.length - shown.length;
+          return `<div class="activity-detail-group">
+            <div class="activity-detail-label">${escapeHtml(g.label)} (${g.items.length})</div>
+            <div class="activity-detail-chips">
+              ${shown.map(name => `<span class="activity-detail-chip">${escapeHtml(name)}</span>`).join('')}
+            </div>
+            ${extra > 0 ? `<div class="activity-detail-more">+ ${extra} more not shown</div>` : ''}
+          </div>`;
+        }).join('')}
+        ${e.action === 'openSync' ? `<button class="activity-detail-action" onclick="event.stopPropagation();openActivityLogAction_('${e.id}')">View sync</button>` : ''}
+      </div>` : '';
+
+      return `<div class="activity-item type-${escapeHtml(e.type)}${hasDetail ? ' has-detail' : ''}${expanded ? ' expanded' : ''}"
+                   ${hasDetail ? `onclick="toggleActivityDetail_('${e.id}')"` : ''}>
+        <span class="ai-icon">${activityIconGlyph_(e.type)}</span>
+        <div class="ai-body">
+          <div class="ai-toprow">
+            <div class="ai-title">${escapeHtml(e.title)}</div>
+            ${hasDetail ? '<span class="ai-chevron">▶</span>' : ''}
+          </div>
+          ${e.detail ? `<div class="ai-detail">${escapeHtml(e.detail)}</div>` : ''}
+          <div class="ai-time">${escapeHtml(time)}${e.branch ? ' · ' + escapeHtml(e.branch) : ''}</div>
+          ${hasDetail ? `<div class="ai-hint">${totalItems ? `Tap to see the ${totalItems} name${totalItems === 1 ? '' : 's'}` : 'Tap for details'}</div>` : ''}
+          ${detailHtml}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function toggleActivityDetail_(id){
+    if(activityExpanded_.has(id)) activityExpanded_.delete(id);
+    else activityExpanded_.add(id);
+    renderActivityList_();
+  }
+
+  // Runs an entry's `action` keyword (see logActivity_ above). Currently
+  // only 'openSync' exists — closes the activity log and opens the sync
+  // popup so the person can resolve the conflict right away.
+  function openActivityLogAction_(id){
+    const entry = activityLog_.find(e => e.id === id);
+    if(!entry || entry.action !== 'openSync') return;
+    closeActivityLog();
+    if(typeof openSyncModal === 'function') openSyncModal();
+  }
+
+  function openActivityLog(){
+    activityModalOpen_ = true;
+    activityUnread_ = 0;
+    saveActivityLog_();
+    updateActivityBadge_();
+    renderActivityList_();
+    document.getElementById('activityOverlay').classList.add('open');
+    lockBodyScroll();
+  }
+
+  function closeActivityLog(){
+    activityModalOpen_ = false;
+    activityExpanded_.clear();
+    document.getElementById('activityOverlay').classList.remove('open');
+    unlockBodyScroll();
+  }
+
+  function clearActivityLog_(){
+    if(!activityLog_.length) return;
+    activityLog_ = [];
+    activityUnread_ = 0;
+    activityExpanded_.clear();
+    saveActivityLog_();
+    updateActivityBadge_();
+    renderActivityList_();
+  }
+
+  loadActivityLog_();
+
+  // ---- Redesigned confirmation dialog ------------------------------------
+  // Promise-based replacement for the browser's native confirm(), styled
+  // to match the rest of the app instead of an unstyleable OS popup.
+  // Usage: if(!await appConfirm('Delete this?', { danger:true })) return;
+  // `message` may contain blank-line-separated paragraphs ("\n\n"), each
+  // rendered as its own <p>.
+  function appConfirm(message, opts){
+    opts = opts || {};
+    return new Promise(resolve => {
+      const overlay = document.getElementById('confirmOverlay');
+      const modal = document.getElementById('confirmModalEl');
+      const iconEl = document.getElementById('confirmIcon');
+      const titleEl = document.getElementById('confirmTitle');
+      const bodyEl = document.getElementById('confirmBody');
+      const okBtn = document.getElementById('confirmOkBtn');
+      const cancelBtn = document.getElementById('confirmCancelBtn');
+
+      const danger = !!opts.danger;
+      modal.classList.toggle('confirm-danger', danger);
+      iconEl.textContent = danger ? '⚠' : '?';
+      titleEl.textContent = opts.title || (danger ? 'Are you sure?' : 'Please confirm');
+      bodyEl.innerHTML = String(message).split(/\n\n+/).map(p => `<p>${escapeHtml(p)}</p>`).join('');
+      okBtn.textContent = opts.confirmText || (danger ? 'Delete' : 'OK');
+      cancelBtn.textContent = opts.cancelText || 'Cancel';
+      okBtn.className = 'btn primary confirm-ok-btn' + (danger ? ' danger' : '');
+
+      let settled = false;
+      function finish(result){
+        if(settled) return;
+        settled = true;
+        overlay.classList.remove('open');
+        unlockBodyScroll();
+        okBtn.onclick = null;
+        cancelBtn.onclick = null;
+        overlay.onclick = null;
+        document.removeEventListener('keydown', onKey);
+        resolve(result);
+      }
+      function onKey(e){
+        if(e.key === 'Escape') finish(false);
+        else if(e.key === 'Enter') finish(true);
+      }
+      okBtn.onclick = () => finish(true);
+      cancelBtn.onclick = () => finish(false);
+      overlay.onclick = (e) => { if(e.target === overlay) finish(false); };
+      document.addEventListener('keydown', onKey);
+
+      overlay.classList.add('open');
+      lockBodyScroll();
+      okBtn.focus();
+    });
+  }
 
   // ---- Branch profiles (multi-sheet) -----------------------------------
   // A "profile" is a sheet tab in the same spreadsheet — one per branch
@@ -1436,7 +1839,7 @@
     });
     const preview = names.slice(0, 5).join(', ') + (names.length > 5 ? ', +' + (names.length - 5) + ' more' : '');
     const label = rows.length === 1 ? 'this customer' : ('these ' + rows.length + ' customers');
-    if(!confirm('Delete ' + label + '? (' + preview + ') This removes each customer, its balances, and all its remarks. This cannot be undone.')) return;
+    if(!await appConfirm('Delete ' + label + '?\n\n(' + preview + ')\n\nThis removes each customer, its balances, and all its remarks. This cannot be undone.', { danger: true, title: 'Delete customers?', confirmText: 'Delete' })) return;
 
     const btn = document.getElementById('bulkDeleteBtn');
     const originalLabel = btn.textContent;
@@ -1457,6 +1860,7 @@
         btn.textContent = originalLabel;
         render();
         toast(rows.length + ' customers deleted.');
+        logActivity_('success', rows.length + ' customer' + (rows.length > 1 ? 's' : '') + ' deleted', 'Bulk delete completed.');
         return;
       }catch(err){
         // Undo the optimistic hide so the fallback loop below (or the
@@ -1471,6 +1875,7 @@
           document.getElementById('bulkClearBtn').disabled = false;
           render();
           toast('Could not delete: ' + err.message);
+          logActivity_('error', 'Bulk delete failed', err.message);
           return;
         }
         // Connection problem — fall through to the per-row offline
@@ -1496,6 +1901,9 @@
     toast(failed
       ? (done + ' deleted, ' + failed + ' failed — check your connection and try again.')
       : (done + ' customer' + (done > 1 ? 's' : '') + ' deleted.'));
+    if(done || failed){
+      logActivity_(failed ? 'warning' : 'success', done + ' deleted' + (failed ? ', ' + failed + ' failed' : ''), failed ? 'Some deletes failed — check your connection and try again.' : 'Bulk delete queued/completed.');
+    }
   }
 
   document.getElementById('tableBody').addEventListener('change', (e)=>{
@@ -1569,6 +1977,7 @@
       await queueOrSend_(item);
     }catch(err){
       toast('Could not save the color marker: ' + err.message);
+      logActivity_('error', 'Could not save color marker', err.message);
     }
   }
 
@@ -1766,10 +2175,10 @@
     if(currentRemarkLockable_) this.readOnly = true;
   });
 
-  document.getElementById('mCurrentDeleteBtn').addEventListener('click', function(){
+  document.getElementById('mCurrentDeleteBtn').addEventListener('click', async function(){
     const ta = document.getElementById('mCurrentEdit');
     if(!ta.value.trim()){ toast('There\'s no current remark to delete.'); return; }
-    if(!confirm('Delete the current remark? This can\'t be undone once you click Save changes.')) return;
+    if(!await appConfirm('Delete the current remark? This can\'t be undone once you click Save changes.', { danger: true, title: 'Delete remark?', confirmText: 'Delete' })) return;
     ta.value = '';
     // A blank remark shouldn't keep showing a stale audit date next to
     // it — clear the date badge along with the text so the two stay
@@ -2380,6 +2789,7 @@
       await ensureXlsxLoaded_();
     }catch(err){
       toast(err.message || 'Excel export failed to load — please refresh and try again.');
+      logActivity_('error', 'Export failed', err.message || 'Excel export failed to load — please refresh and try again.');
       return;
     }
 
@@ -2441,6 +2851,7 @@
     XLSX.utils.book_append_sheet(wb, ws, 'Customers');
     XLSX.writeFile(wb, 'customers-' + new Date().toISOString().slice(0,10) + '.xlsx');
     toast('Exported ' + customers.length + ' customers.');
+    logActivity_('success', 'Exported ' + customers.length + ' customer' + (customers.length === 1 ? '' : 's'), 'Saved as an .xlsx file for branch "' + currentSheet + '".');
   }
 
   // Prints just the customer-info table (the columns shown in the Sheet:
@@ -2529,6 +2940,7 @@
         iframe.contentWindow.print();
       }catch(e){
         toast('Could not open the print dialog: ' + e.message);
+        logActivity_('error', 'Print failed', e.message);
         cleanup();
         return;
       }
@@ -2690,6 +3102,13 @@
     let unmatched = 0;
     let duplicateNameRows = 0;
     let payloadRows = 0;
+    // Actual names behind the `unmatched` count, so an error in the
+    // activity log can show WHICH customers didn't match instead of just
+    // a number — this is what "no match" actually means in practice
+    // (typo'd name, customer not yet added to this branch, wrong branch
+    // selected, etc.). Capped so one bad file can't bloat the log entry.
+    const unmatchedNames = [];
+    const UNMATCHED_NAMES_CAP = 300;
     allRecords.forEach(rec => {
       const nameKey = normalizeName_(rec.customer);
       const engKey = normalizeEngine_(rec.engineNo);
@@ -2708,17 +3127,24 @@
         matches = nameIndex[nameKey] || null;
       }
 
-      if(!matches || !matches.length){ unmatched++; return; }
+      if(!matches || !matches.length){
+        unmatched++;
+        if(unmatchedNames.length < UNMATCHED_NAMES_CAP){
+          const label = String(rec.customer || '').trim() || '(blank name)';
+          unmatchedNames.push(engKey ? `${label} — ${rec.engineNo}` : label);
+        }
+        return;
+      }
 
       const payload = pickPayload_(rec);
       if(!payload) return; // nothing this flow cares about on this row
 
       if(!engKey && matches.length > 1) duplicateNameRows++;
       payloadRows += matches.length;
-      matches.forEach(m => toUpdate.push(Object.assign({ row: m.row }, payload)));
+      matches.forEach(m => toUpdate.push(Object.assign({ row: m.row, customer: m.customer }, payload)));
     });
 
-    return { toUpdate, unmatched, duplicateNameRows, payloadRows };
+    return { toUpdate, unmatched, unmatchedNames, duplicateNameRows, payloadRows };
   }
 
   // ---- Import Balances -----------------------------------------------
@@ -2728,7 +3154,7 @@
     const allRecords = await parseImportFiles_(fileList);
     if(!allRecords.length){ toast('No customer rows found to import.'); return; }
 
-    const { toUpdate, unmatched, duplicateNameRows } = matchImportRecords_(allRecords, rec => {
+    const { toUpdate, unmatched, unmatchedNames, duplicateNameRows } = matchImportRecords_(allRecords, rec => {
       const fields = {};
       ['dueThisMonth', 'paymentAdv', 'penaltyDue'].forEach(k => { if(rec[k] !== undefined) fields[k] = rec[k]; });
       if(!Object.keys(fields).length) return null; // no balance figures on this row — nothing for this flow to do
@@ -2747,7 +3173,7 @@
       + (duplicateNameRows ? `. ${duplicateNameRows} name${duplicateNameRows === 1 ? '' : 's'} had no engine number to disambiguate and matched more than one account — all of them will be updated` : '')
       + (unmatched ? `. ${unmatched} unmatched row${unmatched === 1 ? '' : 's'} will be skipped (no new customers are created by import)` : '')
       + '. Remarks are not touched by this import. Continue?';
-    if(!confirm(msg)) return;
+    if(!await appConfirm(msg, { title: 'Import balances?', confirmText: 'Import' })) return;
 
     const total = toUpdate.length;
     document.getElementById('importStatus').textContent = `Importing 0 / ${total}…`;
@@ -2761,11 +3187,21 @@
       toUpdate, 'batchUpdateCustomer', 'updates',
       item => ({ row: item.row, fields: item.fields }),
       'updateCustomer', item => ({ row: item.row, fields: item.fields }),
-      total, 0
+      total, 0,
+      item => item.customer
     );
 
     const updated = updateResult.succeeded, failed = updateResult.failed;
     toast(`Import complete: ${updated} updated${failed ? ', ' + failed + ' failed' : ''}${unmatched ? ', ' + unmatched + ' skipped (no match)' : ''}.`);
+    logActivity_(
+      failed ? 'warning' : (unmatched ? 'warning' : 'success'),
+      'Import balances complete',
+      `${updated} account${updated === 1 ? '' : 's'} updated${failed ? ', ' + failed + ' failed' : ''}${unmatched ? ', ' + unmatched + ' skipped (no match)' : ''}.`,
+      [
+        { label: 'Not matched — no customer found on this branch', items: unmatchedNames },
+        { label: 'Matched, but failed to save', items: updateResult.failedLabels }
+      ]
+    );
     document.getElementById('importStatus').textContent = '';
     await loadData();
   }
@@ -2780,7 +3216,7 @@
     const allRecords = await parseImportFiles_(fileList);
     if(!allRecords.length){ toast('No customer rows found to import.'); return; }
 
-    const { toUpdate, unmatched, duplicateNameRows } = matchImportRecords_(allRecords, rec => {
+    const { toUpdate, unmatched, unmatchedNames, duplicateNameRows } = matchImportRecords_(allRecords, rec => {
       const historyAppend = rec.auditorRemarks ? String(rec.auditorRemarks).trim() : '';
       if(!historyAppend) return null; // no remark text on this row — nothing for this flow to do
       return { historyAppend };
@@ -2798,7 +3234,7 @@
       + (duplicateNameRows ? `. ${duplicateNameRows} name${duplicateNameRows === 1 ? '' : 's'} had no engine number to disambiguate and matched more than one account — all of them will be updated` : '')
       + (unmatched ? `. ${unmatched} unmatched row${unmatched === 1 ? '' : 's'} will be skipped (no new customers are created by import)` : '')
       + '. Current Auditor Remarks and Date of Audit are not touched. Continue?';
-    if(!confirm(msg)) return;
+    if(!await appConfirm(msg, { title: 'Import remarks?', confirmText: 'Import' })) return;
 
     const total = toUpdate.length;
     document.getElementById('importStatus').textContent = `Importing 0 / ${total}…`;
@@ -2813,11 +3249,21 @@
       toUpdate, 'batchUpdateCustomer', 'updates',
       item => ({ row: item.row, historyAppend: item.historyAppend }),
       'appendRemarkHistoryRow', item => ({ row: item.row, entry: item.historyAppend }),
-      total, 0
+      total, 0,
+      item => item.customer
     );
 
     const updated = updateResult.succeeded, failed = updateResult.failed;
     toast(`Import complete: ${updated} updated${failed ? ', ' + failed + ' failed' : ''}${unmatched ? ', ' + unmatched + ' skipped (no match)' : ''}.`);
+    logActivity_(
+      failed ? 'warning' : (unmatched ? 'warning' : 'success'),
+      'Import remarks complete',
+      `${updated} account${updated === 1 ? '' : 's'} updated${failed ? ', ' + failed + ' failed' : ''}${unmatched ? ', ' + unmatched + ' skipped (no match)' : ''}.`,
+      [
+        { label: 'Not matched — no customer found on this branch', items: unmatchedNames },
+        { label: 'Matched, but failed to save', items: updateResult.failedLabels }
+      ]
+    );
     document.getElementById('importStatus').textContent = '';
     await loadData();
   }
@@ -3053,7 +3499,7 @@
       + `afterward to fill them in). Unit status, Payment mode, Date of Audit, Auditor Remarks and `
       + `Previous Audit Remarks will all start blank.\n\n`
       + `This cannot be undone. Continue?`;
-    if(!confirm(msg)) return;
+    if(!await appConfirm(msg, { danger: true, title: 'Replace all accounts?', confirmText: 'Clear & import' })) return;
 
     document.getElementById('importStatus').textContent = 'Clearing existing records\u2026';
     toast(`Clearing "${branchName}" and importing ${toCreate.length} account${toCreate.length === 1 ? '' : 's'}\u2026`);
@@ -3062,9 +3508,11 @@
       await apiCallJson_('clearBranchData', { name: branchName });
       purgeBranchLocalState_(branchName);
     }catch(err){
-      toast(isConnectionError_(err)
+      const msg2 = isConnectionError_(err)
         ? 'You\'re offline — importing accounts needs a connection.'
-        : 'Could not clear the branch before import: ' + err.message);
+        : 'Could not clear the branch before import: ' + err.message;
+      toast(msg2);
+      logActivity_('error', 'Import accounts failed', msg2);
       document.getElementById('importStatus').textContent = '';
       return;
     }
@@ -3073,10 +3521,17 @@
       toCreate, 'batchCreateCustomer', 'records',
       item => item,
       'createCustomer', item => ({ fields: item }),
-      toCreate.length, 0
+      toCreate.length, 0,
+      item => item.customer
     );
 
     toast(`Import complete: ${createResult.succeeded} added${createResult.failed ? ', ' + createResult.failed + ' failed' : ''}.`);
+    logActivity_(
+      createResult.failed ? 'warning' : 'success',
+      'Import accounts complete',
+      `${createResult.succeeded} account${createResult.succeeded === 1 ? '' : 's'} added to "${branchName}"${createResult.failed ? ', ' + createResult.failed + ' failed' : ''}.`,
+      [ { label: 'Failed to add', items: createResult.failedLabels } ]
+    );
     document.getElementById('importStatus').textContent = '';
     if(currentSheet === branchName){
       customers = [];
@@ -3144,12 +3599,17 @@
   //   singleAction             - e.g. 'updateCustomer', used as fallback
   //   toSinglePayload(item)    - shapes one item for the single-row action
   //   overallTotal / doneSoFar - for a combined progress readout across phases
-  async function runBatched_(items, batchAction, batchKey, toBatchItem, singleAction, toSinglePayload, overallTotal, doneSoFar){
-    if(!items.length) return { succeeded: 0, failed: 0, done: doneSoFar };
+  // getLabel (optional): item -> display string, used ONLY to build
+  // `failedLabels` (which customers actually failed to save) for the
+  // activity log — has no effect on the actual import/save behavior.
+  async function runBatched_(items, batchAction, batchKey, toBatchItem, singleAction, toSinglePayload, overallTotal, doneSoFar, getLabel){
+    if(!items.length) return { succeeded: 0, failed: 0, done: doneSoFar, failedLabels: [] };
 
     const CONCURRENCY = 3;
     const chunks = chunkByEncodedSize_(items, toBatchItem, MAX_CHUNK_ENCODED_CHARS);
     let succeeded = 0, failed = 0, done = doneSoFar;
+    const failedLabels = [];
+    const FAILED_LABELS_CAP = 300;
 
     function reportProgress(){
       document.getElementById('importStatus').textContent = `Importing ${done} / ${overallTotal}…`;
@@ -3167,6 +3627,9 @@
           succeeded++;
         }catch(err){
           failed++;
+          if(getLabel && failedLabels.length < FAILED_LABELS_CAP){
+            try{ failedLabels.push(getLabel(item) || 'row ' + item.row); }catch(e){ /* best-effort */ }
+          }
           console.error(`${singleAction} failed for row`, item, err);
         }
         done++;
@@ -3197,7 +3660,7 @@
     const workerCount = Math.min(CONCURRENCY, chunks.length);
     await Promise.all(Array.from({ length: workerCount }, worker));
 
-    return { succeeded, failed, done };
+    return { succeeded, failed, done, failedLabels };
   }
 
   document.getElementById('importBalancesInput').addEventListener('change', (e)=>{
@@ -3637,7 +4100,7 @@
     closeProfileMenu();
     if(name === currentSheet) return;
     if(outbox.length){
-      if(!confirm('You have ' + outbox.length + ' unsynced change(s) on "' + currentSheet + '". Switching branches now leaves them queued until you come back and sync. Continue?')){
+      if(!await appConfirm('You have ' + outbox.length + ' unsynced change(s) on "' + currentSheet + '". Switching branches now leaves them queued until you come back and sync. Continue?', { title: 'Unsynced changes', confirmText: 'Switch anyway' })){
         openProfileMenu();
         return;
       }
@@ -3677,14 +4140,17 @@
       await apiCallJson_('createSheet', { name });
       input.value = '';
       toast('Branch "' + name + '" created.');
+      logActivity_('success', 'Branch created', '"' + name + '" was added.');
       await loadProfiles_();
       await switchProfile_(name);
       openProfileMenu();
       renderProfileList_(profilesCache_);
     }catch(err){
-      toast(isConnectionError_(err)
+      const msg = isConnectionError_(err)
         ? 'You\'re offline — creating a branch needs a connection (it changes the spreadsheet itself). Try again once you\'re back online.'
-        : 'Could not create branch: ' + err.message);
+        : 'Could not create branch: ' + err.message;
+      toast(msg);
+      logActivity_('error', 'Branch create failed', msg);
     }
   }
 
@@ -3705,11 +4171,14 @@
         await apiCallJson_('renameSheet', { oldName, newName });
         if(currentSheet === oldName){ currentSheet = newName; saveCurrentSheet_(); }
         toast('Renamed to "' + newName + '".');
+        logActivity_('success', 'Branch renamed', '"' + oldName + '" → "' + newName + '".');
         await loadProfiles_();
       }catch(err){
-        toast(isConnectionError_(err)
+        const msg = isConnectionError_(err)
           ? 'You\'re offline — renaming a branch needs a connection.'
-          : 'Could not rename: ' + err.message);
+          : 'Could not rename: ' + err.message;
+        toast(msg);
+        logActivity_('error', 'Branch rename failed', msg);
         renderProfileList_(profilesCache_);
       }
     };
@@ -3721,11 +4190,12 @@
   }
 
   async function deleteProfile_(name){
-    if(!confirm('Delete branch "' + name + '" and all its data? This cannot be undone.')) return;
+    if(!await appConfirm('Delete branch "' + name + '" and all its data? This cannot be undone.', { danger: true, title: 'Delete branch?', confirmText: 'Delete' })) return;
     try{
       await apiCallJson_('deleteSheet', { name });
       purgeBranchLocalState_(name);
       toast('Deleted "' + name + '".');
+      logActivity_('success', 'Branch deleted', '"' + name + '" and all its records were removed.');
       if(currentSheet === name){
         const remaining = (profilesCache_ || []).filter(n => n !== name);
         currentSheet = remaining[0] || null;
@@ -3739,9 +4209,11 @@
       }
       await loadProfiles_();
     }catch(err){
-      toast(isConnectionError_(err)
+      const msg = isConnectionError_(err)
         ? 'You\'re offline — deleting a branch needs a connection.'
-        : 'Could not delete: ' + err.message);
+        : 'Could not delete: ' + err.message;
+      toast(msg);
+      logActivity_('error', 'Branch delete failed', msg);
     }
   }
 
@@ -3781,13 +4253,13 @@
   }
 
   async function clearBranchData_(name){
-    const ok = confirm(
+    const ok = await appConfirm(
       'Clear ALL customer records in "' + name + '"?\n\n' +
       'Every customer, remark, and color marker in this branch will be permanently deleted, ' +
       'including any not-yet-synced offline edits queued for it. ' +
       'The branch itself stays, empty, so you can start fresh with new data.\n\n' +
-      'This cannot be undone.\n\n' +
-      'Click OK to clear it, or Cancel to keep the data.'
+      'This cannot be undone.',
+      { danger: true, title: 'Clear branch data?', confirmText: 'Clear it' }
     );
     if(!ok) return;
     try{
@@ -3795,6 +4267,7 @@
       const n = (result && typeof result.cleared === 'number') ? result.cleared : null;
       purgeBranchLocalState_(name);
       toast('Cleared ' + (n !== null ? n + ' record' + (n === 1 ? '' : 's') : 'all records') + ' from "' + name + '".');
+      logActivity_('success', 'Cleared branch data', 'Removed ' + (n !== null ? n + ' record' + (n === 1 ? '' : 's') : 'all records') + ' from "' + name + '".');
       if(currentSheet === name){
         customers = [];
         lastListHash = null;
@@ -3805,9 +4278,11 @@
         await loadData();
       }
     }catch(err){
-      toast(isConnectionError_(err)
+      const msg = isConnectionError_(err)
         ? 'You\'re offline — clearing a branch needs a connection.'
-        : 'Could not clear: ' + err.message);
+        : 'Could not clear: ' + err.message;
+      toast(msg);
+      logActivity_('error', 'Clear branch data failed', msg);
     }
   }
 
@@ -4435,6 +4910,10 @@
             item.status = 'conflict';
             item.serverSnapshot = null; // signals "row no longer exists"
             remaining.push(item);
+            if(!item._loggedConflict){
+              item._loggedConflict = true;
+              logActivity_('warning', 'Sync conflict', 'A queued change couldn\'t be applied — the row it targeted no longer exists.', null, 'openSync');
+            }
             continue;
           }
           const drifted = Object.keys(item.snapshot).some(k => String(serverRow[k] ?? '') !== String(item.snapshot[k] ?? ''));
@@ -4445,6 +4924,10 @@
             // after this sync pass finishes and serverList goes away.
             item.serverSnapshot = Object.assign({}, serverRow);
             remaining.push(item);
+            if(!item._loggedConflict){
+              item._loggedConflict = true;
+              logActivity_('warning', 'Sync conflict', 'Someone else changed this record before your offline edit synced.', null, 'openSync');
+            }
             continue;
           }
         }
@@ -4508,6 +4991,10 @@
           item.status = 'error';
           item.error = err.message;
           remaining.push(item);
+          if(!item._loggedError){
+            item._loggedError = true;
+            logActivity_('error', 'Sync failed for a queued change', err.message, null, 'openSync');
+          }
         }
       }
     }
@@ -4944,6 +5431,7 @@
       } else {
         document.getElementById('connStatus').textContent = 'Connection error — ' + friendly;
         toast('Could not load data: ' + friendly);
+        logActivity_('error', 'Could not load data', friendly);
       }
     }finally{
       isLoading = false;
@@ -5460,6 +5948,7 @@
       document.getElementById('connStatus').textContent = 'synced ' + new Date().toLocaleTimeString();
     }catch(err){
       toast('Could not sort: ' + err.message);
+      logActivity_('error', 'Sort failed', err.message);
       document.getElementById('connStatus').textContent = prevStatus;
       loadData(); // fall back to a plain reload so the screen matches the sheet
     }finally{
@@ -6163,6 +6652,7 @@
         };
         await queueOrSend_(item);
         toast('Customer added — syncing…');
+        logActivity_('success', 'Customer added', (fields.customer ? fields.customer : 'New customer') + ' added to "' + currentSheet + '".');
         clearDraft_(null);
       } else {
         const c = customers.find(x => x.row === activeRow);
@@ -6197,6 +6687,7 @@
         };
         await queueOrSend_(item);
         toast('Changes saved — syncing…');
+        logActivity_('success', 'Customer updated', (c ? c.customer : 'row ' + activeRow) + ' saved.');
         clearDraft_(activeRow);
       }
       closeModal();
@@ -6205,6 +6696,7 @@
       // entry) — no need to also fire a full "list" reload here.
     }catch(err){
       toast('Could not save: ' + err.message);
+      logActivity_('error', 'Save failed', err.message);
     }finally{
       btn.disabled = false;
       btn.classList.remove('loading');
@@ -6223,7 +6715,7 @@
     if(modalMode !== 'edit' || !activeRow) return;
     const c = customers.find(x => x.row === activeRow);
     const label = c ? c.customer : ('row ' + activeRow);
-    if(!confirm('Delete "' + label + '"? This removes the customer, its balances, and all its remarks. This cannot be undone.')) return;
+    if(!await appConfirm('Delete "' + label + '"? This removes the customer, its balances, and all its remarks. This cannot be undone.', { danger: true, title: 'Delete customer?', confirmText: 'Delete' })) return;
 
     const btn = document.getElementById('deleteBtn');
     btn.disabled = true;
@@ -6235,10 +6727,12 @@
       const item = { id: genId_(), kind: 'delete', row: activeRow, status: 'pending' };
       await queueOrSend_(item);
       toast('Customer deleted — syncing…');
+      logActivity_('success', 'Customer deleted', label + ' removed from "' + currentSheet + '".');
       clearDraft_(activeRow);
       closeModal();
     }catch(err){
       toast('Could not delete: ' + err.message);
+      logActivity_('error', 'Delete failed', err.message);
     }finally{
       btn.disabled = false;
       btn.classList.remove('loading');

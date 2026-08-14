@@ -158,6 +158,16 @@
   .toolbar .left{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
   .toolbar .right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
   .filter-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  /* Groups the three Import buttons into one visually distinct pill
+     instead of them reading as three loose, unrelated buttons mixed in
+     with Export/Print/Select — a soft tinted tray with its own inner
+     buttons (no border/shadow of their own) so the group reads as one
+     related action cluster at a glance. */
+  .btn-cluster{display:flex;align-items:center;gap:2px;background:#F3F4FB;border:1px solid var(--line);border-radius:11px;padding:3px;flex-wrap:wrap;}
+  .btn-cluster .btn{border-color:transparent;background:transparent;box-shadow:none;}
+  .btn-cluster .btn:hover{background:#fff;border-color:var(--line);box-shadow:0 1px 3px rgba(16,22,60,.08);}
+  .btn-cluster .btn:active{transform:translateY(1px) scale(.98);}
+  .btn-divider{width:1px;align-self:stretch;min-height:22px;background:var(--line);flex-shrink:0;}
   /* Search sits in its own full-width row, always last — on desktop
      AND mobile — instead of squeezed in next to the filters where it
      used to fight them for space. Order:1 (higher than the left/right
@@ -175,10 +185,10 @@
   .input{min-width:230px;}
   .input:focus, select:focus, textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(42,61,154,.12);}
 
-  .btn{border:none;border-radius:9px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer;background:#fff;color:var(--text);border:1px solid #D7DCF0;transition:transform .08s, opacity .15s, background .15s, box-shadow .15s;font-family:inherit;}
-  .btn:hover{background:#F1F3FB;}
+  .btn{border:none;border-radius:9px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer;background:#fff;color:var(--text);border:1px solid #D7DCF0;transition:transform .08s, opacity .15s, background .15s, box-shadow .15s, border-color .15s;font-family:inherit;box-shadow:0 1px 0 rgba(255,255,255,.6) inset, 0 1px 2px rgba(16,22,60,.04);}
+  .btn:hover{background:#F1F3FB;border-color:#C9D1EE;}
   .btn:active{transform:translateY(1px);}
-  .btn.primary{background:linear-gradient(160deg,var(--accent),var(--accent-dark));color:#fff;border-color:var(--accent-dark);box-shadow:0 3px 10px rgba(29,44,116,.28);}
+  .btn.primary{background:linear-gradient(160deg,var(--accent),var(--accent-dark));color:#fff;border-color:var(--accent-dark);box-shadow:0 1px 0 rgba(255,255,255,.18) inset, 0 3px 10px rgba(29,44,116,.28);}
   .btn.primary:hover{filter:brightness(1.08);}
   .btn.dark{background:var(--panel);color:#fff;border-color:var(--panel);}
   .btn.dark:hover{background:var(--panel-2);}
@@ -208,15 +218,15 @@
   .card{background:var(--card);border-radius:var(--radius);border:1px solid var(--line);overflow:hidden;box-shadow:var(--shadow);}
   .table-wrap{overflow-x:auto;}
 
-  .rec-list{display:flex;flex-direction:column;gap:12px;padding:16px;background:linear-gradient(180deg,#F7F8FC,transparent 120px);}
+  .rec-list{display:flex;flex-direction:column;gap:10px;padding:16px;background:linear-gradient(180deg,#F7F8FC,transparent 120px);}
   .rec{
-    position:relative;padding:16px 18px 16px 20px;border:1px solid var(--line);border-radius:var(--radius-sm);background:#fff;
+    position:relative;padding:16px 18px 16px 22px;border:1px solid var(--line);border-radius:var(--radius-sm);background:#fff;
     cursor:pointer;transition:transform .12s ease, box-shadow .18s ease, border-color .15s ease;
     box-shadow:0 1px 2px rgba(16,22,60,.04);
     content-visibility:auto;contain-intrinsic-size:170px;
   }
-  .rec::before{content:'';position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:3px;background:var(--line);transition:background .15s;}
-  .rec:hover{box-shadow:var(--shadow-md);border-color:#C9D1EE;transform:translateY(-1px);}
+  .rec::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;border-radius:var(--radius-sm) 0 0 var(--radius-sm);background:var(--line);transition:background .15s;}
+  .rec:hover{box-shadow:var(--shadow-md);border-color:#C9D1EE;transform:translateY(-2px);}
   .rec:hover::before{background:var(--accent);}
   /* Entrance for genuinely new rows only (see patchTableBody_) — fast
      and understated (fade + 6px rise, ~220ms) so a fresh search/filter
@@ -224,16 +234,17 @@
      without ever feeling like a loading delay. */
   .rec.row-enter{animation:row-in .22s cubic-bezier(.16,1,.3,1) both;}
   @keyframes row-in{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
-  .rec-top{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #EEF0F8;}
-  .rec-id{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;}
-  .cust-name{font-weight:700;font-size:15px;color:var(--ink);letter-spacing:-.1px;overflow:hidden;text-overflow:ellipsis;}
+  .rec-top{display:flex;align-items:center;gap:10px;margin-bottom:13px;padding-bottom:13px;border-bottom:1px solid #EEF0F8;}
+  .rec-id{display:flex;align-items:center;gap:9px;flex-wrap:wrap;min-width:0;}
+  .cust-name{font-weight:700;font-size:15.5px;color:var(--ink);letter-spacing:-.15px;overflow:hidden;text-overflow:ellipsis;}
   .cust-sub{color:var(--muted);font-size:10.5px;font-family:'JetBrains Mono',monospace;letter-spacing:.2px;}
   .rec-right{display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto;}
 
-  .fact-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px 18px;margin-bottom:12px;}
-  .fact{display:flex;flex-direction:column;gap:3px;min-width:0;}
+  .fact-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px;margin-bottom:13px;}
+  .fact{display:flex;flex-direction:column;gap:4px;min-width:0;padding:8px 10px;border-radius:8px;transition:background .12s ease;}
+  .fact:hover{background:#F7F8FC;}
   .fact .k{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#A5ABC8;}
-  .fact .v{font-size:12px;color:var(--text);font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .fact .v{font-size:12.5px;color:var(--text);font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;}
   .fact .v.money{font-variant-numeric:tabular-nums;}
 
   .rec-remarks{background:#F6F7FC;border:1px solid #E9EBF7;border-radius:10px;padding:11px 13px;margin-top:2px;}
@@ -270,17 +281,27 @@
   .rec-remarks .rtag.cur{background:var(--accent-soft);color:var(--accent);}
   .rec-remarks .rtag.prev{background:#EDEFF6;color:#8B94B3;}
 
-  .badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;}
+  .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px 3px 8px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;}
+  .badge::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0;}
   .badge.od{background:var(--od-soft);color:var(--od);}
   .badge.del{background:var(--del-soft);color:var(--del);}
   .badge.rstr{background:var(--rstr-soft);color:var(--rstr);}
   .badge.other{background:#E9EBF6;color:var(--muted);}
-  /* Minimalist account-status counter strip — a row of small "N Label"
-     pairs, one per distinct status text actually found in the branch. */
-  .status-counts{display:flex;flex-wrap:wrap;gap:14px;align-items:center;padding:2px 2px 10px;font-size:11.5px;color:var(--muted);}
-  .status-counts .sc-item{display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap;}
-  .status-counts .sc-num{font-weight:700;color:var(--text);}
-  .status-counts .sc-total{margin-left:2px;padding-left:14px;border-left:1px solid var(--line);font-weight:600;color:var(--text);}
+  /* Minimalist account-status counter strip, restyled as a row of small
+     "chip" pills (dot + count + label) instead of bare inline text —
+     each chip tinted from the same per-status color the number used to
+     be, so nothing about the color-coding changes, it's just easier to
+     visually scan as a set of distinct groups instead of one run-on
+     line. Total gets a solid dark chip so it still reads as the anchor
+     figure, not just one more status in the row. */
+  .status-counts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:2px 2px 16px;}
+  .sc-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 11px 5px 9px;border-radius:20px;border:1px solid var(--line);background:#fff;font-size:11.5px;color:var(--muted);line-height:1;transition:transform .1s ease,box-shadow .15s ease,border-color .15s ease;}
+  .sc-chip:hover{transform:translateY(-1px);box-shadow:0 3px 10px rgba(16,22,60,.07);}
+  .sc-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+  .status-counts .sc-num{font-weight:800;}
+  .sc-label{color:var(--text);font-weight:600;}
+  .sc-chip.sc-total{background:var(--ink);border-color:var(--ink);margin-left:2px;}
+  .sc-chip.sc-total .sc-num, .sc-chip.sc-total .sc-label{color:#fff;}
   .amount{font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace;font-size:12px;}
   .empty-state{padding:60px 20px;text-align:center;color:var(--muted);}
   .skel-line{height:10px;border-radius:4px;background:linear-gradient(90deg,#EBEDF7 25%,#F5F6FB 37%,#EBEDF7 63%);background-size:400% 100%;animation:skel-shine 1.4s ease infinite;}
@@ -787,6 +808,8 @@
     }
     .toolbar .left{order:1;padding-right:0;}
     .toolbar .right{order:2;padding-right:0;}
+    .btn-cluster{width:100%;}
+    .btn-divider{display:none;}
     .toolbar-search{order:1;gap:8px;align-items:center;}
     .toolbar-search .input{flex:1;min-width:0;}
     .toolbar .btn, .toolbar select{flex:0 0 auto;}
@@ -914,12 +937,15 @@
       <div class="toolbar" style="margin-top:6px;">
         <div class="toolbar-extra" id="toolbarExtra">
         <div class="left">
+          <div class="btn-cluster" title="Import">
           <button class="btn" onclick="document.getElementById('importAccountsInput').click()" title="Import a flat account list (.csv/.xls/.xlsx) with a header row like Acct Type/Status Customer, Release/ Rstr Date, Model, Engine No, Due Date, Term, MA, Beg Bal, Customer Status, etc. Reads only Customer, Model, Engine No, Release/Rstr Date, Due Date, Term, MA, Beg Bal &amp; Customer Status from each row. This PERMANENTLY CLEARS every existing record in the branch first, then adds every row from the file as a brand-new customer — it never matches/merges with what's already there. Due This Month / Payment (Adv) / Penalty Due are always set to 0 (use Import Balances afterward to fill them in); Unit status, Payment mode, Date of Audit, Auditor Remarks &amp; Previous Audit Remarks always start blank.">⇪ Import Accounts</button>
           <input type="file" id="importAccountsInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
           <button class="btn" onclick="document.getElementById('importBalancesInput').click()" title="Import CSV, Excel (.xls/.xlsx) or PDF files. Matches customers by name (and engine no. when the file has one, so same-name/different-unit customers are told apart) and updates ONLY Due This Month, Payment (Adv) &amp; Penalty Due. Accepts either a plain file with literal 'Due This Month' etc. headers, or the same STA-style ledger report Import Accounts reads (CU/OD/DEL/TTL/Adv columns). PDF support is best-effort (reconstructed from text position, not a real grid) — scanned/image-only PDFs aren't supported; use CSV/Excel if a PDF doesn't import cleanly. Any remarks/Auditor Remarks column in the file is ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Balances</button>
           <input type="file" id="importBalancesInput" accept=".csv,.xls,.xlsx,.pdf" multiple style="display:none">
           <button class="btn" onclick="document.getElementById('importRemarksInput').click()" title="Import CSV or Excel (.xls/.xlsx) files. Matches customers by name (and engine no. when the file has one). Takes ONLY the customer name and a Remarks/Auditor Remarks column and adds each one as a new line directly into Previous Audit Remarks (no date stamp). The current Auditor Remarks and Date of Audit are never touched. Any balance columns in the file are ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Remarks</button>
           <input type="file" id="importRemarksInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
+          </div>
+          <span class="btn-divider" aria-hidden="true"></span>
           <button class="btn" onclick="exportCSV()" title="Export all customers to an Excel (.xlsx) file, with columns sized to fit">⇩ Export</button>
           <button class="btn" onclick="printCustomers()" title="Print the customer list currently shown for this branch">🖨 Print</button>
           <button class="btn" id="selectModeBtn" onclick="toggleSelectMode_()" title="Select accounts to bulk-delete">☑ Select</button>
@@ -2408,9 +2434,11 @@
   // Customer, Release/Rstr Date, Model, Engine No, Due Date, Term, MA,
   // Beg Bal) for whichever branch is currently selected — and only the
   // rows currently visible (i.e. respects the search box / filters), not
-  // the whole dashboard UI. Opens a plain print-friendly window rather
-  // than printing the card layout directly, since the cards don't fit a
-  // printed page well.
+  // the whole dashboard UI. Builds the print-friendly markup into a
+  // hidden iframe instead of a new tab/window — same print output, but
+  // nothing extra opens or steals focus, and there's no pop-up-blocker
+  // prompt to deal with. The iframe is removed right after the print
+  // dialog closes (or fails to open).
   function printCustomers(){
     const rows = getFilteredCustomers();
     if(!rows.length){ toast('Nothing to print.'); return; }
@@ -2444,10 +2472,7 @@
     });
     tableHtml += '</tbody></table>';
 
-    const win = window.open('', '_blank');
-    if(!win){ toast('Please allow pop-ups to print.'); return; }
-
-    win.document.write(`<!DOCTYPE html>
+    const html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -2471,10 +2496,40 @@
   <h1>${escapeHtml(branchName)} — Customer List</h1>
   ${tableHtml}
 </body>
-</html>`);
-    win.document.close();
-    win.focus();
-    win.onload = () => win.print();
+</html>`;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    iframe.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(iframe);
+
+    const cleanup = () => { if(iframe.parentNode) iframe.parentNode.removeChild(iframe); };
+
+    iframe.onload = () => {
+      try{
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      }catch(e){
+        toast('Could not open the print dialog: ' + e.message);
+        cleanup();
+        return;
+      }
+      // afterprint fires once the print dialog is dismissed (print or
+      // cancel) in every modern browser; fall back to a timeout in case
+      // a browser doesn't fire it, so the iframe never lingers forever.
+      iframe.contentWindow.onafterprint = cleanup;
+      setTimeout(cleanup, 60000);
+    };
+
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(html);
+    doc.close();
   }
 
   function readFileAsText_(file){
@@ -4939,10 +4994,9 @@
   // Colors are cycled from SC_PALETTE by position so each status gets a
   // distinct, consistent color for as long as the visible set of
   // statuses doesn't change. Total isn't part of that cycle — it's a
-  // fixed, distinct color (SC_TOTAL_COLOR) so it always reads as "the
-  // anchor number", not just one more status among others.
+  // fixed, distinct color so it always reads as "the anchor number", not
+  // just one more status among others (see .sc-chip.sc-total in CSS).
   const SC_PALETTE = ['#B0304A','#2A3D9A','#1F7A5C','#B5542A','#9C7A2E','#6C4FB6','#1D8FA6','#B8934A'];
-  const SC_TOTAL_COLOR = '#16215A';
 
   function updateStatusCounts_(list){
     const el = document.getElementById('statusCounts');
@@ -4960,9 +5014,9 @@
     let html = '';
     rows.forEach(([label, n], i) => {
       const color = SC_PALETTE[i % SC_PALETTE.length];
-      html += `<span class="sc-item"><span class="sc-num" style="color:${color}">${n}</span> ${escapeHtml(label)}</span>`;
+      html += `<span class="sc-chip" style="border-color:${color}30;background:${color}10;"><span class="sc-dot" style="background:${color}"></span><span class="sc-num" style="color:${color}">${n}</span><span class="sc-label">${escapeHtml(label)}</span></span>`;
     });
-    html += `<span class="sc-item sc-total"><span class="sc-num" style="color:${SC_TOTAL_COLOR}">${list.length}</span> Total</span>`;
+    html += `<span class="sc-chip sc-total"><span class="sc-num">${list.length}</span><span class="sc-label">Total</span></span>`;
     el.innerHTML = html;
   }
 

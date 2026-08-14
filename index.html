@@ -899,7 +899,7 @@
         <div class="left">
           <button class="btn" onclick="document.getElementById('importAccountsInput').click()" title="Import a flat account list (.csv/.xls/.xlsx) with a header row like Acct Type/Status Customer, Release/ Rstr Date, Model, Engine No, Due Date, Term, MA, Beg Bal, Customer Status, etc. Reads only Customer, Model, Engine No, Release/Rstr Date, Due Date, Term, MA, Beg Bal &amp; Customer Status from each row. This PERMANENTLY CLEARS every existing record in the branch first, then adds every row from the file as a brand-new customer — it never matches/merges with what's already there. Due This Month / Payment (Adv) / Penalty Due are always set to 0 (use Import Balances afterward to fill them in); Unit status, Payment mode, Date of Audit, Auditor Remarks &amp; Previous Audit Remarks always start blank.">⇪ Import Accounts</button>
           <input type="file" id="importAccountsInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
-          <button class="btn" onclick="document.getElementById('importBalancesInput').click()" title="Import CSV or Excel (.xls/.xlsx) files. Matches customers by name (and engine no. when the file has one, so same-name/different-unit customers are told apart) and updates ONLY Due This Month, Payment (Adv) &amp; Penalty Due. Any remarks/Auditor Remarks column in the file is ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Balances</button>
+          <button class="btn" onclick="document.getElementById('importBalancesInput').click()" title="Import CSV or Excel (.xls/.xlsx) files. Matches customers by name (and engine no. when the file has one, so same-name/different-unit customers are told apart) and updates ONLY Due This Month, Payment (Adv) &amp; Penalty Due. Accepts either a plain file with literal 'Due This Month' etc. headers, or the same STA-style ledger report Import Accounts reads (CU/OD/DEL/TTL/Adv columns). Any remarks/Auditor Remarks column in the file is ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Balances</button>
           <input type="file" id="importBalancesInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
           <button class="btn" onclick="document.getElementById('importRemarksInput').click()" title="Import CSV or Excel (.xls/.xlsx) files. Matches customers by name (and engine no. when the file has one). Takes ONLY the customer name and a Remarks/Auditor Remarks column and adds each one as a new line directly into Previous Audit Remarks (no date stamp). The current Auditor Remarks and Date of Audit are never touched. Any balance columns in the file are ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Remarks</button>
           <input type="file" id="importRemarksInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
@@ -1862,6 +1862,12 @@
   //     file (plus customer/engine no. for matching). Any Auditor
   //     Remarks/Remarks column in the file is completely ignored — never
   //     read, never written. Rows with no balance figures are skipped.
+  //   - Accepts either a plain flat file (literal "Due This Month" /
+  //     "Payment (Adv)" / "Penalty Due" headers) OR the same STA-style
+  //     ledger export Import Accounts reads (CU/OD/DEL/TTL/Adv columns,
+  //     no literal balance-column names) — see the fallback in
+  //     parseImportFiles_. Either way this only ever UPDATES customers
+  //     already on the branch; it never creates new ones.
   //
   // Import Remarks (handleImportRemarksFiles):
   //   - Reads ONLY the customer (+engine no.) and an Auditor Remarks/
@@ -2282,32 +2288,70 @@
   // any balance/remark columns the file happens to contain — filtering
   // down to just the columns a given flow cares about happens later, in
   // that flow's own matching step, NOT here).
+  //
+  // Two header shapes are recognized, tried in order, per sheet:
+  //   1. A plain flat table with literal column names ("Customer Name",
+  //      "Due This Month", "Auditor Remarks", ...) — detectHeaderAndParseRows_.
+  //   2. The STA-style ledger export (the same report Import Accounts
+  //      reads: "Acct Type/Status Customer" header, "BNEW - OD" / etc.
+  //      section rows, and CU/OD/DEL/TTL/Adv balance columns instead of
+  //      a plain "Due This Month" column) — reusing findAccountsHeaderRow_ /
+  //      parseAccountsMatrix_ from the Import Accounts flow below. This is
+  //      what lets the SAME ledger file used for Import Accounts also be
+  //      dropped into Import Balances to fill in Due This Month / Payment
+  //      (Adv) / Penalty Due for the customers it just created — that
+  //      report has no plain "Due This Month" etc. header text, so shape 1
+  //      alone could never read it. This fallback only ever contributes
+  //      customer, engineNo, dueThisMonth, paymentAdv and penaltyDue (no
+  //      remarks column exists in this report shape, so it naturally
+  //      contributes nothing useful to Import Remarks).
   async function parseImportFiles_(fileList){
     const files = Array.from(fileList || []);
     let allRecords = [];
     for(const file of files){
       const ext = (file.name.split('.').pop() || '').toLowerCase();
       try{
+        let matrices;
         if(ext === 'csv'){
           const text = await readFileAsText_(file);
-          const matrix = csvToMatrix_(text);
-          const { records, headerFound } = detectHeaderAndParseRows_(matrix);
-          if(!headerFound){ toast(file.name + ': no recognizable customer/balance/remarks columns found.'); continue; }
-          if(!records.length) toast(file.name + ': columns found, but no data rows matched.');
-          allRecords = allRecords.concat(records);
+          matrices = [csvToMatrix_(text)];
         } else if(ext === 'xls' || ext === 'xlsx'){
-          if(typeof XLSX === 'undefined'){ toast('Excel support failed to load — try re-saving as CSV.'); continue; }
-          const sheets = await excelToMatrices_(file);
-          let fileRecords = [];
-          sheets.forEach(({ matrix }) => {
-            const { records, headerFound } = detectHeaderAndParseRows_(matrix);
-            if(headerFound) fileRecords = fileRecords.concat(records);
-          });
-          if(!fileRecords.length){ toast(file.name + ': no recognizable customer/balance/remarks columns found.'); continue; }
-          allRecords = allRecords.concat(fileRecords);
+          // Same fix as parseAccountsFiles_ above: XLSX loads on demand,
+          // so it's expected to be undefined until excelToMatrices_'s own
+          // ensureXlsxLoaded_() call injects it — don't bail out before
+          // that's even attempted.
+          matrices = (await excelToMatrices_(file)).map(s => s.matrix);
         } else {
           toast(file.name + ': unsupported file type (use .csv, .xls, or .xlsx).');
+          continue;
         }
+
+        let fileRecords = [];
+        let anyHeaderFound = false;
+        matrices.forEach(matrix => {
+          let { records, headerFound } = detectHeaderAndParseRows_(matrix);
+          if(!headerFound || !records.length){
+            // Shape 1 didn't work (or found no data) — try the STA-ledger
+            // shape as a fallback before giving up on this sheet.
+            const staRecords = parseAccountsMatrix_(matrix);
+            if(staRecords.length){
+              records = staRecords.map(r => ({
+                customer: r.customer,
+                engineNo: r.engineNo,
+                dueThisMonth: r.dueThisMonth,
+                paymentAdv: r.paymentAdv,
+                penaltyDue: r.penaltyDue
+              }));
+              headerFound = true;
+            }
+          }
+          if(headerFound) anyHeaderFound = true;
+          fileRecords = fileRecords.concat(records);
+        });
+
+        if(!anyHeaderFound){ toast(file.name + ': no recognizable customer/balance/remarks columns found.'); continue; }
+        if(!fileRecords.length) toast(file.name + ': columns found, but no data rows matched.');
+        allRecords = allRecords.concat(fileRecords);
       }catch(err){
         toast('Could not read ' + file.name + ': ' + err.message);
       }
@@ -2592,10 +2636,12 @@
   // customer column but every other core column (release date, model,
   // engine, due date, term, MA, beg bal) is blank on that same row —
   // that's what "BNEW - ADV", "BNEW - OD" etc. look like in the raw
-  // sheet. Only the 8 core fields + the derived status are kept — the
-  // file's own balance columns (CU/OD/DEL/TTL/Adv) are read only far
-  // enough to tell a data row apart from a totals/section row; their
-  // values are never carried into the record.
+  // sheet. The file's own balance columns (the first TTL block, Adv, the
+  // second TTL block) are also captured as dueThisMonth/paymentAdv/
+  // penaltyDue — Import Accounts itself still ignores these three and
+  // always writes 0 (see buildAccountsCreateFields_ below), but Import
+  // Balances' STA-format fallback (see parseImportFiles_) reuses this
+  // same parser and DOES want them.
   function parseAccountsMatrix_(matrix){
     const found = findAccountsHeaderRow_(matrix);
     if(!found) return [];
@@ -2621,6 +2667,9 @@
       if(isNaN(begBal)) continue; // doesn't look like a real data row
 
       const maVal = parseNum_(row[cols.ma]);
+      const ttl1 = cols.ttl1 !== undefined ? parseNum_(row[cols.ttl1]) : NaN;
+      const adv = cols.adv !== undefined ? parseNum_(row[cols.adv]) : NaN;
+      const ttl2 = cols.ttl2 !== undefined ? parseNum_(row[cols.ttl2]) : NaN;
 
       records.push({
         customer: name,
@@ -2631,7 +2680,10 @@
         term: cols.term !== undefined ? String(row[cols.term] == null ? '' : row[cols.term]).trim() : '',
         ma: isNaN(maVal) ? 0 : maVal,
         begBal: begBal,
-        customerStatus: currentStatus
+        customerStatus: currentStatus,
+        dueThisMonth: isNaN(ttl1) ? 0 : ttl1,
+        paymentAdv: isNaN(adv) ? 0 : adv,
+        penaltyDue: isNaN(ttl2) ? 0 : ttl2
       });
     }
     return records;
@@ -2645,7 +2697,13 @@
       try{
         let sheets;
         if(ext === 'xls' || ext === 'xlsx'){
-          if(typeof XLSX === 'undefined'){ toast('Excel support failed to load — try again.'); continue; }
+          // NOTE: XLSX is loaded on demand (see ensureXlsxLoaded_ above
+          // excelToMatrices_) — it is *expected* to be undefined here on
+          // the very first import of the session. excelToMatrices_ itself
+          // awaits ensureXlsxLoaded_() and injects the library, so we
+          // just call it directly and let its own try/catch below handle
+          // an actual load failure (bad connection, CDN blocked, etc.)
+          // instead of bailing out before ever attempting to load it.
           sheets = await excelToMatrices_(file);
         } else if(ext === 'csv'){
           const text = await readFileAsText_(file);

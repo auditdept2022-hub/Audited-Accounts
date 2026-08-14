@@ -897,8 +897,8 @@
       <div class="toolbar" style="margin-top:6px;">
         <div class="toolbar-extra" id="toolbarExtra">
         <div class="left">
-          <button class="btn" onclick="document.getElementById('importAccountsInput').click()" title="Import a flat account list (.csv/.xls/.xlsx) with a header row like Acct Type/Status Customer, Release/ Rstr Date, Model, Engine No, Due Date, Term, MA, Beg Bal, Customer Status, etc. Reads only Customer, Model, Engine No, Release/Rstr Date, Due Date, Term, MA, Beg Bal &amp; Customer Status from each row. This PERMANENTLY CLEARS every existing record in the branch first, then adds every row from the file as a brand-new customer — it never matches/merges with what's already there. Due This Month / Payment (Adv) / Penalty Due are always set to 0 (use Import Balances afterward to fill them in); Unit status, Payment mode, Date of Audit, Auditor Remarks &amp; Previous Audit Remarks always start blank.">⇪ Import Accounts</button>
-          <input type="file" id="importAccountsInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
+          <button class="btn" onclick="document.getElementById('importAccountsInput').click()" title="Import a flat account list (.csv/.xls/.xlsx/.pdf) with a header row like Acct Type/Status Customer, Release/ Rstr Date, Model, Engine No, Due Date, Term, MA, Beg Bal, Customer Status, etc. Reads only Customer, Model, Engine No, Release/Rstr Date, Due Date, Term, MA, Beg Bal &amp; Customer Status from each row. PDF support is best-effort (reconstructed from text position, not a real grid) — scanned/image-only PDFs aren't supported; use CSV/Excel if a PDF doesn't import cleanly. This PERMANENTLY CLEARS every existing record in the branch first, then adds every row from the file as a brand-new customer — it never matches/merges with what's already there. Due This Month / Payment (Adv) / Penalty Due are always set to 0 (use Import Balances afterward to fill them in); Unit status, Payment mode, Date of Audit, Auditor Remarks &amp; Previous Audit Remarks always start blank.">⇪ Import Accounts</button>
+          <input type="file" id="importAccountsInput" accept=".csv,.xls,.xlsx,.pdf" multiple style="display:none">
           <button class="btn" onclick="document.getElementById('importBalancesInput').click()" title="Import CSV or Excel (.xls/.xlsx) files. Matches customers by name (and engine no. when the file has one, so same-name/different-unit customers are told apart) and updates ONLY Due This Month, Payment (Adv) &amp; Penalty Due. Accepts either a plain file with literal 'Due This Month' etc. headers, or the same STA-style ledger report Import Accounts reads (CU/OD/DEL/TTL/Adv columns). Any remarks/Auditor Remarks column in the file is ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Balances</button>
           <input type="file" id="importBalancesInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
           <button class="btn" onclick="document.getElementById('importRemarksInput').click()" title="Import CSV or Excel (.xls/.xlsx) files. Matches customers by name (and engine no. when the file has one). Takes ONLY the customer name and a Remarks/Auditor Remarks column and adds each one as a new line directly into Previous Audit Remarks (no date stamp). The current Auditor Remarks and Date of Audit are never touched. Any balance columns in the file are ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Remarks</button>
@@ -2016,6 +2016,157 @@
     }));
   }
 
+  // ---- PDF import (Import Accounts) --------------------------------
+  //
+  // Loaded on demand, same lazy pattern as ensureXlsxLoaded_ above.
+  // pdf.js is what actually reads the PDF; it also needs a separate
+  // "worker" script (a background thread it runs its parsing in) —
+  // that's the second script tag below.
+  let _pdfLoadPromise = null;
+  function ensurePdfJsLoaded_(){
+    if(typeof pdfjsLib !== 'undefined') return Promise.resolve();
+    if(_pdfLoadPromise) return _pdfLoadPromise;
+    _pdfLoadPromise = new Promise((resolve, reject)=>{
+      const s = document.createElement('script');
+      s.src = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js';
+      s.onload = () => {
+        try{
+          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+          resolve();
+        }catch(err){ _pdfLoadPromise = null; reject(err); }
+      };
+      s.onerror = () => { _pdfLoadPromise = null; reject(new Error('Failed to load PDF library — check your connection and try again.')); };
+      document.head.appendChild(s);
+    });
+    return _pdfLoadPromise;
+  }
+
+  // A PDF page has no actual grid the way a spreadsheet does — it's just
+  // text fragments, each with its own (x, y) position on the page. This
+  // best-effort reconstructs a matrix shaped like excelToMatrices_'s
+  // output (so it can be fed through the exact same
+  // findAccountsHeaderRow_ / parseAccountsMatrix_ used for Excel/CSV)
+  // by: 1) grouping fragments into visual lines by y-position, 2)
+  // merging the tightly-packed leading lines into header cells (this is
+  // what recovers a header that wraps onto two PDF lines, e.g. "Beg" /
+  // "Bal" stacked -> "Beg Bal", the same way a wrapped spreadsheet
+  // header cell does), 3) bucketing every later line's fragments into
+  // the nearest header column by x-position.
+  //
+  // This is inherently best-effort — an unusual layout (multi-column
+  // pages, rotated text, or a scanned/image-only PDF with no real text
+  // layer) may not reconstruct cleanly. If a PDF doesn't import right,
+  // re-export/save it as CSV or Excel instead for a guaranteed-accurate
+  // import.
+  const PDF_X_COL_TOLERANCE = 18; // points; fragments within this x-distance are treated as the same column
+  const PDF_Y_LINE_TOLERANCE = 3; // points; fragments within this y-distance are treated as the same line
+
+  function pdfClusterLines_(items){
+    const sorted = items.slice().sort((a, b) => b.y - a.y || a.x - b.x); // top-to-bottom, then left-to-right
+    const lines = [];
+    sorted.forEach(it => {
+      if(!it.str || !it.str.trim()) return;
+      let line = lines.find(l => Math.abs(l.y - it.y) <= PDF_Y_LINE_TOLERANCE);
+      if(!line){ line = { y: it.y, items: [] }; lines.push(line); }
+      line.items.push(it);
+    });
+    lines.forEach(l => l.items.sort((a, b) => a.x - b.x));
+    lines.sort((a, b) => b.y - a.y);
+    return lines;
+  }
+
+  // Header lines wrapped onto 2 physical PDF lines sit close together (a
+  // small "wrap gap"), noticeably closer than the gap to the next real
+  // table row — be it a data row, or a section-header row like
+  // "BNEW - OD" (itself just a customer-column-only row, same shape as
+  // a data row for this purpose). Use the FIRST line-to-line gap as the
+  // "wrap gap" reference, and stop the header block as soon as a gap
+  // grows past ~1.6x that — capped at a few lines so an odd PDF can't
+  // run away and swallow real data rows into the header.
+  function pdfFindHeaderBoundary_(lines){
+    const MAX_HEADER_LINES = 4;
+    if(lines.length <= 1) return 1;
+    const gaps = [];
+    for(let i = 0; i < Math.min(lines.length - 1, MAX_HEADER_LINES); i++){
+      gaps.push(lines[i].y - lines[i + 1].y);
+    }
+    const ref = gaps[0] > 0 ? gaps[0] : 1;
+    for(let i = 1; i < gaps.length; i++){
+      if(gaps[i] > ref * 1.6) return i + 1;
+    }
+    return 1; // no clear wrap detected — treat header as a single line
+  }
+
+  function pdfBuildHeaderColumns_(headerLines){
+    const allTokens = [];
+    headerLines.forEach(l => l.items.forEach(it => allTokens.push(it)));
+    allTokens.sort((a, b) => a.x - b.x);
+    const clusters = [];
+    allTokens.forEach(tok => {
+      let cluster = clusters.find(c => Math.abs(c.xCenter - tok.x) <= PDF_X_COL_TOLERANCE);
+      if(!cluster){ cluster = { xCenter: tok.x, tokens: [] }; clusters.push(cluster); }
+      cluster.tokens.push(tok);
+      cluster.xCenter = cluster.tokens.reduce((s, t) => s + t.x, 0) / cluster.tokens.length;
+    });
+    clusters.sort((a, b) => a.xCenter - b.xCenter);
+    return clusters.map(c => {
+      const sorted = c.tokens.slice().sort((a, b) => b.y - a.y || a.x - b.x); // top line's word(s) first
+      return { xCenter: c.xCenter, text: sorted.map(t => t.str).join(' ') };
+    });
+  }
+
+  function pdfBucketLineIntoColumns_(line, columns){
+    const row = columns.map(() => '');
+    line.items.forEach(tok => {
+      let best = 0, bestDist = Infinity;
+      columns.forEach((c, i) => {
+        const d = Math.abs(c.xCenter - tok.x);
+        if(d < bestDist){ bestDist = d; best = i; }
+      });
+      row[best] = row[best] ? row[best] + ' ' + tok.str : tok.str;
+    });
+    return row;
+  }
+
+  function pdfLinesToMatrix_(lines){
+    if(!lines.length) return [];
+    const splitIdx = pdfFindHeaderBoundary_(lines);
+    const headerLines = lines.slice(0, splitIdx);
+    const dataLines = lines.slice(splitIdx);
+
+    const columns = pdfBuildHeaderColumns_(headerLines);
+    const headerRow = columns.map(c => c.text);
+    const headerNorm = headerRow.map(h => String(h).replace(/\s+/g, ' ').trim().toLowerCase());
+
+    const matrix = [headerRow];
+    dataLines.forEach(line => {
+      const row = pdfBucketLineIntoColumns_(line, columns);
+      const rowNorm = row.map(v => String(v).replace(/\s+/g, ' ').trim().toLowerCase());
+      // Skip a repeated header line (e.g. the header re-printed at the
+      // top of page 2+) so it doesn't get treated as a bogus data row.
+      if(rowNorm.join('|') === headerNorm.join('|')) return;
+      matrix.push(row);
+    });
+    return matrix;
+  }
+
+  async function pdfToMatrices_(file){
+    await ensurePdfJsLoaded_();
+    const buf = await readFileAsArrayBuffer_(file);
+    const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+    let allLines = [];
+    for(let p = 1; p <= doc.numPages; p++){
+      const page = await doc.getPage(p);
+      const content = await page.getTextContent();
+      const items = content.items.map(it => ({ str: it.str, x: it.transform[4], y: it.transform[5] }));
+      // Pages are concatenated as one continuous line stream — this
+      // means only page 1's top lines are used to detect the header
+      // (the common case: the header only prints once, on page 1).
+      allLines = allLines.concat(pdfClusterLines_(items));
+    }
+    return [{ name: file.name, matrix: pdfLinesToMatrix_(allLines) }];
+  }
+
   // Scans the first ~30 rows of a matrix for the row that looks most like
   // a header (matches known field names), wherever it happens to sit, then
   // extracts every data row below it. A row only counts as real customer
@@ -2708,14 +2859,22 @@
         } else if(ext === 'csv'){
           const text = await readFileAsText_(file);
           sheets = [{ name: file.name, matrix: csvToMatrix_(text) }];
+        } else if(ext === 'pdf'){
+          // Best-effort text-position table reconstruction — see the
+          // comment above pdfToMatrices_ for how/why this can be less
+          // reliable than CSV/Excel for an unusual layout.
+          sheets = await pdfToMatrices_(file);
         } else {
-          toast(file.name + ': unsupported file type (use .csv, .xls, or .xlsx).');
+          toast(file.name + ': unsupported file type (use .csv, .xls, .xlsx, or .pdf).');
           continue;
         }
         let fileRecords = [];
         sheets.forEach(({ matrix }) => { fileRecords = fileRecords.concat(parseAccountsMatrix_(matrix)); });
         if(!fileRecords.length){
-          toast(file.name + ': doesn\u2019t look like an STA-style account report (couldn\u2019t find the expected columns/sections).');
+          const hint = ext === 'pdf'
+            ? ': couldn\u2019t reconstruct a table from this PDF\u2019s text layout (scanned/image-only PDFs aren\u2019t supported \u2014 try CSV/Excel instead).'
+            : ': doesn\u2019t look like an STA-style account report (couldn\u2019t find the expected columns/sections).';
+          toast(file.name + hint);
           continue;
         }
         allRecords = allRecords.concat(fileRecords);

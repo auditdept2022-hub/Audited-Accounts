@@ -1932,6 +1932,14 @@
     if(!s) return NaN;
     let neg = false;
     if(/^\(.*\)$/.test(s)){ neg = true; s = s.slice(1, -1); }
+    // A lone "-" followed by a SPACE and then more digits is a blank-cell
+    // placeholder that got fused with a genuinely separate number — most
+    // often from PDF column reconstruction bucketing two adjacent
+    // fragments (an empty column's "-" and the next column's real value)
+    // into the same cell. A real negative amount always has the minus
+    // sign glued directly to its digits ("-1,234.00"), never a space
+    // after it — so strip this instead of treating it as a sign.
+    s = s.replace(/^-\s+(?=[₱$\d(])/, '');
     s = s.replace(/[₱$,\s]/g, '');
     if(!s || s === '-') return NaN;
     const n = parseFloat(s);
@@ -2075,26 +2083,25 @@
     return lines;
   }
 
-  // Header lines wrapped onto 2 physical PDF lines sit close together (a
-  // small "wrap gap"), noticeably closer than the gap to the next real
-  // table row — be it a data row, or a section-header row like
-  // "BNEW - OD" (itself just a customer-column-only row, same shape as
-  // a data row for this purpose). Use the FIRST line-to-line gap as the
-  // "wrap gap" reference, and stop the header block as soon as a gap
-  // grows past ~1.6x that — capped at a few lines so an odd PDF can't
-  // run away and swallow real data rows into the header.
-  function pdfFindHeaderBoundary_(lines){
-    const MAX_HEADER_LINES = 4;
-    if(lines.length <= 1) return 1;
-    const gaps = [];
-    for(let i = 0; i < Math.min(lines.length - 1, MAX_HEADER_LINES); i++){
-      gaps.push(lines[i].y - lines[i + 1].y);
+  // A real-world report often prints a title/letterhead block above the
+  // actual table header — company name, branch, "For the month of...",
+  // the generated-on timestamp, "Page X of Y", etc. Scan down the
+  // page's lines (not just line 0) for the first one that actually
+  // looks like a column-header row: it mentions "customer" (every
+  // report shape this app reads has that) plus several other
+  // recognizable header words. This is what lets a PDF with a
+  // multi-line letterhead above the table still get parsed correctly,
+  // instead of the letterhead itself being mistaken for the header.
+  const PDF_HEADER_KEYWORDS = ['customer','engine','due','date','payment','penalty','terms','model','release','restructure','beginning','balance','status','term','ma','invoice','month','advance','adv','name'];
+  function pdfFindHeaderStartLine_(lines){
+    const maxScan = Math.min(60, lines.length);
+    for(let i = 0; i < maxScan; i++){
+      const text = lines[i].items.map(it => it.str).join(' ').toLowerCase();
+      if(text.indexOf('customer') === -1) continue;
+      const hits = PDF_HEADER_KEYWORDS.filter(k => new RegExp('\\b' + k + '\\b').test(text)).length;
+      if(hits >= 3) return i;
     }
-    const ref = gaps[0] > 0 ? gaps[0] : 1;
-    for(let i = 1; i < gaps.length; i++){
-      if(gaps[i] > ref * 1.6) return i + 1;
-    }
-    return 1; // no clear wrap detected — treat header as a single line
+    return 0; // nothing looked like a header — fall back to the old assumption (header at the very top)
   }
 
   function pdfBuildHeaderColumns_(headerLines){
@@ -2128,12 +2135,12 @@
     return row;
   }
 
-  function pdfLinesToMatrix_(lines){
-    if(!lines.length) return [];
-    const splitIdx = pdfFindHeaderBoundary_(lines);
-    const headerLines = lines.slice(0, splitIdx);
-    const dataLines = lines.slice(splitIdx);
-
+  // Builds one candidate matrix assuming the header spans exactly
+  // `headerLineCount` physical PDF lines starting at lines[0] (the
+  // caller has already skipped any letterhead before this point).
+  function pdfBuildMatrixCandidate_(lines, headerLineCount){
+    const headerLines = lines.slice(0, headerLineCount);
+    const dataLines = lines.slice(headerLineCount);
     const columns = pdfBuildHeaderColumns_(headerLines);
     const headerRow = columns.map(c => c.text);
     const headerNorm = headerRow.map(h => String(h).replace(/\s+/g, ' ').trim().toLowerCase());
@@ -2148,6 +2155,40 @@
       matrix.push(row);
     });
     return matrix;
+  }
+
+  // How many physical PDF lines the header actually wraps onto (1, 2, a
+  // wrapped cell like "Beg"/"Bal", etc.) varies by report, and the gap
+  // between header lines can be too close to the gap between ordinary
+  // data rows to reliably tell apart by position alone (as this
+  // report's "Due This Month" / "Payment (Adv)" / "Penalty Due" columns
+  // are). So instead of guessing geometrically, build a candidate
+  // matrix for each plausible wrap count and score its header row
+  // against the two header shapes this app actually knows how to read
+  // (see detectHeaderAndParseRows_ / findAccountsHeaderRow_) — whichever
+  // wrap count produces the most recognizable header wins.
+  function pdfScoreHeaderCandidate_(matrix){
+    const headerRow = matrix[0] || [];
+    let score = 0;
+    headerRow.forEach(h => { if(ALIAS_TO_FIELD[normHeader_(h)]) score++; });
+    if(findAccountsHeaderRow_(matrix)) score += 10;
+    return score;
+  }
+
+  function pdfLinesToMatrix_(lines){
+    if(!lines.length) return [];
+    const startIdx = pdfFindHeaderStartLine_(lines);
+    const scoped = lines.slice(startIdx);
+    if(!scoped.length) return [];
+
+    let best = null, bestScore = -1;
+    const maxWrap = Math.min(4, scoped.length);
+    for(let n = 1; n <= maxWrap; n++){
+      const candidate = pdfBuildMatrixCandidate_(scoped, n);
+      const score = pdfScoreHeaderCandidate_(candidate);
+      if(score > bestScore){ bestScore = score; best = candidate; }
+    }
+    return best || [];
   }
 
   async function pdfToMatrices_(file){
@@ -2245,7 +2286,12 @@
       });
       if(!rec.customer) continue;
       if(typeof row[bestMap.customer] === 'number') continue; // e.g. sub-total rows put a count here, not a name
-      if(/^\s*(sub[\s-]?total|grand total|total|subtotal)\b/i.test(rec.customer)) continue; // summary rows, not customers
+      // Summary rows, not customers. Anchored-at-start would miss PDF
+      // reconstructions where a leading row-count and the label land in
+      // the same cell (e.g. "4 Sub Total for Status", "182 Grand
+      // Total") — search the whole cell instead of just its start.
+      if(/(sub[\s-]?total|grand[\s-]?total)/i.test(rec.customer)) continue;
+      if(/^[\d,.\s-]+$/.test(rec.customer)) continue; // a bare number in the name column is a stray count/total, never a real customer
       // A row counts as real customer data if it carries a balance figure
       // OR an auditor remark — an audit sheet (like Sta. Rosa's) often has
       // a remark with no balance columns filled in at all for that visit.

@@ -167,7 +167,7 @@
   .btn-cluster .btn{border-color:transparent;background:transparent;box-shadow:none;}
   .btn-cluster .btn:hover{background:#fff;border-color:var(--line);box-shadow:0 1px 3px rgba(16,22,60,.08);}
   .btn-cluster .btn:active{transform:translateY(1px) scale(.98);}
-  .btn-divider{width:1px;align-self:stretch;min-height:22px;background:var(--line);flex-shrink:0;}
+  .btn-cluster-divider{width:1px;align-self:stretch;min-height:20px;margin:0 2px;background:var(--line);flex-shrink:0;}
   /* Search sits in its own full-width row, always last — on desktop
      AND mobile — instead of squeezed in next to the filters where it
      used to fight them for space. Order:1 (higher than the left/right
@@ -812,7 +812,7 @@
     .toolbar .left{order:1;padding-right:0;}
     .toolbar .right{order:2;padding-right:0;}
     .btn-cluster{width:100%;}
-    .btn-divider{display:none;}
+    .btn-cluster-divider{display:none;}
     .toolbar-search{order:1;gap:8px;align-items:center;}
     .toolbar-search .input{flex:1;min-width:0;}
     .toolbar .btn, .toolbar select{flex:0 0 auto;}
@@ -950,16 +950,16 @@
       <div class="toolbar" style="margin-top:6px;">
         <div class="toolbar-extra" id="toolbarExtra">
         <div class="left">
-          <div class="btn-cluster" title="Import">
+          <div class="btn-cluster" title="Import / Export">
           <button class="btn" onclick="document.getElementById('importAccountsInput').click()" title="Import a flat account list (.csv/.xls/.xlsx) with a header row like Acct Type/Status Customer, Release/ Rstr Date, Model, Engine No, Due Date, Term, MA, Beg Bal, Customer Status, etc. Reads only Customer, Model, Engine No, Release/Rstr Date, Due Date, Term, MA, Beg Bal &amp; Customer Status from each row. This PERMANENTLY CLEARS every existing record in the branch first, then adds every row from the file as a brand-new customer — it never matches/merges with what's already there. Due This Month / Payment (Adv) / Penalty Due are always set to 0 (use Import Balances afterward to fill them in); Unit status, Payment mode, Date of Audit, Auditor Remarks &amp; Previous Audit Remarks always start blank.">⇪ Import Accounts</button>
           <input type="file" id="importAccountsInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
           <button class="btn" onclick="document.getElementById('importBalancesInput').click()" title="Import CSV, Excel (.xls/.xlsx) or PDF files. Matches customers by name (and engine no. when the file has one, so same-name/different-unit customers are told apart) and updates ONLY Due This Month, Payment (Adv) &amp; Penalty Due. Accepts either a plain file with literal 'Due This Month' etc. headers, or the same STA-style ledger report Import Accounts reads (CU/OD/DEL/TTL/Adv columns). PDF support is best-effort (reconstructed from text position, not a real grid) — scanned/image-only PDFs aren't supported; use CSV/Excel if a PDF doesn't import cleanly. Any remarks/Auditor Remarks column in the file is ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Balances</button>
           <input type="file" id="importBalancesInput" accept=".csv,.xls,.xlsx,.pdf" multiple style="display:none">
           <button class="btn" onclick="document.getElementById('importRemarksInput').click()" title="Import CSV or Excel (.xls/.xlsx) files. Matches customers by name (and engine no. when the file has one). Takes ONLY the customer name and a Remarks/Auditor Remarks column and adds each one as a new line directly into Previous Audit Remarks (no date stamp). The current Auditor Remarks and Date of Audit are never touched. Any balance columns in the file are ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Remarks</button>
           <input type="file" id="importRemarksInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
-          </div>
-          <span class="btn-divider" aria-hidden="true"></span>
+          <span class="btn-cluster-divider" aria-hidden="true"></span>
           <button class="btn" onclick="exportCSV()" title="Export all customers to an Excel (.xlsx) file, with columns sized to fit">⇩ Export</button>
+          </div>
           <button class="btn" onclick="printCustomers()" title="Print the customer list currently shown for this branch">🖨 Print</button>
           <button class="btn" id="selectModeBtn" onclick="toggleSelectMode_()" title="Select accounts to bulk-delete">☑ Select</button>
         </div>

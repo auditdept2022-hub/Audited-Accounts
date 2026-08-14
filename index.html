@@ -130,6 +130,28 @@
   #pendingWrap button{background:none;border:none;color:#DCE3FA;font-size:10.5px;font-weight:600;cursor:pointer;padding:0;text-decoration:underline;}
   #pendingWrap button:hover{color:#fff;}
   #pendingWrap .count{background:var(--gold);color:#2A2005;border-radius:10px;padding:1px 6px;font-weight:700;font-size:10px;}
+
+  /* Status-counts strip, embedded directly in the header as a third row
+     below the sync/refresh line — same info that used to sit above the
+     card list, just tucked into the header itself so it's always
+     visible at a glance. A thin dashed divider separates it from the
+     sync line above; sizing is deliberately restrained (small type,
+     tight gaps) so it reads as a quiet stat line, not another loud
+     header element, on both desktop and phone widths. */
+  .hdr-status-counts{
+    display:flex;flex-wrap:wrap;gap:0 0;align-items:baseline;
+    margin-top:7px;padding-top:7px;
+    border-top:1px dashed rgba(255,255,255,.14);
+    font-size:11px;line-height:1.5;
+  }
+  .hdr-status-counts:empty{display:none;border-top:none;margin-top:0;padding-top:0;}
+  .hdr-status-counts .sc-item{display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap;}
+  .hdr-status-counts .sc-item + .sc-item::before{content:'·';margin:0 8px;color:#4D5788;font-weight:700;}
+  .hdr-status-counts .sc-num{font-weight:800;}
+  .hdr-status-counts .sc-label{color:#B7C0E8;font-weight:500;}
+  .hdr-status-counts .sc-item.sc-total{margin-left:8px;padding-left:12px;border-left:1px solid rgba(255,255,255,.16);}
+  .hdr-status-counts .sc-item.sc-total .sc-num{color:#fff;}
+  .hdr-status-counts .sc-item.sc-total .sc-label{color:#fff;font-weight:700;}
   .import-status{font-size:11.5px;color:var(--muted);white-space:nowrap;}
   /* Sits in the quiet strip between the header and the toolbar card,
      instead of crowding the Import buttons — empty (0-height) until
@@ -389,24 +411,8 @@
   .badge.del{background:var(--del-soft);color:var(--del);}
   .badge.rstr{background:var(--rstr-soft);color:var(--rstr);}
   .badge.other{background:#E9EBF6;color:var(--muted);}
-  /* Minimalist account-status counter strip, restyled as a row of small
-     "chip" pills (dot + count + label) instead of bare inline text —
-     each chip tinted from the same per-status color the number used to
-     be, so nothing about the color-coding changes. Total is set apart
-     with a left divider + bolder weight instead of a colored number, so
-     it still reads as "the anchor figure" and not just one more status
-     in the row.
-     Embedded, not floating: no chip/pill background or border on each
-     item — just colored numbers + labels sitting flush on the page,
-     separated by a small middot, the way a plain stat line reads. */
-  .status-counts{display:flex;flex-wrap:wrap;gap:0;align-items:baseline;padding:2px 2px 14px;font-size:12px;color:var(--muted);}
-  .sc-item{display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap;}
-  .sc-item + .sc-item::before{content:'·';margin:0 10px;color:var(--line);font-weight:700;}
-  .status-counts .sc-num{font-weight:800;}
-  .sc-label{color:var(--text);font-weight:500;}
-  .sc-item.sc-total{margin-left:10px;padding-left:14px;border-left:1px solid var(--line);}
-  .sc-item.sc-total .sc-num{color:var(--ink);}
-  .sc-item.sc-total .sc-label{color:var(--ink);font-weight:700;}
+  /* Note: the account-status counter strip now lives in the header —
+     see .hdr-status-counts above — instead of here above the card list. */
   .amount{font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace;font-size:12px;}
   .empty-state{padding:60px 20px;text-align:center;color:var(--muted);}
   .skel-line{height:10px;border-radius:4px;background:linear-gradient(90deg,#EBEDF7 25%,#F5F6FB 37%,#EBEDF7 63%);background-size:400% 100%;animation:skel-shine 1.4s ease infinite;}
@@ -905,6 +911,22 @@
     .hdr-clock-date{font-size:10.5px;margin-top:1px;}
     .hdr-bell{width:30px;height:30px;}
 
+    /* Header status-counts row: same content as desktop, just tightened
+       up so it wraps cleanly instead of running wide on a narrow phone —
+       smaller type, tighter middot spacing, smaller Total divider gap.
+       Bleeds out to the screen edges (negative margin cancels the
+       topband's own side padding, inner padding brought back to 0) so
+       it gets the full width to work with instead of being squeezed
+       inside the header's normal gutters — this is what keeps two
+       count pairs per line instead of wrapping after just one. */
+    .hdr-status-counts{
+      font-size:9.5px;margin-top:6px;padding-top:6px;
+      margin-left:calc(-14px - var(--safe-l));
+      padding-left:0;
+    }
+    .hdr-status-counts .sc-item + .sc-item::before{margin:0 6px;}
+    .hdr-status-counts .sc-item.sc-total{margin-left:6px;padding-left:9px;}
+
     /* ---- Toolbar: was a single horizontally-scrolling row on
        mobile (overflow-x:auto), which hid buttons off-screen and
        needed a swipe to reach them. Now it wraps onto as many rows
@@ -950,16 +972,6 @@
     .toolbar-toggle.open{transform:rotate(180deg);color:var(--accent);border-color:#B9C4EE;background:var(--accent-soft);}
     .toolbar-extra{display:none;order:2;width:100%;}
     .toolbar-extra.open{display:flex;flex-direction:column;gap:10px;padding-top:10px;border-top:1px solid var(--line);margin-top:2px;}
-
-    /* ---- Status counts on mobile: it's a plain text line (no chip
-       shapes), so unlike the old pill version it doesn't need a
-       scroll-strip trick — it just wraps like normal text. Only the
-       font size comes down a touch and the middot separators get a
-       little tighter, so the row doesn't run wide and force awkward
-       mid-word wraps on a narrow screen. */
-    .status-counts{font-size:10.5px;padding:2px 2px 10px;}
-    .sc-item + .sc-item::before{margin:0 7px;}
-    .sc-item.sc-total{margin-left:7px;padding-left:10px;}
 
     /* Positioning for .view-menu/.status-menu is now handled entirely by
        positionMenu_() at open time (fixed + viewport-clamped), so no
@@ -1047,6 +1059,7 @@
           <button class="hdr-sync-btn" id="hdrSyncBtn" onclick="manualRefresh_()" title="Refresh">⟳</button>
           <span id="pendingWrap" style="display:none;">· <span class="count" id="pendingCount">0</span> pending <button onclick="openSyncModal()">View sync</button></span>
         </div>
+        <div class="hdr-status-counts" id="statusCounts"></div>
       </div>
     </div>
     <div class="hdr-clock-wrap">
@@ -1173,8 +1186,6 @@
           <button type="button" class="toolbar-toggle" id="toolbarToggleBtn" onclick="toggleToolbarExtra_()" title="Show import/export &amp; filters" aria-expanded="false" aria-controls="toolbarExtra">▾</button>
         </div>
       </div>
-
-      <div class="status-counts" id="statusCounts"></div>
 
       <div class="card">
         <div class="bulk-bar" id="bulkBar">
@@ -5527,7 +5538,11 @@
   // statuses doesn't change. Total isn't part of that cycle — it's a
   // fixed, distinct color so it always reads as "the anchor number", not
   // just one more status among others (see .sc-item.sc-total in CSS).
-  const SC_PALETTE = ['#B0304A','#2A3D9A','#1F7A5C','#B5542A','#9C7A2E','#6C4FB6','#1D8FA6','#B8934A'];
+  // Colors are tuned for the header's dark navy background (this strip
+  // now lives embedded in the header, not on the light card background),
+  // so each is a lighter/brighter tone than a print-on-white palette
+  // would use, while still staying distinct from each other.
+  const SC_PALETTE = ['#FF9C8A','#8FB4FF','#7FE0BE','#FFB980','#F0CF6E','#C6A8FF','#7FD6EA','#F0C27F'];
 
   function updateStatusCounts_(list){
     const el = document.getElementById('statusCounts');

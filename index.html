@@ -5160,22 +5160,25 @@
   }
 
   // Renders a stored date (ISO "YYYY-MM-DD", or anything Date can parse)
-  // as "Month Day, Year" (e.g. "January 15, 2024") — spelling the month
-  // out avoids the MM/DD vs DD/MM ambiguity of a plain numeric date.
-  // Anything that doesn't parse as a date is shown as-is rather than
-  // silently blanked out.
-  const MONTH_NAMES_ = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  function fmtDateLong_(raw){
+  // as zero-padded "MM/DD/YYYY" for display everywhere in the UI. This is
+  // DISPLAY ONLY — every date is still stored/compared/sorted internally
+  // as ISO "YYYY-MM-DD" (see fmtDate_ on the backend, sortValueForCompare_,
+  // and the "[YYYY-MM-DD] text" remark stamps), so nothing about saving,
+  // sorting, or the redundant-date-stamp stripping is affected by this;
+  // this only changes what gets printed into the page. Anything that
+  // doesn't parse as a date is shown as-is rather than silently blanked.
+  function pad2_(n){ return String(n).padStart(2, '0'); }
+  function fmtDateMDY_(raw){
     if(raw === '' || raw == null) return '';
     const s = String(raw).trim();
     if(!s) return '';
     const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if(iso){
       const y = Number(iso[1]), mo = Number(iso[2]), d = Number(iso[3]);
-      if(mo >= 1 && mo <= 12) return `${MONTH_NAMES_[mo - 1]} ${d}, ${y}`;
+      if(mo >= 1 && mo <= 12) return `${pad2_(mo)}/${pad2_(d)}/${y}`;
     }
     const parsed = new Date(s);
-    if(!isNaN(parsed.getTime())) return `${MONTH_NAMES_[parsed.getMonth()]} ${parsed.getDate()}, ${parsed.getFullYear()}`;
+    if(!isNaN(parsed.getTime())) return `${pad2_(parsed.getMonth() + 1)}/${pad2_(parsed.getDate())}/${parsed.getFullYear()}`;
     return s; // not a recognizable date — leave untouched
   }
 
@@ -5382,8 +5385,8 @@
       const facts = [
         ['Model', c.model || '—'],
         ['Engine No', c.engineNo || '—'],
-        ['Release / Rstr Date', c.releaseDate || '—'],
-        ['Due Date', c.dueDate || '—'],
+        ['Release / Rstr Date', fmtDateMDY_(c.releaseDate) || '—'],
+        ['Due Date', fmtDateMDY_(c.dueDate) || '—'],
         ['Term', c.term || '—'],
         ['MA', c.ma !== '' && c.ma != null ? '₱' + fmtMoney(c.ma) : '—'],
         ['Beg. Balance', '₱' + fmtMoney(c.begBal)],
@@ -5401,10 +5404,10 @@
 
       const curRemarkDisplay = hasRemark ? stripRedundantDateStamp_(c.auditorRemarks, c.dateOfAudit) : '';
       let remarksHtml = `<div class="rlabel">Auditor remarks</div>` +
-        `<div class="rline"><span class="rtag cur">Current</span><div class="rdate">${escapeHtml(c.dateOfAudit || 'Undated')}</div>` +
+        `<div class="rline"><span class="rtag cur">Current</span><div class="rdate">${escapeHtml(fmtDateMDY_(c.dateOfAudit) || 'Undated')}</div>` +
         `<div class="rtext ${hasRemark ? '' : 'none'}">${hasRemark ? escapeHtml(curRemarkDisplay) : 'No remarks yet'}</div></div>`;
       for(let j = 0; j < hist.length; j++){
-        remarksHtml += `<div class="rline"><span class="rtag prev">Prev</span><div class="rdate">${escapeHtml(hist[j].date || 'Undated')}</div><div class="rtext">${escapeHtml(hist[j].remark)}</div></div>`;
+        remarksHtml += `<div class="rline"><span class="rtag prev">Prev</span><div class="rdate">${escapeHtml(fmtDateMDY_(hist[j].date) || 'Undated')}</div><div class="rtext">${escapeHtml(hist[j].remark)}</div></div>`;
       }
 
       const pendingTag = isConflict
@@ -5587,8 +5590,8 @@
             const isEmpty = raw === '' || raw == null;
             const display = f.money
               ? (isEmpty ? '—' : '₱' + fmtMoney(raw))
-              : f.key === 'releaseDate'
-                ? (fmtDateLong_(raw) || '—')
+              : (f.key === 'releaseDate' || f.key === 'dueDate')
+                ? (fmtDateMDY_(raw) || '—')
               : f.key === 'term'
                 ? (fmtTerm_(raw) || '—')
               : (isEmpty ? '—' : String(raw));
@@ -5730,7 +5733,7 @@
     buildFieldGrid(c);
 
     const hasRemark = c.auditorRemarks && !isBlankRemark_(c.auditorRemarks);
-    document.getElementById('mCurrentDate').textContent = hasRemark ? (c.dateOfAudit || 'Undated') : '';
+    document.getElementById('mCurrentDate').textContent = hasRemark ? (fmtDateMDY_(c.dateOfAudit) || 'Undated') : '';
     // Same redundant-date fix as the card view: the date is already shown
     // right above in mCurrentDate, so don't also show/edit it baked into
     // the text itself. If the box is left untouched, currentEdit still

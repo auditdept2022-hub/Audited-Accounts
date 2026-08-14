@@ -1524,6 +1524,16 @@
 
   let customers = [];
   let lastListHash = null; // tracks the last server list we actually rendered, so loadData() can skip re-rendering when nothing changed
+  // PERFORMANCE: tracks the cheap server-side version counter (see the
+  // 'listVersion' backend action) for the branch currently on screen. The
+  // auto-refresh timer checks this tiny counter BEFORE pulling the full
+  // (gzipped) customer list — when it hasn't moved, there is nothing new
+  // to fetch at all, so the periodic "get everything" round trip is
+  // skipped entirely instead of re-downloading/re-parsing an unchanged
+  // list every few minutes. null means "unknown" (just switched branches,
+  // just booted, or the last version check failed) — loadData() always
+  // does a real fetch in that case.
+  let lastKnownVersion_ = null;
   let activeRow = null;      // null while creating
   let modalMode = 'edit';    // 'edit' | 'create'
 
@@ -2932,6 +2942,18 @@
     return fetchJsonRetry_(API_URL + '?action=list&sheet=' + encodeURIComponent(sheetName) + gzParam + '&_=' + Date.now());
   }
 
+  // PERFORMANCE: the cheap counterpart to fetchCustomerList_ above. The
+  // backend bumps a tiny per-branch counter (PropertiesService, not the
+  // spreadsheet itself) every time that branch's data actually changes —
+  // this reads just that counter, with no sheet read, no lock, and no
+  // gzip payload. Used by the auto-refresh timer to find out whether
+  // there's anything NEW before paying for the full (still-cheap, but
+  // not free) list fetch — see the 'listVersion' action in the Apps
+  // Script backend.
+  function fetchListVersion_(sheetName){
+    return fetchJsonRetry_(API_URL + '?action=listVersion&sheet=' + encodeURIComponent(sheetName) + '&_=' + Date.now());
+  }
+
   // ---- Branch profiles: menu, switch, create, rename, delete ----------
 
   function currentSheetKey_(){ return 'aa_current_sheet_v1:' + API_URL; }
@@ -3271,6 +3293,7 @@
     saveCurrentSheet_();
     customers = [];
     lastListHash = null;
+    lastKnownVersion_ = null;
     document.getElementById('tableBody').innerHTML = '';
     loadOutbox_();
     updateSyncUI();
@@ -3356,6 +3379,7 @@
         saveCurrentSheet_();
         customers = [];
         lastListHash = null;
+        lastKnownVersion_ = null;
         loadOutbox_();
         updateSyncUI();
         await loadData();
@@ -3421,6 +3445,7 @@
       if(currentSheet === name){
         customers = [];
         lastListHash = null;
+        lastKnownVersion_ = null;
         saveLocalCache_(customers);
         updateSyncUI();
         render();
@@ -4463,6 +4488,13 @@
       // read and otherwise leaves the screen — and any outbox items
       // overlaid on it — exactly as it was, instead of re-rendering and
       // re-overlaying every few minutes for no reason.
+      // Learned "for free" from this same response — the backend now
+      // stamps every list payload with its cheap version counter (see
+      // 'listVersion'/bumpListVersion_ in the Apps Script), so a full
+      // fetch always leaves the auto-refresh timer's version check
+      // up to date too, with no extra round trip.
+      if(typeof data.version === 'number') lastKnownVersion_ = data.version;
+
       const freshHash = listHash_(fresh);
       if(freshHash !== lastListHash){
         lastListHash = freshHash;
@@ -5857,11 +5889,34 @@
   // plenty for another tab's edits to show up without adding to the
   // Apps Script Web App's request volume.
   const AUTO_REFRESH_MS = 5 * 60 * 1000;
-  setInterval(() => {
+  setInterval(async () => {
     if(!API_URL) return;
     if(isLoading) return;
     if(document.hidden) return;
     if(document.getElementById('overlay').classList.contains('open')) return;
+
+    // PERFORMANCE: check the cheap version counter first (a few bytes,
+    // no sheet read, no lock on the backend — see fetchListVersion_ /
+    // the 'listVersion' action) instead of unconditionally re-pulling
+    // and re-parsing the full (gzipped) customer list every 5 minutes.
+    // On a quiet branch — the overwhelmingly common case for most of a
+    // session — this turns "get everything" into "ask one number,
+    // confirm nothing changed", which is what actually makes periodic
+    // sync feel instant instead of a background pulse of laggy
+    // multi-second fetches. Any failure (offline blip, old backend that
+    // doesn't know this action yet) just falls through to the exact
+    // same full loadData() this always did.
+    if(lastKnownVersion_ !== null){
+      try{
+        const v = await fetchListVersion_(currentSheet);
+        if(typeof v.version === 'number' && v.version === lastKnownVersion_){
+          document.getElementById('connStatus').textContent = 'synced ' + new Date().toLocaleTimeString();
+          return; // confirmed nothing changed server-side — skip the full fetch
+        }
+      }catch(e){
+        // version check itself failed — fall through to a normal full load
+      }
+    }
     loadData();
   }, AUTO_REFRESH_MS);
 

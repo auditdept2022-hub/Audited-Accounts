@@ -290,18 +290,21 @@
   /* Minimalist account-status counter strip, restyled as a row of small
      "chip" pills (dot + count + label) instead of bare inline text —
      each chip tinted from the same per-status color the number used to
-     be, so nothing about the color-coding changes, it's just easier to
-     visually scan as a set of distinct groups instead of one run-on
-     line. Total gets a solid dark chip so it still reads as the anchor
-     figure, not just one more status in the row. */
-  .status-counts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:2px 2px 16px;}
-  .sc-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 11px 5px 9px;border-radius:20px;border:1px solid var(--line);background:#fff;font-size:11.5px;color:var(--muted);line-height:1;transition:transform .1s ease,box-shadow .15s ease,border-color .15s ease;}
-  .sc-chip:hover{transform:translateY(-1px);box-shadow:0 3px 10px rgba(16,22,60,.07);}
-  .sc-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+     be, so nothing about the color-coding changes. Total is set apart
+     with a left divider + bolder weight instead of a colored number, so
+     it still reads as "the anchor figure" and not just one more status
+     in the row.
+     Embedded, not floating: no chip/pill background or border on each
+     item — just colored numbers + labels sitting flush on the page,
+     separated by a small middot, the way a plain stat line reads. */
+  .status-counts{display:flex;flex-wrap:wrap;gap:0;align-items:baseline;padding:2px 2px 14px;font-size:12px;color:var(--muted);}
+  .sc-item{display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap;}
+  .sc-item + .sc-item::before{content:'·';margin:0 10px;color:var(--line);font-weight:700;}
   .status-counts .sc-num{font-weight:800;}
-  .sc-label{color:var(--text);font-weight:600;}
-  .sc-chip.sc-total{background:var(--ink);border-color:var(--ink);margin-left:2px;}
-  .sc-chip.sc-total .sc-num, .sc-chip.sc-total .sc-label{color:#fff;}
+  .sc-label{color:var(--text);font-weight:500;}
+  .sc-item.sc-total{margin-left:10px;padding-left:14px;border-left:1px solid var(--line);}
+  .sc-item.sc-total .sc-num{color:var(--ink);}
+  .sc-item.sc-total .sc-label{color:var(--ink);font-weight:700;}
   .amount{font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace;font-size:12px;}
   .empty-state{padding:60px 20px;text-align:center;color:var(--muted);}
   .skel-line{height:10px;border-radius:4px;background:linear-gradient(90deg,#EBEDF7 25%,#F5F6FB 37%,#EBEDF7 63%);background-size:400% 100%;animation:skel-shine 1.4s ease infinite;}
@@ -829,6 +832,16 @@
     .toolbar-toggle.open{transform:rotate(180deg);color:var(--accent);border-color:#B9C4EE;background:var(--accent-soft);}
     .toolbar-extra{display:none;order:2;width:100%;}
     .toolbar-extra.open{display:flex;flex-direction:column;gap:10px;padding-top:10px;border-top:1px solid var(--line);margin-top:2px;}
+
+    /* ---- Status counts on mobile: it's a plain text line (no chip
+       shapes), so unlike the old pill version it doesn't need a
+       scroll-strip trick — it just wraps like normal text. Only the
+       font size comes down a touch and the middot separators get a
+       little tighter, so the row doesn't run wide and force awkward
+       mid-word wraps on a narrow screen. */
+    .status-counts{font-size:10.5px;padding:2px 2px 10px;}
+    .sc-item + .sc-item::before{margin:0 7px;}
+    .sc-item.sc-total{margin-left:7px;padding-left:10px;}
 
     /* Positioning for .view-menu/.status-menu is now handled entirely by
        positionMenu_() at open time (fixed + viewport-clamped), so no
@@ -4995,7 +5008,7 @@
   // distinct, consistent color for as long as the visible set of
   // statuses doesn't change. Total isn't part of that cycle — it's a
   // fixed, distinct color so it always reads as "the anchor number", not
-  // just one more status among others (see .sc-chip.sc-total in CSS).
+  // just one more status among others (see .sc-item.sc-total in CSS).
   const SC_PALETTE = ['#B0304A','#2A3D9A','#1F7A5C','#B5542A','#9C7A2E','#6C4FB6','#1D8FA6','#B8934A'];
 
   function updateStatusCounts_(list){
@@ -5014,9 +5027,9 @@
     let html = '';
     rows.forEach(([label, n], i) => {
       const color = SC_PALETTE[i % SC_PALETTE.length];
-      html += `<span class="sc-chip" style="border-color:${color}30;background:${color}10;"><span class="sc-dot" style="background:${color}"></span><span class="sc-num" style="color:${color}">${n}</span><span class="sc-label">${escapeHtml(label)}</span></span>`;
+      html += `<span class="sc-item"><span class="sc-num" style="color:${color}">${n}</span><span class="sc-label">${escapeHtml(label)}</span></span>`;
     });
-    html += `<span class="sc-chip sc-total"><span class="sc-num">${list.length}</span><span class="sc-label">Total</span></span>`;
+    html += `<span class="sc-item sc-total"><span class="sc-num">${list.length}</span><span class="sc-label">Total</span></span>`;
     el.innerHTML = html;
   }
 

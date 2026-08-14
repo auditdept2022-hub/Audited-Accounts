@@ -1602,8 +1602,9 @@
     unlockBodyScroll();
   }
 
-  function clearActivityLog_(){
+  async function clearActivityLog_(){
     if(!activityLog_.length) return;
+    if(!await appConfirm('Clear the entire activity log? This can\'t be undone.', { danger: true, title: 'Clear activity log?', confirmText: 'Clear log' })) return;
     activityLog_ = [];
     activityUnread_ = 0;
     activityExpanded_.clear();

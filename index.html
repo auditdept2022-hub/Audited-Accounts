@@ -1265,7 +1265,6 @@
         <div class="section-title">Current remark <span class="edit-hint">click to edit</span></div>
         <div class="history-entry current-remark-entry">
           <div class="h-body">
-            <span class="h-date" id="mCurrentDate"></span>
             <textarea id="mCurrentEdit" class="current-remark-edit" placeholder="No remarks recorded yet." readonly></textarea>
           </div>
           <div class="h-actions">
@@ -2262,11 +2261,6 @@
     if(!await appConfirm('Delete the current remark? This can\'t be undone once you click Save changes.', { danger: true, title: 'Delete remark?', confirmText: 'Delete' })) return;
     ta.value = '';
     autoFitTextarea_(ta);
-    // A blank remark shouldn't keep showing a stale audit date next to
-    // it — clear the date badge along with the text so the two stay
-    // consistent (no remark = no date), matching the rule enforced
-    // server-side in updateCustomerFull.
-    document.getElementById('mCurrentDate').textContent = '';
     // Once cleared there's nothing left to guard, so the box goes back
     // to being directly clickable/typable instead of staying locked
     // behind the pencil.
@@ -6315,8 +6309,14 @@
       }
 
       const curRemarkDisplay = hasRemark ? stripRedundantDateStamp_(c.auditorRemarks, c.dateOfAudit) : '';
-      let remarksHtml = `<div class="rlabel">Auditor remarks</div>` +
-        `<div class="rline"><div class="rline-head"><span class="rtag cur">Current</span><div class="rdate">${escapeHtml(fmtDateMDY_(c.dateOfAudit) || 'Undated')}</div></div>` +
+      // Current remark's date isn't shown here anymore — it's still
+      // captured automatically the moment "Save changes" is clicked
+      // (c.dateOfAudit), it's just not relevant to *this* remark's text,
+      // so dropping it from the line saves the width/clutter of a date
+      // badge that wasn't adding anything. Previous remarks keep their
+      // dates below since those are a dated history log.
+      let remarksHtml = `<div class="rlabel">Auditor remarks (Current)</div>` +
+        `<div class="rline"><div class="rline-head"><span class="rtag cur">Current</span></div>` +
         `<div class="rtext ${hasRemark ? '' : 'none'}">${hasRemark ? escapeHtml(curRemarkDisplay) : 'No remarks yet'}</div></div>`;
       for(let j = 0; j < hist.length; j++){
         remarksHtml += `<div class="rline"><div class="rline-head"><span class="rtag prev">Prev</span><div class="rdate">${escapeHtml(fmtDateMDY_(hist[j].date) || 'Undated')}</div></div><div class="rtext">${escapeHtml(hist[j].remark)}</div></div>`;
@@ -6647,13 +6647,13 @@
     buildFieldGrid(c);
 
     const hasRemark = c.auditorRemarks && !isBlankRemark_(c.auditorRemarks);
-    document.getElementById('mCurrentDate').textContent = hasRemark ? (fmtDateMDY_(c.dateOfAudit) || 'Undated') : '';
-    // Same redundant-date fix as the card view: the date is already shown
-    // right above in mCurrentDate, so don't also show/edit it baked into
-    // the text itself. If the box is left untouched, currentEdit still
-    // stays undefined below (unmodified compared to this same stripped
-    // baseline) so nothing gets rewritten on the sheet just from opening
-    // the modal.
+    // The current remark's date badge (mCurrentDate) was removed from the
+    // UI — the date is still tracked internally (c.dateOfAudit, set
+    // automatically on Save changes) and still used for sorting/history,
+    // it's just no longer shown next to the remark text itself since it
+    // isn't part of the remark. stripRedundantDateStamp_ below still
+    // strips a "[date] " prefix baked into the raw text, independent of
+    // whether the badge is displayed.
     editorOriginalCurrent = hasRemark ? stripRedundantDateStamp_(c.auditorRemarks, c.dateOfAudit) : '';
     const mCurrentEditEl = document.getElementById('mCurrentEdit');
     mCurrentEditEl.value = editorOriginalCurrent;
@@ -6696,7 +6696,6 @@
     buildFieldGrid({});
     editorOriginalCurrent = '';
     editorOriginalHistory = '';
-    document.getElementById('mCurrentDate').textContent = '';
     const mCurrentEditEl2 = document.getElementById('mCurrentEdit');
     mCurrentEditEl2.value = '';
     currentRemarkLockable_ = false;

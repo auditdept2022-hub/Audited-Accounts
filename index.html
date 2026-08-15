@@ -730,11 +730,14 @@
     /* Was resize:none, so a long remark just sat in a couple of lines
        with no way to see the rest without an internal scrollbar. Now it
        auto-grows to fit its content the moment the modal opens (see
-       autoFitTextarea_) AND stays manually draggable afterward — the
-       bottom-right corner handle lets you pull it open further, or
-       shrink it back down, whenever you want. overflow-y:auto is the
+       autoFitTextarea_). The native CSS `resize` corner handle used to
+       live here, but it's mouse-drag only — iOS Safari ignores it
+       completely and Android is unreliable, which is exactly why this
+       "worked on PC, broken on mobile". It's replaced by the explicit
+       .resize-handle bar below (pointer-events based, so it drags the
+       same way under a mouse or a finger). overflow-y:auto is the
        fallback once dragged past max-height. */
-    resize:vertical;overflow-y:auto;
+    resize:none;overflow-y:auto;
   }
   .current-remark-edit::placeholder{color:#AFB4CF;font-style:italic;}
   .current-remark-edit:hover,
@@ -749,6 +752,23 @@
   .history-hint{font-size:11px;color:var(--muted);margin-top:6px;}
   .history-hint code{background:#EEF0F9;padding:1px 5px;border-radius:4px;}
 
+  /* Custom drag-to-resize bar, used for both the current-remark box and
+     the previous-remarks list. touch-action:none stops the page/modal
+     from trying to scroll underneath a finger while it's mid-drag on
+     the handle itself (that fight-for-the-gesture is the other half of
+     why plain CSS resize felt "broken" on mobile — the box and the
+     page would both try to move at once). Sized at 32px tall (well
+     over the ~24px touch-target minimum) even though the visible bar
+     is thin, so it's easy to grab with a finger without also being
+     visually heavy. */
+  .resize-handle{
+    height:32px;margin-top:-6px;display:flex;align-items:center;justify-content:center;
+    cursor:ns-resize;touch-action:none;-webkit-user-select:none;user-select:none;flex-shrink:0;
+  }
+  .resize-handle span{width:36px;height:4px;border-radius:3px;background:#D7DCF0;transition:background .12s,width .12s;}
+  .resize-handle:hover span{background:#B7C0E8;width:44px;}
+  .resize-handle.dragging span{background:var(--accent);width:44px;}
+
   /* Per-row editable previous-remarks list — replaces the old plain
      textarea. Each past remark is its own row with its own small
      "Edit"/"Delete" buttons, so you can fix a typo in just that one
@@ -756,12 +776,14 @@
      from the row itself — no separate select-then-bulk-delete step. */
   /* Was a fixed max-height:260px with no way to see more than a
      scrollful of previous remarks at once. Now it opens at the same
-     260px but the bottom-right corner is a drag handle (resize:vertical)
-     — hold and pull it down to open the whole list up, same as the
-     current-remark box above. min-height keeps it from being dragged
-     down to nothing; max-height caps it so it can't grow past the
-     modal's own scroll area. */
-  .history-list{display:flex;flex-direction:column;gap:6px;height:260px;min-height:90px;max-height:70vh;overflow-y:auto;padding-right:2px;resize:vertical;}
+     260px but the .resize-handle bar right below it can be dragged
+     down to open the whole list up, same as the current-remark box
+     above — and, same as that box, this now uses the pointer-based
+     handle instead of native CSS resize so it actually works with a
+     finger on mobile, not just a mouse on desktop. min-height keeps it
+     from being dragged down to nothing; max-height caps it so it can't
+     grow past the modal's own scroll area. */
+  .history-list{display:flex;flex-direction:column;gap:6px;height:260px;min-height:90px;max-height:70vh;overflow-y:auto;padding-right:2px;resize:none;}
   .history-list-empty{font-size:12px;font-style:italic;color:#AFB4CF;padding:10px 2px;}
   .history-entry{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid #E5E8F7;border-radius:9px;background:#F8F9FD;transition:background .12s,border-color .12s;}
   .history-entry:hover{background:#F1F3FC;border-color:#D7DCF0;}
@@ -1266,6 +1288,7 @@
         <div class="history-entry current-remark-entry">
           <div class="h-body">
             <textarea id="mCurrentEdit" class="current-remark-edit" placeholder="No remarks recorded yet." readonly></textarea>
+            <div class="resize-handle" data-resize-target="mCurrentEdit" title="Drag to resize" aria-hidden="true"><span></span></div>
           </div>
           <div class="h-actions">
             <button type="button" class="h-btn edit" id="mCurrentEditBtn" title="Edit this remark">✏️</button>
@@ -1277,6 +1300,7 @@
       <div class="section" id="historySection">
         <div class="section-title">Previous audit remarks <span class="edit-hint">🔒 locked — auto-logged</span></div>
         <div class="history-list" id="mHistoryList"></div>
+        <div class="resize-handle" data-resize-target="mHistoryList" title="Drag to resize" aria-hidden="true"><span></span></div>
         <!-- Hidden: still holds the plain-text value saveModal() actually
              sends (kept in sync with the list above), so the
              create/update payload format is unchanged. -->
@@ -2158,47 +2182,54 @@
     return s === '' || s.toUpperCase() === 'NO REMARKS';
   }
 
-  // ---- Display-only fix: drop the redundant leading date stamp ----------
+  // ---- Display-only fix: drop a leading date stamp baked into the text --
   //
-  // The CURRENT remark is always shown right next to its own "Date of
-  // Audit" (the rdate/mCurrentDate label). But appendRemarkOntoCurrent_
-  // also stamps that same date onto the front of the remark text itself
-  // ("[2026-08-14] did the walkthrough…"), so the date ends up printed
-  // twice for the newest entry: once as the label, once again as the
-  // first thing inside the text. Older entries stacked underneath the
-  // current one keep their own "[date]" prefix because THAT is the only
-  // place their date lives — this only strips the bracket when it's an
-  // exact match for the date already shown right next to it, and only at
-  // the very start of the string, so multi-entry history inside the same
-  // cell is untouched.
-  function stripRedundantDateStamp_(remarks, dateOfAudit){
+  // Current remarks no longer get a "[date] " prefix stamped onto their
+  // text at all going forward (see pushCurrentToHistoryAndReplace_) —
+  // the date lives only in dateOfAudit now. But the actual save still
+  // happens through the separate Apps Script backend (Code.gs), which
+  // may still be stamping its own "[date] " prefix onto the saved text
+  // server-side (in whatever date format IT uses, e.g. "[8-15-26] "
+  // rather than "[2026-08-15] ") — so an exact-match-against-dateOfAudit
+  // check can miss it if the two don't format dates the same way. This
+  // strips ANY leading "[...] " bracket instead, regardless of what's
+  // inside it or whether it matches dateOfAudit — current remarks
+  // should never show a bracket stamp at all, no matter which format it
+  // was written in. Only strips at the very start of the string, so a
+  // "[...]"-prefixed previous-remarks entry (a different field entirely)
+  // is never touched, and only one prefix is ever stripped (a remark
+  // whose own text happens to start with a bracket won't get chewed on
+  // further after that).
+  function stripRedundantDateStamp_(remarks){
     const s = str_(remarks);
-    if(!s || !dateOfAudit) return s;
-    const prefix = '[' + dateOfAudit + '] ';
-    return s.startsWith(prefix) ? s.slice(prefix.length) : s;
+    if(!s) return s;
+    const m = /^\[[^\]]*\]\s*/.exec(s);
+    return m ? s.slice(m[0].length) : s;
   }
 
-  // ---- Add-new-remark: stacks onto the CURRENT remark, never moves it --
+  // ---- Add-new-remark: replaces the CURRENT remark, pushing whatever
+  // was there before down into Previous Audit Remarks ------------------
   //
-  // A new remark used to push whatever was already in "Current remark"
-  // down into "Previous audit remarks" and replace it. That's no longer
-  // how this works: a new remark is now appended on top of the existing
-  // current remark (newest entry first, each stamped "[date] text"), and
-  // Previous audit remarks is left completely untouched by this action —
-  // it's a locked, auto-logged history now, not something "Add new
-  // remark" writes into. Mirrors the matching Code.gs change in
-  // addRemark_/updateCustomerFull.
-  function appendRemarkOntoCurrent_(existingCurrent, existingDate, newRemark, auditor, today){
-    const stamped = auditor ? newRemark + '  — ' + auditor : newRemark;
-    const newEntry = '[' + today + '] ' + stamped;
-    if(existingCurrent && !isBlankRemark_(existingCurrent)){
-      const oldFormatted = /^\[[^\]]*\]\s/.test(existingCurrent)
-        ? existingCurrent
-        : '[' + (existingDate || 'undated') + '] ' + existingCurrent;
-      return newEntry + '\n' + oldFormatted;
+  // A new remark now REPLACES "Current remark" outright — the old
+  // current remark (if any) is pushed down onto Previous Audit Remarks
+  // as its own newest-first dated entry first. Current only ever holds
+  // the single latest remark this way, instead of growing into a stack
+  // of every remark ever written (which is what used to happen: each
+  // new remark got stamped and piled on top of the current box, so the
+  // "current" remark and the remark history ended up duplicating the
+  // same information). Mutates `c` in place; call this before assigning
+  // c.auditorRemarks/c.dateOfAudit from anywhere else.
+  function pushCurrentToHistoryAndReplace_(c, newRemark, auditor, today){
+    if(c.auditorRemarks && !isBlankRemark_(c.auditorRemarks)){
+      const oldEntry = /^\[[^\]]*\]\s/.test(c.auditorRemarks)
+        ? c.auditorRemarks
+        : '[' + (c.dateOfAudit || 'undated') + '] ' + c.auditorRemarks;
+      c.previousRemarks = c.previousRemarks ? (oldEntry + '\n' + str_(c.previousRemarks)) : oldEntry;
     }
-    return newEntry;
+    c.auditorRemarks = auditor ? newRemark + '  — ' + auditor : newRemark;
+    c.dateOfAudit = today;
   }
+
 
   // ---- Current remark: locked by default, editable only via the pencil --
   //
@@ -2224,7 +2255,7 @@
   // its CSS max-height (after that it scrolls). Called right after the
   // box is populated so a long remark is fully visible the moment the
   // modal opens, with no scrolling or manual drag needed first — the
-  // resize:vertical handle (see .current-remark-edit) is then still
+  // .resize-handle bar below it (see initResizeHandles_) is then still
   // there afterward for pulling it open even further, or shrinking it,
   // by hand.
   function autoFitTextarea_(ta){
@@ -2232,6 +2263,57 @@
     ta.style.height = 'auto';
     ta.style.height = ta.scrollHeight + 'px';
   }
+
+  // ---- Drag-to-resize handles (current remark box, previous-remarks
+  // list) -------------------------------------------------------------
+  //
+  // Plain CSS `resize:vertical` on a textarea only responds to a mouse
+  // dragging its bottom-right corner — iOS Safari doesn't render or
+  // honor it at all, and Android support is patchy, which is exactly
+  // why "expand" worked on desktop but did nothing (or fought with the
+  // page scrolling instead) on a phone. This drives the same resize
+  // manually off Pointer Events, which fire consistently for mouse,
+  // touch and pen alike, so one implementation covers PC and mobile.
+  function initResizeHandles_(){
+    document.querySelectorAll('.resize-handle[data-resize-target]').forEach(handle => {
+      const target = document.getElementById(handle.getAttribute('data-resize-target'));
+      if(!target || handle._resizeInit) return;
+      handle._resizeInit = true;
+
+      let startY = 0, startHeight = 0, min = 0, max = Infinity;
+
+      function onMove(e){
+        const dy = e.clientY - startY;
+        let h = startHeight + dy;
+        if(h < min) h = min;
+        if(h > max) h = max;
+        target.style.height = h + 'px';
+      }
+      function onUp(e){
+        handle.classList.remove('dragging');
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+        try{ handle.releasePointerCapture(e.pointerId); }catch(err){}
+      }
+      handle.addEventListener('pointerdown', function(e){
+        // Only the primary button/touch/pen starts a drag.
+        if(e.button !== undefined && e.button !== 0) return;
+        e.preventDefault();
+        startY = e.clientY;
+        startHeight = target.getBoundingClientRect().height;
+        const cs = getComputedStyle(target);
+        min = parseFloat(cs.minHeight) || 0;
+        max = parseFloat(cs.maxHeight) || Infinity;
+        handle.classList.add('dragging');
+        try{ handle.setPointerCapture(e.pointerId); }catch(err){}
+        handle.addEventListener('pointermove', onMove);
+        handle.addEventListener('pointerup', onUp);
+        handle.addEventListener('pointercancel', onUp);
+      });
+    });
+  }
+  initResizeHandles_();
 
   document.getElementById('mCurrentEditBtn').addEventListener('click', function(){
     const ta = document.getElementById('mCurrentEdit');
@@ -4564,8 +4646,7 @@
     }
     if(item.remark){
       const today = todayStr_();
-      c.auditorRemarks = appendRemarkOntoCurrent_(c.auditorRemarks, c.dateOfAudit, item.remark, item.auditor, today);
-      c.dateOfAudit = today;
+      pushCurrentToHistoryAndReplace_(c, item.remark, item.auditor, today);
     }
     c._pending = true;
     saveLocalCache_(customers);
@@ -4613,8 +4694,7 @@
     }
     if(item.remark){
       const today = todayStr_();
-      c.auditorRemarks = appendRemarkOntoCurrent_(c.auditorRemarks, c.dateOfAudit, item.remark, item.auditor, today);
-      c.dateOfAudit = today;
+      pushCurrentToHistoryAndReplace_(c, item.remark, item.auditor, today);
     }
     // Confirmed means it's no longer just a locally-queued guess — clear
     // the "syncing…" badge this row may have been carrying since it was
@@ -6308,16 +6388,15 @@
         factsHtml += `<div class="fact"><div class="k">${escapeHtml(facts[j][0])}</div><div class="v">${escapeHtml(String(facts[j][1]))}</div></div>`;
       }
 
-      const curRemarkDisplay = hasRemark ? stripRedundantDateStamp_(c.auditorRemarks, c.dateOfAudit) : '';
-      // Current remark's date isn't shown here anymore — it's still
-      // captured automatically the moment "Save changes" is clicked
-      // (c.dateOfAudit), it's just not relevant to *this* remark's text,
-      // so dropping it from the line saves the width/clutter of a date
-      // badge that wasn't adding anything. Previous remarks keep their
-      // dates below since those are a dated history log.
+      const curRemarkDisplay = hasRemark ? stripRedundantDateStamp_(c.auditorRemarks) : '';
+      // Current remark no longer shows a "Current" badge or date on its
+      // own line — the section label right above it ("Auditor remarks
+      // (Current)") already says what it is, so repeating "Current" on
+      // every card was pure redundancy. Previous remarks below still
+      // get their own "Prev" tag + date since, unlike the label up top,
+      // there's no other cue distinguishing one past entry from another.
       let remarksHtml = `<div class="rlabel">Auditor remarks (Current)</div>` +
-        `<div class="rline"><div class="rline-head"><span class="rtag cur">Current</span></div>` +
-        `<div class="rtext ${hasRemark ? '' : 'none'}">${hasRemark ? escapeHtml(curRemarkDisplay) : 'No remarks yet'}</div></div>`;
+        `<div class="rline"><div class="rtext ${hasRemark ? '' : 'none'}">${hasRemark ? escapeHtml(curRemarkDisplay) : 'No remarks yet'}</div></div>`;
       for(let j = 0; j < hist.length; j++){
         remarksHtml += `<div class="rline"><div class="rline-head"><span class="rtag prev">Prev</span><div class="rdate">${escapeHtml(fmtDateMDY_(hist[j].date) || 'Undated')}</div></div><div class="rtext">${escapeHtml(hist[j].remark)}</div></div>`;
       }
@@ -6654,7 +6733,7 @@
     // isn't part of the remark. stripRedundantDateStamp_ below still
     // strips a "[date] " prefix baked into the raw text, independent of
     // whether the badge is displayed.
-    editorOriginalCurrent = hasRemark ? stripRedundantDateStamp_(c.auditorRemarks, c.dateOfAudit) : '';
+    editorOriginalCurrent = hasRemark ? stripRedundantDateStamp_(c.auditorRemarks) : '';
     const mCurrentEditEl = document.getElementById('mCurrentEdit');
     mCurrentEditEl.value = editorOriginalCurrent;
     autoFitTextarea_(mCurrentEditEl);

@@ -72,7 +72,7 @@
     background:
       radial-gradient(1100px 220px at 12% -60%, rgba(90,110,220,.30), transparent 60%),
       linear-gradient(120deg, var(--panel-2) 0%, var(--panel) 55%, var(--panel-3) 100%);
-    color:#EDEFF9;padding:calc(20px + var(--safe-t)) 32px 20px;display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:20px;
+    color:#EDEFF9;padding:calc(14px + var(--safe-t)) 32px 12px;display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:10px;
     box-shadow:0 2px 20px rgba(4,8,32,.35);position:sticky;top:0;z-index:40;
     border-bottom:1px solid rgba(255,255,255,.08);
   }
@@ -144,7 +144,7 @@
   .hdr-status-counts{
     flex-basis:100%;
     display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;
-    margin-top:14px;padding-top:12px;
+    margin-top:4px;padding-top:6px;
     border-top:1px solid rgba(255,255,255,.12);
   }
   .hdr-status-counts:empty{display:none;border-top:none;margin-top:0;padding-top:0;}
@@ -891,7 +891,7 @@
 
   /* ---------- Responsive: tablet ---------- */
   @media(max-width:900px){
-    .topband{flex-wrap:wrap;row-gap:10px;padding:calc(16px + var(--safe-t)) 20px 16px;}
+    .topband{flex-wrap:wrap;row-gap:6px;padding:calc(12px + var(--safe-t)) 20px 10px;}
     .main{padding:22px 20px 48px;}
     .field-grid{grid-template-columns:1fr;}
     .fact-grid{grid-template-columns:repeat(3,1fr);}
@@ -911,8 +911,8 @@
        .topband/.brand rules above are untouched. ---- */
     .topband{
       flex-wrap:wrap;
-      padding:calc(12px + var(--safe-t)) 14px 12px;
-      gap:10px;
+      padding:calc(10px + var(--safe-t)) 14px 10px;
+      gap:6px;
     }
     .brand{justify-content:flex-start;gap:10px;min-width:0;flex-basis:100%;order:1;}
     .brand .names{min-width:0;}
@@ -953,7 +953,7 @@
        less padding/gap to fit more chips per row on a narrow screen.
        order:3 now puts it last, below the (tightened) clock row —
        account status leads, the clock trails it. */
-    .hdr-status-counts{order:3;gap:5px 6px;margin-top:10px;padding-top:9px;}
+    .hdr-status-counts{order:3;gap:5px 6px;margin-top:4px;padding-top:6px;}
     .hdr-status-counts .sc-item{padding:3px 8px 3px 9px;}
     .hdr-status-counts .sc-num{font-size:11px;}
     .hdr-status-counts .sc-label{font-size:8.5px;}

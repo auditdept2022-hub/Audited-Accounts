@@ -2223,9 +2223,24 @@
   // just wasted vertical space, not something needed to tell them apart.
   // A blank/"NO REMARKS" existing value contributes nothing, so the very
   // first remark on a customer is just the new stamped entry by itself.
+  // DEFENSE-IN-DEPTH (mirrors isAlreadyStampedOnTop_ in the backend
+  // Code.gs): even with the applyConfirmedUpdate_ double-apply bug fixed
+  // above, this guard makes combineRemarkText_ itself refuse to stack the
+  // exact same stamped line on top a second time, so no future code path
+  // that calls this twice for the same remark can silently duplicate it
+  // again.
+  function isRemarkAlreadyStampedOnTop_(existing, stampedNew){
+    const cur = str_(existing);
+    if(!cur) return false;
+    if(cur === stampedNew) return true;
+    if(cur.indexOf(stampedNew + '\n') === 0) return true;
+    return false;
+  }
+
   function combineRemarkText_(existing, stampedNew){
     const old = str_(existing).trim();
     if(isBlankRemark_(old)) return stampedNew;
+    if(isRemarkAlreadyStampedOnTop_(old, stampedNew)) return old;
     return stampedNew + '\n' + old;
   }
 
@@ -4689,24 +4704,22 @@
   function applyConfirmedUpdate_(item){
     const c = customers.find(x => x.row === item.row);
     if(!c) return;
-    Object.assign(c, item.fields);
-    if(item.historyEdit !== undefined && item.historyEdit !== null){
-      c.previousRemarks = item.historyEdit;
-    }
-    if(item.currentEdit !== undefined && item.currentEdit !== null){
-      c.auditorRemarks = item.currentEdit;
-      // Same rule as the optimistic apply above: a remark cleared down
-      // to blank shouldn't leave a stale date sitting next to it.
-      if(isBlankRemark_(item.currentEdit)) c.dateOfAudit = '';
-    }
-    if(item.remark){
-      const today = todayStr_();
-      addCurrentRemark_(c, item.remark, item.auditor, today);
-    }
-    // Confirmed means it's no longer just a locally-queued guess — clear
-    // the "syncing…" badge this row may have been carrying since it was
-    // first queued offline. (No-op for the online-immediate path, which
-    // never sets _pending in the first place.)
+    // BUGFIX: this used to redo every mutation here (fields, historyEdit,
+    // currentEdit, and — worst of all — stacking item.remark onto
+    // c.auditorRemarks via addCurrentRemark_) a SECOND time. All of that
+    // was already applied to `c` the instant this item was queued (see
+    // applyOptimisticUpdate_ above), so re-running it here duplicated the
+    // change locally — most visibly, a newly-added remark got stamped and
+    // stacked onto Auditor Remarks twice in a row. It usually went
+    // unnoticed on the first remark or two (two near-identical lines are
+    // easy to miss), but it compounds with every save, so by the 3rd
+    // remark the pile-up of duplicate lines made it look like the new
+    // remark had "replaced" an earlier one instead of cleanly stacking as
+    // a 3rd entry. Since this function only ever runs for an item that
+    // was already optimistically applied (see the call site in
+    // syncOutbox — the needsFullReload branch handles anything that
+    // WASN'T applied as-is), there's nothing left to do here except drop
+    // the "syncing…" flag now that the write is confirmed.
     delete c._pending;
     saveLocalCache_(customers);
   }

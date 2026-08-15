@@ -714,13 +714,11 @@
   textarea{width:100%;border:1px solid #D7DCF0;border-radius:10px;padding:10px 12px;font-size:13px;font-family:inherit;resize:vertical;min-height:76px;outline:none;transition:border-color .15s, box-shadow .15s;background:#F8F9FD;}
 
   /* "Add new remark" box: auto-grows to fit whatever's typed (see
-     autoFitTextarea_ + the #mNewRemark input listener below), instead of
-     staying a fixed ~76px and forcing a scroll inside a tiny box the
-     moment a remark runs past a couple of lines. resize:vertical is kept
-     so it can still be dragged smaller/larger by hand; max-height caps
-     it so one very long remark can't push the whole modal open forever —
-     past that it scrolls internally like the current-remark box does. */
-  #mNewRemark{max-height:50vh;overflow-y:auto;}
+     autoFitTextarea_ + the #mNewRemark input listener below) — no fixed
+     height, no internal scrollbar, and no manual drag-to-resize. Short
+     text keeps the box short; a long remark just makes the box (and the
+     modal under it) taller, the same way plain text on a page would. */
+  #mNewRemark{resize:none;overflow:hidden;}
 
   /* Directly-editable current remark (edit modal). Wrapped in the same
      .history-entry card used by the "Previous audit remarks" rows below
@@ -734,19 +732,13 @@
   .current-remark-entry{align-items:flex-start;}
   .current-remark-edit{
     display:block;width:100%;background:transparent;border:none;padding:0;margin:0;
-    min-height:20px;max-height:60vh;font-size:12px;line-height:1.55;color:var(--text);cursor:default;
+    min-height:20px;font-size:12px;line-height:1.55;color:var(--text);cursor:default;
     border-radius:6px;transition:box-shadow .12s ease;
-    /* Was resize:none, so a long remark just sat in a couple of lines
-       with no way to see the rest without an internal scrollbar. Now it
-       auto-grows to fit its content the moment the modal opens (see
-       autoFitTextarea_). The native CSS `resize` corner handle used to
-       live here, but it's mouse-drag only — iOS Safari ignores it
-       completely and Android is unreliable, which is exactly why this
-       "worked on PC, broken on mobile". It's replaced by the explicit
-       .resize-handle bar below (pointer-events based, so it drags the
-       same way under a mouse or a finger). overflow-y:auto is the
-       fallback once dragged past max-height. */
-    resize:none;overflow-y:auto;
+    /* Auto-grows to fit whatever text it holds (see autoFitTextarea_) —
+       no max-height, no internal scrollbar, and no drag handle. A short
+       remark stays small; a long one just makes the box (and the modal)
+       taller, same as any other block of text. */
+    resize:none;overflow:hidden;
   }
   .current-remark-edit::placeholder{color:#AFB4CF;font-style:italic;}
   .current-remark-edit:hover,
@@ -761,38 +753,15 @@
   .history-hint{font-size:11px;color:var(--muted);margin-top:6px;}
   .history-hint code{background:#EEF0F9;padding:1px 5px;border-radius:4px;}
 
-  /* Custom drag-to-resize bar, used for both the current-remark box and
-     the previous-remarks list. touch-action:none stops the page/modal
-     from trying to scroll underneath a finger while it's mid-drag on
-     the handle itself (that fight-for-the-gesture is the other half of
-     why plain CSS resize felt "broken" on mobile — the box and the
-     page would both try to move at once). Sized at 32px tall (well
-     over the ~24px touch-target minimum) even though the visible bar
-     is thin, so it's easy to grab with a finger without also being
-     visually heavy. */
-  .resize-handle{
-    height:32px;margin-top:-6px;display:flex;align-items:center;justify-content:center;
-    cursor:ns-resize;touch-action:none;-webkit-user-select:none;user-select:none;flex-shrink:0;
-  }
-  .resize-handle span{width:36px;height:4px;border-radius:3px;background:#D7DCF0;transition:background .12s,width .12s;}
-  .resize-handle:hover span{background:#B7C0E8;width:44px;}
-  .resize-handle.dragging span{background:var(--accent);width:44px;}
-
   /* Per-row editable previous-remarks list — replaces the old plain
      textarea. Each past remark is its own row with its own small
      "Edit"/"Delete" buttons, so you can fix a typo in just that one
      remark (without retyping the rest) or remove just that one, right
      from the row itself — no separate select-then-bulk-delete step. */
-  /* Was a fixed max-height:260px with no way to see more than a
-     scrollful of previous remarks at once. Now it opens at the same
-     260px but the .resize-handle bar right below it can be dragged
-     down to open the whole list up, same as the current-remark box
-     above — and, same as that box, this now uses the pointer-based
-     handle instead of native CSS resize so it actually works with a
-     finger on mobile, not just a mouse on desktop. min-height keeps it
-     from being dragged down to nothing; max-height caps it so it can't
-     grow past the modal's own scroll area. */
-  .history-list{display:flex;flex-direction:column;gap:6px;height:260px;min-height:90px;max-height:70vh;overflow-y:auto;padding-right:2px;resize:none;}
+  /* No fixed height, no max-height, and no internal scrollbar or drag
+     handle — the list just grows to fit however many previous remarks
+     there are, the same way the rest of the modal does. */
+  .history-list{display:flex;flex-direction:column;gap:6px;padding-right:2px;}
   .history-list-empty{font-size:12px;font-style:italic;color:#AFB4CF;padding:10px 2px;}
   .history-entry{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid #E5E8F7;border-radius:9px;background:#F8F9FD;transition:background .12s,border-color .12s;}
   .history-entry:hover{background:#F1F3FC;border-color:#D7DCF0;}
@@ -1297,7 +1266,6 @@
         <div class="history-entry current-remark-entry">
           <div class="h-body">
             <textarea id="mCurrentEdit" class="current-remark-edit" placeholder="No remarks recorded yet." readonly></textarea>
-            <div class="resize-handle" data-resize-target="mCurrentEdit" title="Drag to resize" aria-hidden="true"><span></span></div>
           </div>
           <div class="h-actions">
             <button type="button" class="h-btn edit" id="mCurrentEditBtn" title="Edit this remark">✏️</button>
@@ -1309,7 +1277,6 @@
       <div class="section" id="historySection">
         <div class="section-title">Previous audit remarks <span class="edit-hint">🔒 locked — auto-logged</span></div>
         <div class="history-list" id="mHistoryList"></div>
-        <div class="resize-handle" data-resize-target="mHistoryList" title="Drag to resize" aria-hidden="true"><span></span></div>
         <!-- Hidden: still holds the plain-text value saveModal() actually
              sends (kept in sync with the list above), so the
              create/update payload format is unchanged. -->
@@ -2194,7 +2161,7 @@
   // ---- Display: keep the leading "[M-D-YY] - " date stamp visible -----
   //
   // Current remarks are now deliberately stamped "[M-D-YY] - text" the
-  // moment a new remark is saved (see replaceCurrentRemark_ /
+  // moment a new remark is saved (see addCurrentRemark_ /
   // stampRemarkText_ above), so that stamp is no longer stripped away
   // before display — it's the whole point of the format. This is kept
   // as a pass-through (rather than deleting every call site) so a stray
@@ -2204,16 +2171,17 @@
     return str_(remarks);
   }
 
-  // ---- Add-new-remark: replaces the CURRENT remark only ----------------
+  // ---- Add-new-remark: STACKS on top of the CURRENT remark -------------
   //
-  // A new remark REPLACES "Current remark" outright, stamped with the
-  // date it was written in "[M-D-YY] - remark text" form (e.g.
-  // "[8-10-26] - Verified with borrower"). Previous Audit Remarks is a
-  // locked, auto-logged column — adding a new remark must NEVER write
-  // into it. (This used to push the old current remark down into
-  // Previous Audit Remarks before replacing it; that's removed, since
-  // that column is only ever meant to be touched by the separate
-  // "Import Remarks" flow / a direct history edit, not by this action.)
+  // A new remark used to REPLACE "Current remark" outright. It now
+  // STACKS instead: the freshly stamped "[M-D-YY] - remark text" entry
+  // (e.g. "[8-10-26] - Verified with borrower") is placed on top, and
+  // whatever was already in Current remark is kept underneath it,
+  // separated by a blank line — so nothing typed in before is ever lost.
+  // Previous Audit Remarks is a locked, auto-logged column — adding a
+  // new remark must NEVER write into it. (That column is only ever meant
+  // to be touched by the separate "Import Remarks" flow / a direct
+  // history edit, not by this action.)
   // Mutates `c` in place; call this before assigning
   // c.auditorRemarks/c.dateOfAudit from anywhere else.
   function formatRemarkDateStamp_(d){
@@ -2226,8 +2194,19 @@
     return '[' + formatRemarkDateStamp_() + '] - ' + stamped;
   }
 
-  function replaceCurrentRemark_(c, newRemark, auditor, today){
-    c.auditorRemarks = stampRemarkText_(newRemark, auditor);
+  // Combines a freshly-stamped remark with whatever's already in Current
+  // remark: new entry on top, old content (if any) underneath, separated
+  // by a blank line. A blank/"NO REMARKS" existing value contributes
+  // nothing, so the very first remark on a customer is just the new
+  // stamped entry by itself.
+  function combineRemarkText_(existing, stampedNew){
+    const old = str_(existing).trim();
+    if(isBlankRemark_(old)) return stampedNew;
+    return stampedNew + '\n\n' + old;
+  }
+
+  function addCurrentRemark_(c, newRemark, auditor, today){
+    c.auditorRemarks = combineRemarkText_(c.auditorRemarks, stampRemarkText_(newRemark, auditor));
     c.dateOfAudit = today;
   }
 
@@ -2252,69 +2231,15 @@
   // touches historyEntries_/renderHistoryList_ or the server; the actual
   // save only happens when "Save changes" is clicked, which still just
   // reads #mCurrentEdit's .value like it always did.
-  // Grows #mCurrentEdit to fit whatever text it currently holds, up to
-  // its CSS max-height (after that it scrolls). Called right after the
+  // Grows #mCurrentEdit to fit whatever text it currently holds — no
+  // max-height, no scrolling, no manual drag. Called right after the
   // box is populated so a long remark is fully visible the moment the
-  // modal opens, with no scrolling or manual drag needed first — the
-  // .resize-handle bar below it (see initResizeHandles_) is then still
-  // there afterward for pulling it open even further, or shrinking it,
-  // by hand.
+  // modal opens.
   function autoFitTextarea_(ta){
     if(!ta) return;
     ta.style.height = 'auto';
     ta.style.height = ta.scrollHeight + 'px';
   }
-
-  // ---- Drag-to-resize handles (current remark box, previous-remarks
-  // list) -------------------------------------------------------------
-  //
-  // Plain CSS `resize:vertical` on a textarea only responds to a mouse
-  // dragging its bottom-right corner — iOS Safari doesn't render or
-  // honor it at all, and Android support is patchy, which is exactly
-  // why "expand" worked on desktop but did nothing (or fought with the
-  // page scrolling instead) on a phone. This drives the same resize
-  // manually off Pointer Events, which fire consistently for mouse,
-  // touch and pen alike, so one implementation covers PC and mobile.
-  function initResizeHandles_(){
-    document.querySelectorAll('.resize-handle[data-resize-target]').forEach(handle => {
-      const target = document.getElementById(handle.getAttribute('data-resize-target'));
-      if(!target || handle._resizeInit) return;
-      handle._resizeInit = true;
-
-      let startY = 0, startHeight = 0, min = 0, max = Infinity;
-
-      function onMove(e){
-        const dy = e.clientY - startY;
-        let h = startHeight + dy;
-        if(h < min) h = min;
-        if(h > max) h = max;
-        target.style.height = h + 'px';
-      }
-      function onUp(e){
-        handle.classList.remove('dragging');
-        handle.removeEventListener('pointermove', onMove);
-        handle.removeEventListener('pointerup', onUp);
-        handle.removeEventListener('pointercancel', onUp);
-        try{ handle.releasePointerCapture(e.pointerId); }catch(err){}
-      }
-      handle.addEventListener('pointerdown', function(e){
-        // Only the primary button/touch/pen starts a drag.
-        if(e.button !== undefined && e.button !== 0) return;
-        e.preventDefault();
-        startY = e.clientY;
-        startHeight = target.getBoundingClientRect().height;
-        const cs = getComputedStyle(target);
-        min = parseFloat(cs.minHeight) || 0;
-        max = parseFloat(cs.maxHeight) || Infinity;
-        handle.classList.add('dragging');
-        try{ handle.setPointerCapture(e.pointerId); }catch(err){}
-        handle.addEventListener('pointermove', onMove);
-        handle.addEventListener('pointerup', onUp);
-        handle.addEventListener('pointercancel', onUp);
-      });
-    });
-  }
-  initResizeHandles_();
 
   document.getElementById('mCurrentEditBtn').addEventListener('click', function(){
     const ta = document.getElementById('mCurrentEdit');
@@ -2500,7 +2425,8 @@
   //     Previous Audit Remarks. It does NOT touch the current Auditor
   //     Remarks or Date of Audit at all — those stay exactly as they were
   //     before the import. (This is different from "Add new remark" in the
-  //     edit modal, which replaces the current remark.)
+  //     edit modal, which stacks a new dated entry on top of the current
+  //     remark.)
   //   - Rows with no remark text are skipped.
 
   // Alternate header names accepted on import, in addition to each field's
@@ -4647,7 +4573,7 @@
     }
     if(item.remark){
       const today = todayStr_();
-      replaceCurrentRemark_(c, item.remark, item.auditor, today);
+      addCurrentRemark_(c, item.remark, item.auditor, today);
     }
     c._pending = true;
     saveLocalCache_(customers);
@@ -4695,7 +4621,7 @@
     }
     if(item.remark){
       const today = todayStr_();
-      replaceCurrentRemark_(c, item.remark, item.auditor, today);
+      addCurrentRemark_(c, item.remark, item.auditor, today);
     }
     // Confirmed means it's no longer just a locally-queued guess — clear
     // the "syncing…" badge this row may have been carrying since it was

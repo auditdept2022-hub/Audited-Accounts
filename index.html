@@ -798,6 +798,9 @@
   .conflict-item:last-child{margin-bottom:0;}
   .conflict-item .ci-name{font-weight:700;margin-bottom:4px;}
   .conflict-item .ci-detail{color:var(--muted);font-size:11.5px;margin-bottom:8px;line-height:1.5;}
+  .conflict-item .ci-meta{color:var(--muted-2);font-size:10.5px;margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.2px;}
+  .conflict-item .ci-actions.ci-bulk{margin-bottom:8px;}
+  .conflict-item .ci-actions.ci-bulk button{font-size:11px;padding:4px 9px;}
   .conflict-item .ci-actions{display:flex;gap:8px;}
   .conflict-item .ci-actions button{font-size:11.5px;padding:5px 10px;border-radius:6px;border:1px solid #DDD6C4;background:#fff;cursor:pointer;}
   .conflict-item .ci-actions button.keep{background:var(--accent);color:#fff;border-color:var(--accent);}
@@ -1552,7 +1555,13 @@
     }
     list.innerHTML = activityLog_.map(e => {
       const time = new Date(e.ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-      const hasDetail = (e.groups && e.groups.length) || e.action;
+      // Any entry that has something beyond the one-line summary — extra
+      // groups, a follow-up action, OR just a longer error/detail string
+      // — is clickable to expand. Errors always get a Copy button inside
+      // their expanded detail so the exact message can be pasted
+      // elsewhere (e.g. when asking for help), even if there's nothing
+      // else to show.
+      const hasDetail = (e.groups && e.groups.length) || e.action || (e.type === 'error' && e.detail);
       const expanded = activityExpanded_.has(e.id);
       const totalItems = (e.groups || []).reduce((n, g) => n + g.items.length, 0);
 
@@ -1569,6 +1578,7 @@
           </div>`;
         }).join('')}
         ${e.action === 'openSync' ? `<button class="activity-detail-action" onclick="event.stopPropagation();openActivityLogAction_('${e.id}')">View sync</button>` : ''}
+        ${e.type === 'error' && e.detail ? `<button class="activity-detail-action" onclick="event.stopPropagation();copyActivityDetail_('${e.id}')">Copy error</button>` : ''}
       </div>` : '';
 
       return `<div class="activity-item type-${escapeHtml(e.type)}${hasDetail ? ' has-detail' : ''}${expanded ? ' expanded' : ''}"
@@ -1592,6 +1602,18 @@
     if(activityExpanded_.has(id)) activityExpanded_.delete(id);
     else activityExpanded_.add(id);
     renderActivityList_();
+  }
+
+  async function copyActivityDetail_(id){
+    const entry = activityLog_.find(e => e.id === id);
+    if(!entry) return;
+    const text = (entry.title ? entry.title + ': ' : '') + (entry.detail || '');
+    try{
+      await navigator.clipboard.writeText(text);
+      toast('Error copied.');
+    }catch(e){
+      toast('Could not copy — select and copy the text manually.');
+    }
   }
 
   // Runs an entry's `action` keyword (see logActivity_ above). Currently
@@ -2208,6 +2230,45 @@
   function addCurrentRemark_(c, newRemark, auditor, today){
     c.auditorRemarks = combineRemarkText_(c.auditorRemarks, stampRemarkText_(newRemark, auditor));
     c.dateOfAudit = today;
+  }
+
+  // ---- Duplicate-remark / false-conflict guard (sync time) -------------
+  //
+  // A queued "add remark" item can legitimately already be sitting on
+  // the sheet by the time syncOutbox() gets around to sending it — most
+  // commonly because an earlier attempt actually reached the backend and
+  // saved, but its response never made it back to this device in time
+  // (cold start / dropped connection), so the item stayed queued and got
+  // retried. Backend-side idempotency (opId) is the main fix for that,
+  // but this is a second, independent check purely against what the
+  // sheet says right now: if the exact remark this item wants to add is
+  // ALREADY the top entry in Auditor Remarks, treat it as already synced
+  // instead of sending it again (which would otherwise risk a duplicate
+  // if hitting an older/undeployed backend) and instead of flagging it
+  // as a "conflict" just because auditorRemarks no longer matches the
+  // stale snapshot taken before this remark was added.
+  function topRemarkLine_(text){
+    const s = str_(text);
+    const idx = s.indexOf('\n\n');
+    return idx === -1 ? s : s.slice(0, idx);
+  }
+  function remarkBodyAfterTop_(text){
+    const s = str_(text);
+    const idx = s.indexOf('\n\n');
+    return idx === -1 ? '' : s.slice(idx + 2);
+  }
+  function stampBodyOnly_(stampedLine){
+    return str_(stampedLine).replace(/^\[[^\]]*\]\s*-\s*/, '');
+  }
+  function remarkAlreadyOnServer_(item, serverRow){
+    if(!item || !item.remark || !serverRow) return false;
+    const wantBody = stampBodyOnly_(stampRemarkText_(item.remark, item.auditor));
+    const serverTopBody = stampBodyOnly_(topRemarkLine_(serverRow.auditorRemarks));
+    if(!wantBody || serverTopBody !== wantBody) return false;
+    const serverRest = remarkBodyAfterTop_(serverRow.auditorRemarks);
+    const baseline = str_(item.snapshot && item.snapshot.auditorRemarks);
+    if(isBlankRemark_(baseline)) return serverRest === '';
+    return serverRest === baseline;
   }
 
 
@@ -4502,9 +4563,19 @@
         conflicts.map(c=>{
           const name = (c.fields && c.fields.customer) || (c.snapshot && c.snapshot.customer) || 'this customer';
           const isDelete = c.kind === 'delete';
+          const detectedTime = c.conflictDetectedAt ? new Date(c.conflictDetectedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+          const diffCount = (!isDelete && c.serverSnapshot) ? Object.keys(c.snapshot || {}).filter(k => String(c.serverSnapshot[k] ?? '') !== String((c.snapshot || {})[k] ?? '')).length : 0;
+          const metaBits = [];
+          if(detectedTime) metaBits.push('Detected ' + detectedTime);
+          if(!isDelete) metaBits.push(diffCount + ' field' + (diffCount === 1 ? '' : 's') + ' differ' + (diffCount === 1 ? 's' : ''));
           return `<div class="conflict-item">
             <div class="ci-name">${escapeHtml(name)}</div>
             <div class="ci-detail">${isDelete ? "Someone else edited this record while you had it queued for deletion. Choose whether to delete it or leave it as-is." : "Someone else edited this record while you were offline. Only the fields that actually differ are shown below — pick which side to keep for each, then Save."}</div>
+            ${metaBits.length ? `<div class="ci-meta">${escapeHtml(metaBits.join(' · '))}</div>` : ''}
+            ${(!isDelete && diffCount > 1) ? `<div class="ci-actions ci-bulk">
+              <button type="button" onclick="ciPickAll_('${c.id}','mine')">Keep all mine</button>
+              <button type="button" onclick="ciPickAll_('${c.id}','theirs')">Keep all from sheet</button>
+            </div>` : ''}
             ${renderConflictPicker_(c)}
             <div class="ci-actions">
               ${isDelete
@@ -4854,14 +4925,24 @@
   // combined backend action (createCustomerFull / updateCustomerFull),
   // so every save — online or replayed from the offline outbox during
   // sync — is exactly ONE network round trip.
+  // IDEMPOTENCY: every mutating call carries opId: item.id — the outbox
+  // item's own id, stable across every retry of this exact queued
+  // change. If a request actually reaches the backend and succeeds, but
+  // the response never makes it back in time (cold start, dropped
+  // connection) so this gets sent again, the backend recognizes the
+  // same opId and returns the original result instead of re-applying
+  // the write — that's what stops a remark (or any other field) from
+  // being written twice ("double entry, one offline one online"). See
+  // withIdempotency_ in the backend.
   async function sendOne_(item){
     if(item.kind === 'create'){
       const data = await apiCallJson_('createCustomerFull', {
         fields: item.fields,
         remark: item.remark || '',
-        auditor: item.auditor || ''
+        auditor: item.auditor || '',
+        opId: item.id
       });
-      return { row: data.row };
+      return { row: data.row, deduped: !!data._deduped };
     }
     if(item.kind === 'update'){
       const data = await apiCallJson_('updateCustomerFull', {
@@ -4870,13 +4951,14 @@
         historyEdit: item.historyEdit !== undefined ? item.historyEdit : null,
         currentEdit: item.currentEdit !== undefined ? item.currentEdit : null,
         remark: item.remark || '',
-        auditor: item.auditor || ''
+        auditor: item.auditor || '',
+        opId: item.id
       });
-      return { row: data.row };
+      return { row: data.row, deduped: !!data._deduped };
     }
     if(item.kind === 'delete'){
-      await apiCallJson_('deleteCustomer', { row: item.row });
-      return { row: item.row };
+      const data = await apiCallJson_('deleteCustomer', { row: item.row, opId: item.id });
+      return { row: item.row, deduped: !!(data && data._deduped) };
     }
   }
 
@@ -4999,6 +5081,24 @@
             }
             continue;
           }
+
+          // If this item's remark is already the top entry on the sheet
+          // (an earlier send of this exact item likely already saved it —
+          // see remarkAlreadyOnServer_ above), drop it from what's sent
+          // and refresh the snapshot's remark fields to match the sheet,
+          // instead of resending it (duplicate) or flagging a false
+          // conflict just because the remark text moved on.
+          if(item.remark && remarkAlreadyOnServer_(item, serverRow)){
+            item.remark = null;
+            item.auditor = null;
+            if('auditorRemarks' in item.snapshot) item.snapshot.auditorRemarks = serverRow.auditorRemarks;
+            if('dateOfAudit' in item.snapshot) item.snapshot.dateOfAudit = serverRow.dateOfAudit;
+            if(!item._loggedDedupe){
+              item._loggedDedupe = true;
+              logActivity_('info', 'Skipped a duplicate remark', 'This remark was already saved to the sheet from an earlier sync attempt, so it was not added a second time.');
+            }
+          }
+
           const drifted = Object.keys(item.snapshot).some(k => String(serverRow[k] ?? '') !== String(item.snapshot[k] ?? ''));
           if(drifted){
             item.status = 'conflict';
@@ -5006,10 +5106,14 @@
             // conflict banner can show it next to "your version" even
             // after this sync pass finishes and serverList goes away.
             item.serverSnapshot = Object.assign({}, serverRow);
+            item.conflictDetectedAt = Date.now();
             remaining.push(item);
             if(!item._loggedConflict){
               item._loggedConflict = true;
-              logActivity_('warning', 'Sync conflict', 'Someone else changed this record before your offline edit synced.', null, 'openSync');
+              const diffFields = Object.keys(item.snapshot).filter(k => String(serverRow[k] ?? '') !== String(item.snapshot[k] ?? ''));
+              logActivity_('warning', 'Sync conflict',
+                'Someone else changed this record before your offline edit synced (' + diffFields.map(fieldLabel_).join(', ') + ').',
+                null, 'openSync');
             }
             continue;
           }
@@ -5052,6 +5156,22 @@
           // Deletion is unambiguous — nothing to merge — always safe to
           // apply locally without a reload.
           applyConfirmedDelete_(item);
+        }
+
+        // Refresh this row's entry in serverByRow to reflect what was
+        // just written, so any LATER item in this same pass that also
+        // targets this row (e.g. two offline edits queued back-to-back
+        // on one customer) diffs against current reality instead of the
+        // snapshot taken once at the very start of this sync pass —
+        // otherwise that later item would always look "drifted" purely
+        // because of this item's own successful write, and get flagged
+        // as a conflict that isn't really one.
+        if(item.kind === 'delete'){
+          delete serverByRow[item.row];
+        } else {
+          const targetRow = item.kind === 'create' ? result.row : item.row;
+          const local = customers.find(x => x.row === targetRow);
+          if(local && !item._needsFreshPull) serverByRow[targetRow] = Object.assign({}, local);
         }
         syncedAny = true;
       }catch(err){
@@ -5139,6 +5259,22 @@
   // right now into the history as the single most recent "previous"
   // entry, with your remark becoming current — no double-counting, no
   // stray in-between entries.
+  // Quick multi-select helper: sets every per-field radio in this
+  // conflict's picker to the same choice in one tap, instead of clicking
+  // through each field individually when the person already knows they
+  // want (say) "keep everything of mine" or "keep everything from the
+  // sheet". Doesn't save by itself — "Save selection" still applies it,
+  // same as if each radio had been clicked by hand, so any field can
+  // still be flipped back individually afterward before saving.
+  function ciPickAll_(id, choice){
+    const picker = document.querySelector(`.ci-picker[data-item="${id}"]`);
+    if(!picker) return;
+    picker.querySelectorAll('.ci-pick-field').forEach(fieldEl => {
+      const radio = fieldEl.querySelector(`input[type="radio"][value="${choice}"]`);
+      if(radio) radio.checked = true;
+    });
+  }
+
   function applyConflictPick(id){
     const item = outbox.find(o => o.id === id);
     if(!item) return;

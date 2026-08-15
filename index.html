@@ -1515,22 +1515,54 @@
   let activitySyncing_ = false;
   let lastKnownActivityVersion_ = null;
 
-  // Fire-and-forget push of one freshly-created entry to the server. Uses
-  // the entry's own id as opId, so a retry of the exact same push (e.g. a
-  // flaky connection re-sending) gets deduped by the backend instead of
-  // appearing twice — see withIdempotency_ in the Apps Script backend.
-  // Never awaited by callers and never throws — logActivity_ itself isn't
-  // async and is called from many places that shouldn't have to handle a
-  // network failure just to write a log line.
+  // ---- Offline queue for activity pushes -----------------------------
+  // pushActivityToServer_/pushActivityUndoneToServer_ used to just try
+  // once and silently give up on failure — fine when the network hiccups,
+  // but wrong when the whole DEVICE is offline: everything logged while
+  // offline (every save, delete, undo) would try, fail, and then just be
+  // gone from the shared log forever, since nothing ever retried it once
+  // back online. That's why "set up offline, then come back online"
+  // wasn't reflecting on the sheet — the local log looked fine (it's
+  // always saved to localStorage first), but nothing had actually queued
+  // to be RE-SENT once a connection came back.
+  //
+  // This mirrors the customer-data `outbox` pattern above it: failed (or
+  // never-attempted-because-offline) pushes are queued here, persisted to
+  // localStorage so they survive a refresh/reload, and retried in order
+  // once online — see syncActivityOutbox_ below and its wiring (the
+  // 'online' listener and the periodic interval near the bottom of this
+  // file). Not scoped per-branch like the customer outbox — this is one
+  // spreadsheet-wide log, so one queue covers every branch.
+  let activityOutbox_ = [];
+
+  function activityOutboxKey_(){ return 'aa_activity_outbox_v1:' + API_URL; }
+
+  function saveActivityOutbox_(){
+    try{ localStorage.setItem(activityOutboxKey_(), JSON.stringify(activityOutbox_)); }catch(e){ /* best-effort */ }
+  }
+
+  function loadActivityOutbox_(){
+    try{
+      const raw = localStorage.getItem(activityOutboxKey_());
+      activityOutbox_ = raw ? JSON.parse(raw) : [];
+    }catch(e){ activityOutbox_ = []; }
+  }
+
+  // Push of one freshly-created entry to the server. Uses the entry's own
+  // id as opId, so a retry of the exact same push (a flaky connection
+  // re-sending, or this same item being replayed from activityOutbox_)
+  // gets deduped by the backend instead of appearing twice — see
+  // withIdempotency_ in the Apps Script backend. Never awaited by
+  // logActivity_ (which isn't async) and never throws on failure — on
+  // failure it queues the entry in activityOutbox_ instead, so it's
+  // retried automatically once back online rather than lost.
   async function pushActivityToServer_(entry){
-    if(!API_URL) return;
+    if(!API_URL){ return; }
+    if(!navigator.onLine){ queueActivityOutboxItem_({ kind: 'push', entry: entry, opId: entry.id }); return; }
     try{
       await apiCallJson_('pushActivity', { entry: entry, opId: entry.id });
     }catch(e){
-      // best-effort — the entry is already saved locally; it'll simply be
-      // missing from the SHARED log (other devices won't see it) until a
-      // future syncActivityLog_() pull happens to pick up a later push,
-      // or the person is back online and creates more activity.
+      queueActivityOutboxItem_({ kind: 'push', entry: entry, opId: entry.id });
     }
   }
 
@@ -1539,16 +1571,66 @@
   // already sent — if this reused entry.id as its opId, a retried
   // request would get deduped against the ORIGINAL push's cached result
   // (see withIdempotency_ on the backend) and the undone flag would
-  // silently never apply. genId_() gives this its own, independent
-  // opId so the two writes can never collide.
+  // silently never apply. The opId is generated ONCE here and carried
+  // through to the queued retry (rather than regenerated on every retry
+  // attempt), so a queued item that fails partway still dedupes correctly
+  // against itself on a later retry instead of creating a fresh op each
+  // time.
   async function pushActivityUndoneToServer_(entryId){
-    if(!API_URL) return;
+    if(!API_URL){ return; }
+    const opId = genId_();
+    if(!navigator.onLine){ queueActivityOutboxItem_({ kind: 'undone', id: entryId, opId: opId }); return; }
     try{
-      await apiCallJson_('setActivityUndone', { id: entryId, undone: true, opId: genId_() });
+      await apiCallJson_('setActivityUndone', { id: entryId, undone: true, opId: opId });
     }catch(e){
-      // best-effort — the local copy already shows "Undone"; the shared
-      // copy will just be briefly out of date on other devices until the
-      // next pull.
+      queueActivityOutboxItem_({ kind: 'undone', id: entryId, opId: opId });
+    }
+  }
+
+  // De-dupes by opId before queueing (a retried push that's ALREADY
+  // queued shouldn't add a second copy of itself), persists immediately,
+  // and — if we're actually online right now — kicks off a sync attempt
+  // right away rather than waiting for the next interval tick.
+  function queueActivityOutboxItem_(item){
+    if(activityOutbox_.some(i => i.opId === item.opId)) return;
+    activityOutbox_.push(item);
+    saveActivityOutbox_();
+    if(navigator.onLine) syncActivityOutbox_();
+  }
+
+  // Replays queued activity pushes/undone-flags in order, oldest first.
+  // Stops at the first failure rather than skipping ahead — an 'undone'
+  // item can only make sense once its matching 'push' has actually landed
+  // on the server, so preserving order here (instead of e.g. retrying all
+  // items in parallel) keeps that dependency intact. Whatever's left in
+  // the queue just waits for the next trigger (the 'online' event, or the
+  // periodic interval below).
+  let activityOutboxSyncing_ = false;
+  async function syncActivityOutbox_(){
+    if(!API_URL || !navigator.onLine || activityOutboxSyncing_) return;
+    if(!activityOutbox_.length) return;
+    activityOutboxSyncing_ = true;
+    try{
+      while(activityOutbox_.length){
+        const item = activityOutbox_[0];
+        try{
+          if(item.kind === 'push'){
+            await apiCallJson_('pushActivity', { entry: item.entry, opId: item.opId });
+          } else if(item.kind === 'undone'){
+            await apiCallJson_('setActivityUndone', { id: item.id, undone: true, opId: item.opId });
+          }
+          activityOutbox_.shift();
+          saveActivityOutbox_();
+        }catch(e){
+          break; // still failing (still offline, or a real error) — stop and retry later
+        }
+      }
+      // Whatever made it through is now on the server — pull the
+      // authoritative shared list so this device (and its badge/unread
+      // count) reflects exactly what's really on the sheet.
+      if(activityOutbox_.length === 0) await syncActivityLog_();
+    }finally{
+      activityOutboxSyncing_ = false;
     }
   }
 
@@ -5791,9 +5873,10 @@
     }
   }
 
-  window.addEventListener('online', () => { updateSyncUI(); syncOutbox(); });
+  window.addEventListener('online', () => { updateSyncUI(); syncOutbox(); syncActivityOutbox_(); });
   window.addEventListener('offline', updateSyncUI);
   setInterval(() => { if(navigator.onLine && outbox.length) syncOutbox(); }, 20000);
+  setInterval(() => { if(navigator.onLine && activityOutbox_.length) syncActivityOutbox_(); }, 20000);
 
   let isLoading = false;
   // Set when loadData() is called while a request is already in flight.
@@ -7595,12 +7678,14 @@
     (async () => {
       await resolveInitialSheet_();
       loadOutbox_();
+      loadActivityOutbox_();
       updateSyncUI();
       document.getElementById('dashPanel').style.display = 'block';
       await loadData();
       if(outbox.length) syncOutbox();
       schedulePrefetch_();
       syncActivityLog_(); // pull the shared log so this device is caught up from first paint
+      if(activityOutbox_.length) syncActivityOutbox_(); // replay anything queued while offline last session
     })();
   } else {
     document.getElementById('setupPanel').style.display = 'block';

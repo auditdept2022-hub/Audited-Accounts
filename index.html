@@ -2218,13 +2218,15 @@
 
   // Combines a freshly-stamped remark with whatever's already in Current
   // remark: new entry on top, old content (if any) underneath, separated
-  // by a blank line. A blank/"NO REMARKS" existing value contributes
-  // nothing, so the very first remark on a customer is just the new
-  // stamped entry by itself.
+  // by a single newline only — no blank line. Each entry already carries
+  // its own "[M-D-YY] - " date stamp, so a blank line between entries is
+  // just wasted vertical space, not something needed to tell them apart.
+  // A blank/"NO REMARKS" existing value contributes nothing, so the very
+  // first remark on a customer is just the new stamped entry by itself.
   function combineRemarkText_(existing, stampedNew){
     const old = str_(existing).trim();
     if(isBlankRemark_(old)) return stampedNew;
-    return stampedNew + '\n\n' + old;
+    return stampedNew + '\n' + old;
   }
 
   function addCurrentRemark_(c, newRemark, auditor, today){
@@ -2247,15 +2249,22 @@
   // if hitting an older/undeployed backend) and instead of flagging it
   // as a "conflict" just because auditorRemarks no longer matches the
   // stale snapshot taken before this remark was added.
+  // Entry boundary = one or more newlines immediately followed by the
+  // next entry's "[M-D-YY] - " date stamp. Matching "one or more"
+  // newlines (not exactly one, and not exactly two) means this still
+  // parses older rows that were stacked with a blank-line separator
+  // before that was removed, as well as new rows stacked with just a
+  // single newline — both split correctly.
+  const STAMP_BOUNDARY_RE_ = /\n+(?=\[\d{1,2}-\d{1,2}-\d{2,4}\]\s*-\s*)/;
   function topRemarkLine_(text){
     const s = str_(text);
-    const idx = s.indexOf('\n\n');
-    return idx === -1 ? s : s.slice(0, idx);
+    const m = STAMP_BOUNDARY_RE_.exec(s);
+    return m ? s.slice(0, m.index) : s;
   }
   function remarkBodyAfterTop_(text){
     const s = str_(text);
-    const idx = s.indexOf('\n\n');
-    return idx === -1 ? '' : s.slice(idx + 2);
+    const m = STAMP_BOUNDARY_RE_.exec(s);
+    return m ? s.slice(m.index + m[0].length) : '';
   }
   function stampBodyOnly_(stampedLine){
     return str_(stampedLine).replace(/^\[[^\]]*\]\s*-\s*/, '');

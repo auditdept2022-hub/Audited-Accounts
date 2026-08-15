@@ -713,6 +713,15 @@
 
   textarea{width:100%;border:1px solid #D7DCF0;border-radius:10px;padding:10px 12px;font-size:13px;font-family:inherit;resize:vertical;min-height:76px;outline:none;transition:border-color .15s, box-shadow .15s;background:#F8F9FD;}
 
+  /* "Add new remark" box: auto-grows to fit whatever's typed (see
+     autoFitTextarea_ + the #mNewRemark input listener below), instead of
+     staying a fixed ~76px and forcing a scroll inside a tiny box the
+     moment a remark runs past a couple of lines. resize:vertical is kept
+     so it can still be dragged smaller/larger by hand; max-height caps
+     it so one very long remark can't push the whole modal open forever —
+     past that it scrolls internally like the current-remark box does. */
+  #mNewRemark{max-height:50vh;overflow-y:auto;}
+
   /* Directly-editable current remark (edit modal). Wrapped in the same
      .history-entry card used by the "Previous audit remarks" rows below
      — same border/background/radius, same date-badge + icon-button
@@ -2182,51 +2191,43 @@
     return s === '' || s.toUpperCase() === 'NO REMARKS';
   }
 
-  // ---- Display-only fix: drop a leading date stamp baked into the text --
+  // ---- Display: keep the leading "[M-D-YY] - " date stamp visible -----
   //
-  // Current remarks no longer get a "[date] " prefix stamped onto their
-  // text at all going forward (see pushCurrentToHistoryAndReplace_) —
-  // the date lives only in dateOfAudit now. But the actual save still
-  // happens through the separate Apps Script backend (Code.gs), which
-  // may still be stamping its own "[date] " prefix onto the saved text
-  // server-side (in whatever date format IT uses, e.g. "[8-15-26] "
-  // rather than "[2026-08-15] ") — so an exact-match-against-dateOfAudit
-  // check can miss it if the two don't format dates the same way. This
-  // strips ANY leading "[...] " bracket instead, regardless of what's
-  // inside it or whether it matches dateOfAudit — current remarks
-  // should never show a bracket stamp at all, no matter which format it
-  // was written in. Only strips at the very start of the string, so a
-  // "[...]"-prefixed previous-remarks entry (a different field entirely)
-  // is never touched, and only one prefix is ever stripped (a remark
-  // whose own text happens to start with a bracket won't get chewed on
-  // further after that).
+  // Current remarks are now deliberately stamped "[M-D-YY] - text" the
+  // moment a new remark is saved (see replaceCurrentRemark_ /
+  // stampRemarkText_ above), so that stamp is no longer stripped away
+  // before display — it's the whole point of the format. This is kept
+  // as a pass-through (rather than deleting every call site) so a stray
+  // legacy remark from before this change still displays exactly as
+  // stored, with no surprises.
   function stripRedundantDateStamp_(remarks){
-    const s = str_(remarks);
-    if(!s) return s;
-    const m = /^\[[^\]]*\]\s*/.exec(s);
-    return m ? s.slice(m[0].length) : s;
+    return str_(remarks);
   }
 
-  // ---- Add-new-remark: replaces the CURRENT remark, pushing whatever
-  // was there before down into Previous Audit Remarks ------------------
+  // ---- Add-new-remark: replaces the CURRENT remark only ----------------
   //
-  // A new remark now REPLACES "Current remark" outright — the old
-  // current remark (if any) is pushed down onto Previous Audit Remarks
-  // as its own newest-first dated entry first. Current only ever holds
-  // the single latest remark this way, instead of growing into a stack
-  // of every remark ever written (which is what used to happen: each
-  // new remark got stamped and piled on top of the current box, so the
-  // "current" remark and the remark history ended up duplicating the
-  // same information). Mutates `c` in place; call this before assigning
+  // A new remark REPLACES "Current remark" outright, stamped with the
+  // date it was written in "[M-D-YY] - remark text" form (e.g.
+  // "[8-10-26] - Verified with borrower"). Previous Audit Remarks is a
+  // locked, auto-logged column — adding a new remark must NEVER write
+  // into it. (This used to push the old current remark down into
+  // Previous Audit Remarks before replacing it; that's removed, since
+  // that column is only ever meant to be touched by the separate
+  // "Import Remarks" flow / a direct history edit, not by this action.)
+  // Mutates `c` in place; call this before assigning
   // c.auditorRemarks/c.dateOfAudit from anywhere else.
-  function pushCurrentToHistoryAndReplace_(c, newRemark, auditor, today){
-    if(c.auditorRemarks && !isBlankRemark_(c.auditorRemarks)){
-      const oldEntry = /^\[[^\]]*\]\s/.test(c.auditorRemarks)
-        ? c.auditorRemarks
-        : '[' + (c.dateOfAudit || 'undated') + '] ' + c.auditorRemarks;
-      c.previousRemarks = c.previousRemarks ? (oldEntry + '\n' + str_(c.previousRemarks)) : oldEntry;
-    }
-    c.auditorRemarks = auditor ? newRemark + '  — ' + auditor : newRemark;
+  function formatRemarkDateStamp_(d){
+    d = d || new Date();
+    return (d.getMonth() + 1) + '-' + d.getDate() + '-' + String(d.getFullYear()).slice(-2);
+  }
+
+  function stampRemarkText_(newRemark, auditor){
+    const stamped = auditor ? newRemark + '  — ' + auditor : newRemark;
+    return '[' + formatRemarkDateStamp_() + '] - ' + stamped;
+  }
+
+  function replaceCurrentRemark_(c, newRemark, auditor, today){
+    c.auditorRemarks = stampRemarkText_(newRemark, auditor);
     c.dateOfAudit = today;
   }
 
@@ -4618,7 +4619,7 @@
   function applyOptimisticCreate_(item){
     customers.unshift(Object.assign({
       row: item.tempRow,
-      auditorRemarks: item.remark ? (item.auditor ? item.remark + '  — ' + item.auditor : item.remark) : '',
+      auditorRemarks: item.remark ? stampRemarkText_(item.remark, item.auditor) : '',
       dateOfAudit: item.remark ? todayStr_() : '',
       previousRemarks: '',
       _pending: true
@@ -4646,7 +4647,7 @@
     }
     if(item.remark){
       const today = todayStr_();
-      pushCurrentToHistoryAndReplace_(c, item.remark, item.auditor, today);
+      replaceCurrentRemark_(c, item.remark, item.auditor, today);
     }
     c._pending = true;
     saveLocalCache_(customers);
@@ -4672,7 +4673,7 @@
   function applyConfirmedCreate_(item, result){
     customers.unshift(Object.assign({
       row: (result && result.row) || item.tempRow,
-      auditorRemarks: item.remark ? (item.auditor ? item.remark + '  — ' + item.auditor : item.remark) : '',
+      auditorRemarks: item.remark ? stampRemarkText_(item.remark, item.auditor) : '',
       dateOfAudit: item.remark ? todayStr_() : '',
       previousRemarks: ''
     }, item.fields));
@@ -4694,7 +4695,7 @@
     }
     if(item.remark){
       const today = todayStr_();
-      pushCurrentToHistoryAndReplace_(c, item.remark, item.auditor, today);
+      replaceCurrentRemark_(c, item.remark, item.auditor, today);
     }
     // Confirmed means it's no longer just a locally-queued guess — clear
     // the "syncing…" badge this row may have been carrying since it was
@@ -6676,12 +6677,17 @@
 
   function discardDraft(){
     clearDraft_(activeRow);
-    document.getElementById('mNewRemark').value = '';
+    const ta = document.getElementById('mNewRemark');
+    ta.value = '';
+    autoFitTextarea_(ta);
     updateDraftStatus_();
   }
 
   let draftSaveDebounce;
   document.getElementById('mNewRemark').addEventListener('input', function(){
+    // Auto-grow the box to fit whatever's been typed so far — see
+    // autoFitTextarea_ / the #mNewRemark CSS rule above.
+    autoFitTextarea_(this);
     clearTimeout(draftSaveDebounce);
     draftSaveDebounce = setTimeout(()=>{
       saveDraft_(activeRow, document.getElementById('mNewRemark').value);
@@ -6751,7 +6757,9 @@
     renderHistoryList_();
 
     const draft = loadDraft_(row);
-    document.getElementById('mNewRemark').value = draft ? draft.text : '';
+    const mNewRemarkEl = document.getElementById('mNewRemark');
+    mNewRemarkEl.value = draft ? draft.text : '';
+    autoFitTextarea_(mNewRemarkEl);
     updateDraftStatus_();
     setModalMarkerPickerColor_(c.marker || '');
     document.getElementById('overlay').classList.add('open');
@@ -6783,7 +6791,9 @@
     historyEditingIdx_ = -1;
     renderHistoryList_();
     const draft = loadDraft_(null);
-    document.getElementById('mNewRemark').value = draft ? draft.text : '';
+    const mNewRemarkEl2 = document.getElementById('mNewRemark');
+    mNewRemarkEl2.value = draft ? draft.text : '';
+    autoFitTextarea_(mNewRemarkEl2);
     updateDraftStatus_();
     setModalMarkerPickerColor_('');
     document.getElementById('overlay').classList.add('open');

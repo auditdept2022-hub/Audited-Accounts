@@ -1499,6 +1499,102 @@
     }catch(e){ /* best-effort — a full localStorage shouldn't break the app */ }
   }
 
+  // ---- Activity log: server sync (shared across devices) -----------------
+  // The log used to live only in this browser's localStorage, which is
+  // exactly why desktop and mobile never showed the same history — two
+  // separate local logs that never talked to each other. It now also
+  // lives on the spreadsheet itself (a hidden `_ActivityLog` tab — see
+  // pushActivity/listActivity/setActivityUndone/clearActivity in the Apps
+  // Script backend), so every device reads/writes the SAME log. Because
+  // there's no login system here, this is necessarily a SHARED,
+  // spreadsheet-wide feed — everyone using this dashboard sees the same
+  // entries, like a team audit trail — not a private per-device history.
+  // localStorage is still used underneath as an offline-friendly cache so
+  // the log still shows something instantly and while offline; the server
+  // copy is the source of truth whenever it's reachable.
+  let activitySyncing_ = false;
+  let lastKnownActivityVersion_ = null;
+
+  // Fire-and-forget push of one freshly-created entry to the server. Uses
+  // the entry's own id as opId, so a retry of the exact same push (e.g. a
+  // flaky connection re-sending) gets deduped by the backend instead of
+  // appearing twice — see withIdempotency_ in the Apps Script backend.
+  // Never awaited by callers and never throws — logActivity_ itself isn't
+  // async and is called from many places that shouldn't have to handle a
+  // network failure just to write a log line.
+  async function pushActivityToServer_(entry){
+    if(!API_URL) return;
+    try{
+      await apiCallJson_('pushActivity', { entry: entry, opId: entry.id });
+    }catch(e){
+      // best-effort — the entry is already saved locally; it'll simply be
+      // missing from the SHARED log (other devices won't see it) until a
+      // future syncActivityLog_() pull happens to pick up a later push,
+      // or the person is back online and creates more activity.
+    }
+  }
+
+  // IMPORTANT: this call must use a DIFFERENT opId than the entry's own
+  // id. setActivityUndone marks the SAME entry.id that pushActivity
+  // already sent — if this reused entry.id as its opId, a retried
+  // request would get deduped against the ORIGINAL push's cached result
+  // (see withIdempotency_ on the backend) and the undone flag would
+  // silently never apply. genId_() gives this its own, independent
+  // opId so the two writes can never collide.
+  async function pushActivityUndoneToServer_(entryId){
+    if(!API_URL) return;
+    try{
+      await apiCallJson_('setActivityUndone', { id: entryId, undone: true, opId: genId_() });
+    }catch(e){
+      // best-effort — the local copy already shows "Undone"; the shared
+      // copy will just be briefly out of date on other devices until the
+      // next pull.
+    }
+  }
+
+  // Pulls the shared log from the server and replaces the local view with
+  // it (server is the source of truth once reachable). Called on boot,
+  // whenever the activity log modal is opened, and on a light interval
+  // while it's open — see the wiring near the bottom of this file.
+  async function syncActivityLog_(){
+    if(!API_URL || activitySyncing_) return;
+    activitySyncing_ = true;
+    try{
+      const res = await apiCallJsonRead_('listActivity', {});
+      if(res && Array.isArray(res.entries)){
+        activityLog_ = res.entries
+          .slice()
+          .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+          .slice(0, ACTIVITY_LOG_MAX);
+        if(typeof res.version === 'number') lastKnownActivityVersion_ = res.version;
+        saveActivityLog_();
+        updateActivityBadge_();
+        if(activityModalOpen_) renderActivityList_();
+      }
+    }catch(e){
+      // offline, or an older/not-yet-redeployed backend that doesn't know
+      // this action — keep showing whatever's already cached locally.
+    }finally{
+      activitySyncing_ = false;
+    }
+  }
+
+  // Cheap "did anything change?" check (mirrors fetchListVersion_ for the
+  // customer list) — touches only PropertiesService on the backend, no
+  // sheet read. Used by the light background poll below so a quiet log
+  // doesn't re-pull the whole thing every cycle.
+  async function checkActivityVersion_(){
+    if(!API_URL) return;
+    try{
+      const res = await apiCallJsonRead_('activityVersion', {});
+      if(typeof res.version === 'number' && res.version !== lastKnownActivityVersion_){
+        await syncActivityLog_();
+      }
+    }catch(e){
+      // best-effort
+    }
+  }
+
   // type: 'success' | 'error' | 'warning' | 'info'
   // groups (optional): [{ label, items: [string,...] }, ...] — extra
   // detail behind the one-line summary, e.g. the actual customer names
@@ -1536,6 +1632,7 @@
     saveActivityLog_();
     updateActivityBadge_();
     if(activityModalOpen_) renderActivityList_();
+    pushActivityToServer_(entry); // fire-and-forget — see note above
 
     const bell = document.getElementById('hdrBellBtn');
     if(bell){
@@ -1672,6 +1769,10 @@
     renderActivityList_();
     document.getElementById('activityOverlay').classList.add('open');
     lockBodyScroll();
+    // Pull the shared log fresh every time it's opened, so switching from
+    // desktop to mobile (or vice versa) shows what happened on the OTHER
+    // device too, not just what this browser logged itself.
+    syncActivityLog_();
   }
 
   function closeActivityLog(){
@@ -1683,13 +1784,17 @@
 
   async function clearActivityLog_(){
     if(!activityLog_.length) return;
-    if(!await appConfirm('Clear the entire activity log? This can\'t be undone.', { danger: true, title: 'Clear activity log?', confirmText: 'Clear log' })) return;
+    if(!await appConfirm('Clear the entire activity log? This clears it for everyone on every device, and can\'t be undone.', { danger: true, title: 'Clear activity log?', confirmText: 'Clear log' })) return;
     activityLog_ = [];
     activityUnread_ = 0;
     activityExpanded_.clear();
     saveActivityLog_();
     updateActivityBadge_();
     renderActivityList_();
+    if(API_URL){
+      try{ await apiCallJson_('clearActivity', {}); }
+      catch(e){ toast('Cleared locally, but could not clear the shared log — try again once you\'re online.'); }
+    }
   }
 
   loadActivityLog_();
@@ -1756,6 +1861,11 @@
       entry.undone = true;
       saveActivityLog_();
       renderActivityList_();
+      // Push the undone flag to the shared log too, using a fresh opId
+      // (NOT entry.id) so it isn't deduped against the original push —
+      // see pushActivityUndoneToServer_ above for why that distinction
+      // matters here.
+      pushActivityUndoneToServer_(entry.id);
     }catch(err){
       toast('Undo failed: ' + err.message);
     }
@@ -7466,6 +7576,20 @@
   }
   setInterval(keepWarmPing_, KEEP_WARM_MS);
 
+  // Light background poll for the shared activity log, so a change made
+  // on ONE device (a save, an undo, someone clearing the log) shows up on
+  // another device within about a minute without needing to open the bell
+  // icon there too. Cheap: checkActivityVersion_ only pulls the full list
+  // when the version counter has actually moved. Skipped under the same
+  // conditions as the customer-list auto-refresh above (tab hidden/
+  // offline), so it never fights with an in-progress edit or wastes a
+  // request nobody will see.
+  const ACTIVITY_POLL_MS = 60 * 1000;
+  setInterval(() => {
+    if(!API_URL || document.hidden || !navigator.onLine) return;
+    checkActivityVersion_();
+  }, ACTIVITY_POLL_MS);
+
   // Boot
   if(API_URL){
     (async () => {
@@ -7476,6 +7600,7 @@
       await loadData();
       if(outbox.length) syncOutbox();
       schedulePrefetch_();
+      syncActivityLog_(); // pull the shared log so this device is caught up from first paint
     })();
   } else {
     document.getElementById('setupPanel').style.display = 'block';

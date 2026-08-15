@@ -385,29 +385,34 @@
   .fact .v.money{font-variant-numeric:tabular-nums;}
 
   .rec-remarks{background:#F6F7FC;border:1px solid #E9EBF7;border-radius:10px;padding:11px 13px;margin-top:2px;}
-  /* align-items:flex-start keeps the date/tag pinned to the top of the
-     line once rtext below wraps to more than one line — the default
-     (stretch) would otherwise stretch those siblings' boxes down to
-     match, which looked fine for one-line remarks but odd once a
-     remark actually wraps. */
-  .rec-remarks .rline{display:flex;gap:8px;font-size:12px;line-height:1.5;align-items:flex-start;}
+  /* Stacked layout: tag+date sit together on their own header line, and
+     rtext drops to a new line below, flush with the card's left edge.
+     Previously tag/date/text all sat in one flex row, so once the date
+     column had any width every wrapped line of text after the first
+     lined up under the date instead of the left edge — that's the
+     "indent" the tag+date row now avoids entirely by not sharing a row
+     with the text at all. */
+  .rec-remarks .rline{display:flex;flex-direction:column;gap:4px;font-size:12px;line-height:1.5;}
   .rec-remarks .rline + .rline{margin-top:6px;padding-top:6px;border-top:1px dashed #E2E5F5;}
+  .rec-remarks .rline-head{display:flex;align-items:center;gap:8px;}
   .rec-remarks .rdate{flex-shrink:0;font-size:9.5px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.3px;font-family:'JetBrains Mono',monospace;white-space:nowrap;}
   /* Was plain `color:var(--text)` with no sizing/whitespace rules — as a
      flex-row child with no flex-basis/min-width, a long remark either
      forced the whole row wider than the card (min-width:auto is a flex
      item's default, so it never shrank below its own content) or, once
-     it did wrap, ran together onto visually-squashed lines. flex:1 +
-     min-width:0 lets it actually claim the row's remaining width and
-     wrap within it; white-space:pre-wrap preserves the blank lines
-     between stacked "[date] remark" entries (a stacked remark is one
-     string with real newlines in it) instead of collapsing them into
-     one run-on line; overflow-wrap/word-break handle a long unbroken
-     token (a run-on account number, a URL) without it poking out past
-     the card edge. The box itself has no max-height anywhere here, so
-     it already grows to fit however many lines a remark needs — this
-     is what stops it from clipping/ellipsis-ing long remarks.  */
-  .rec-remarks .rtext{color:var(--text);flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;}
+     it did wrap, ran together onto visually-squashed lines. Now that
+     rtext is its own full-width block below the tag/date line (not a
+     flex sibling of them), it starts flush at the card's left edge on
+     every line, including the first. white-space:pre-wrap preserves the
+     blank lines between stacked "[date] remark" entries (a stacked
+     remark is one string with real newlines in it) instead of
+     collapsing them into one run-on line; overflow-wrap/word-break
+     handle a long unbroken token (a run-on account number, a URL)
+     without it poking out past the card edge. The box itself has no
+     max-height anywhere here, so it already grows to fit however many
+     lines a remark needs — this is what stops it from clipping/
+     ellipsis-ing long remarks.  */
+  .rec-remarks .rtext{display:block;color:var(--text);width:100%;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;}
   .rec-remarks .rtext.none{font-style:italic;color:#AFB4CF;}
   .rec-remarks .rlabel{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#A5ABC8;margin-bottom:6px;}
   /* Per-line CURRENT / PREV badge — the current (auditor) remark and each
@@ -720,8 +725,16 @@
   .current-remark-entry{align-items:flex-start;}
   .current-remark-edit{
     display:block;width:100%;background:transparent;border:none;padding:0;margin:0;
-    min-height:20px;font-size:12px;line-height:1.55;color:var(--text);cursor:default;
-    border-radius:6px;transition:box-shadow .12s ease;resize:none;
+    min-height:20px;max-height:60vh;font-size:12px;line-height:1.55;color:var(--text);cursor:default;
+    border-radius:6px;transition:box-shadow .12s ease;
+    /* Was resize:none, so a long remark just sat in a couple of lines
+       with no way to see the rest without an internal scrollbar. Now it
+       auto-grows to fit its content the moment the modal opens (see
+       autoFitTextarea_) AND stays manually draggable afterward — the
+       bottom-right corner handle lets you pull it open further, or
+       shrink it back down, whenever you want. overflow-y:auto is the
+       fallback once dragged past max-height. */
+    resize:vertical;overflow-y:auto;
   }
   .current-remark-edit::placeholder{color:#AFB4CF;font-style:italic;}
   .current-remark-edit:hover,
@@ -741,7 +754,14 @@
      "Edit"/"Delete" buttons, so you can fix a typo in just that one
      remark (without retyping the rest) or remove just that one, right
      from the row itself — no separate select-then-bulk-delete step. */
-  .history-list{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto;padding-right:2px;}
+  /* Was a fixed max-height:260px with no way to see more than a
+     scrollful of previous remarks at once. Now it opens at the same
+     260px but the bottom-right corner is a drag handle (resize:vertical)
+     — hold and pull it down to open the whole list up, same as the
+     current-remark box above. min-height keeps it from being dragged
+     down to nothing; max-height caps it so it can't grow past the
+     modal's own scroll area. */
+  .history-list{display:flex;flex-direction:column;gap:6px;height:260px;min-height:90px;max-height:70vh;overflow-y:auto;padding-right:2px;resize:vertical;}
   .history-list-empty{font-size:12px;font-style:italic;color:#AFB4CF;padding:10px 2px;}
   .history-entry{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid #E5E8F7;border-radius:9px;background:#F8F9FD;transition:background .12s,border-color .12s;}
   .history-entry:hover{background:#F1F3FC;border-color:#D7DCF0;}
@@ -2201,11 +2221,29 @@
   // touches historyEntries_/renderHistoryList_ or the server; the actual
   // save only happens when "Save changes" is clicked, which still just
   // reads #mCurrentEdit's .value like it always did.
+  // Grows #mCurrentEdit to fit whatever text it currently holds, up to
+  // its CSS max-height (after that it scrolls). Called right after the
+  // box is populated so a long remark is fully visible the moment the
+  // modal opens, with no scrolling or manual drag needed first — the
+  // resize:vertical handle (see .current-remark-edit) is then still
+  // there afterward for pulling it open even further, or shrinking it,
+  // by hand.
+  function autoFitTextarea_(ta){
+    if(!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = ta.scrollHeight + 'px';
+  }
+
   document.getElementById('mCurrentEditBtn').addEventListener('click', function(){
     const ta = document.getElementById('mCurrentEdit');
     ta.readOnly = false;
     ta.focus();
     ta.selectionStart = ta.selectionEnd = ta.value.length;
+    autoFitTextarea_(ta);
+  });
+
+  document.getElementById('mCurrentEdit').addEventListener('input', function(){
+    autoFitTextarea_(this);
   });
 
   document.getElementById('mCurrentEdit').addEventListener('blur', function(){
@@ -2223,6 +2261,7 @@
     if(!ta.value.trim()){ toast('There\'s no current remark to delete.'); return; }
     if(!await appConfirm('Delete the current remark? This can\'t be undone once you click Save changes.', { danger: true, title: 'Delete remark?', confirmText: 'Delete' })) return;
     ta.value = '';
+    autoFitTextarea_(ta);
     // A blank remark shouldn't keep showing a stale audit date next to
     // it — clear the date badge along with the text so the two stay
     // consistent (no remark = no date), matching the rule enforced
@@ -6277,10 +6316,10 @@
 
       const curRemarkDisplay = hasRemark ? stripRedundantDateStamp_(c.auditorRemarks, c.dateOfAudit) : '';
       let remarksHtml = `<div class="rlabel">Auditor remarks</div>` +
-        `<div class="rline"><span class="rtag cur">Current</span><div class="rdate">${escapeHtml(fmtDateMDY_(c.dateOfAudit) || 'Undated')}</div>` +
+        `<div class="rline"><div class="rline-head"><span class="rtag cur">Current</span><div class="rdate">${escapeHtml(fmtDateMDY_(c.dateOfAudit) || 'Undated')}</div></div>` +
         `<div class="rtext ${hasRemark ? '' : 'none'}">${hasRemark ? escapeHtml(curRemarkDisplay) : 'No remarks yet'}</div></div>`;
       for(let j = 0; j < hist.length; j++){
-        remarksHtml += `<div class="rline"><span class="rtag prev">Prev</span><div class="rdate">${escapeHtml(fmtDateMDY_(hist[j].date) || 'Undated')}</div><div class="rtext">${escapeHtml(hist[j].remark)}</div></div>`;
+        remarksHtml += `<div class="rline"><div class="rline-head"><span class="rtag prev">Prev</span><div class="rdate">${escapeHtml(fmtDateMDY_(hist[j].date) || 'Undated')}</div></div><div class="rtext">${escapeHtml(hist[j].remark)}</div></div>`;
       }
 
       const pendingTag = isConflict
@@ -6618,6 +6657,7 @@
     editorOriginalCurrent = hasRemark ? stripRedundantDateStamp_(c.auditorRemarks, c.dateOfAudit) : '';
     const mCurrentEditEl = document.getElementById('mCurrentEdit');
     mCurrentEditEl.value = editorOriginalCurrent;
+    autoFitTextarea_(mCurrentEditEl);
     // Locked behind the pencil only when there's an existing remark to
     // protect from an accidental overwrite. When there isn't one yet,
     // leave it directly clickable/typable — no pencil needed to fill in

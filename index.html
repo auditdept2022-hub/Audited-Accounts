@@ -240,6 +240,14 @@
      rows failed, or a queued change waiting on a decision) can be
      expanded in place instead of only showing a one-line summary. ---- */
   .activity-item.has-detail{cursor:pointer;user-select:none;}
+  /* The header row above (icon/title/time) stays non-selectable since
+     tapping/clicking it is what expands or collapses the card — but once
+     expanded, the detail body (the chip list of account names, error
+     text, etc.) is exactly the kind of content someone wants to select
+     and copy elsewhere, so it's explicitly opted back in to normal text
+     selection here. */
+  .activity-item .activity-detail{cursor:auto;user-select:text;-webkit-user-select:text;}
+  .activity-item .activity-detail-chip{cursor:text;}
   .activity-item.has-detail:hover{border-color:var(--accent);background:#FBFBFF;}
   .activity-item .ai-toprow{display:flex;align-items:flex-start;gap:8px;}
   .activity-item .ai-toprow .ai-title{flex:1;}
@@ -1586,7 +1594,14 @@
       const expanded = activityExpanded_.has(e.id);
       const totalItems = (e.groups || []).reduce((n, g) => n + g.items.length, 0);
 
-      const detailHtml = hasDetail ? `<div class="activity-detail">
+      // stopPropagation here is what lets someone click-drag to select
+      // text inside the expanded detail (e.g. the "not matched" account
+      // names) without that click bubbling up to the card's own onclick
+      // and collapsing it out from under their selection. The buttons
+      // inside (View sync/Copy error/Undo) each already stop propagation
+      // individually too — that's still needed since those specific
+      // clicks shouldn't toggle the card even before this wrapper existed.
+      const detailHtml = hasDetail ? `<div class="activity-detail" onclick="event.stopPropagation()">
         ${(e.groups || []).map(g => {
           const shown = g.items.slice(0, ACTIVITY_DETAIL_CHIP_CAP);
           const extra = g.items.length - shown.length;

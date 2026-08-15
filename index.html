@@ -5108,7 +5108,44 @@
             }
           }
 
-          const drifted = Object.keys(item.snapshot).some(k => String(serverRow[k] ?? '') !== String(item.snapshot[k] ?? ''));
+          // ---- Only check drift on fields THIS item is actually about to
+          // overwrite ------------------------------------------------------
+          //
+          // item.snapshot always carries customer/auditorRemarks/dateOfAudit/
+          // previousRemarks PLUS every key in item.fields (collectFieldValues
+          // returns the full form, not just what changed), so comparing
+          // ALL of those against the server used to flag a conflict any
+          // time ANYTHING on the row moved — including auditorRemarks
+          // moving because of a plain "add new remark" (item.remark), which
+          // is always safe to merge: the backend always stacks the new
+          // entry onto whatever's currently on the sheet (see
+          // combineRemark_ in Code.gs), so there's no way for that to lose
+          // data. Flagging it as a conflict just made every offline remark
+          // added by more than one device pop up a "needs review" banner
+          // for no real reason — same remark should be silently skipped
+          // (handled above), and a genuinely different concurrent remark
+          // should just stack automatically, online or offline, with no
+          // popup either way.
+          //
+          // A direct full-text overwrite of the current remark
+          // (item.currentEdit) or of the remark history (item.historyEdit)
+          // is different — that really can clobber someone else's edit to
+          // the exact same box, so those stay protected and still surface
+          // a conflict if the sheet moved since this device's baseline.
+          const writtenKeys = new Set(Object.keys(item.fields || {}));
+          if(item.currentEdit !== undefined){ writtenKeys.add('auditorRemarks'); writtenKeys.add('dateOfAudit'); }
+          if(item.historyEdit !== undefined){ writtenKeys.add('previousRemarks'); }
+
+          // Keys this item isn't writing don't need a stale snapshot
+          // hanging around — keep them in sync with the sheet so a later
+          // pass over this same item (e.g. after a connection retry)
+          // doesn't compare against out-of-date values.
+          Object.keys(item.snapshot).forEach(k => {
+            if(!writtenKeys.has(k) && k in serverRow) item.snapshot[k] = serverRow[k];
+          });
+
+          const driftKeys = Object.keys(item.snapshot).filter(k => writtenKeys.has(k));
+          const drifted = driftKeys.some(k => String(serverRow[k] ?? '') !== String(item.snapshot[k] ?? ''));
           if(drifted){
             item.status = 'conflict';
             // Freeze what the sheet actually holds right now, so the
@@ -5119,7 +5156,7 @@
             remaining.push(item);
             if(!item._loggedConflict){
               item._loggedConflict = true;
-              const diffFields = Object.keys(item.snapshot).filter(k => String(serverRow[k] ?? '') !== String(item.snapshot[k] ?? ''));
+              const diffFields = driftKeys.filter(k => String(serverRow[k] ?? '') !== String(item.snapshot[k] ?? ''));
               logActivity_('warning', 'Sync conflict',
                 'Someone else changed this record before your offline edit synced (' + diffFields.map(fieldLabel_).join(', ') + ').',
                 null, 'openSync');

@@ -4498,6 +4498,16 @@
     customers = [];
     lastListHash = null;
     lastKnownVersion_ = null;
+    // Row numbers are only unique WITHIN a branch — row 5 on the branch
+    // we're leaving and row 5 on the branch we're entering describe two
+    // completely unrelated customers. rowHtmlCache is keyed purely by
+    // row number, so without this it could keep serving another
+    // branch's cached HTML under a coincidentally-matching signature
+    // for one render pass after a switch. sortBranch_() already clears
+    // this for the identical reason (row numbers moving underneath the
+    // data) — a branch switch is the same case, just triggered from a
+    // different place, so it needs the same clear.
+    rowHtmlCache.clear();
     document.getElementById('tableBody').innerHTML = '';
     loadOutbox_();
     updateSyncUI();

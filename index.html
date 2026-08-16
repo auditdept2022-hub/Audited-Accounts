@@ -867,7 +867,7 @@
     position:relative;display:flex;align-items:center;gap:10px;padding:7px 10px 7px 14px;
     border:1px solid var(--line);border-radius:9px;background:#fff;
     transition:background .12s,border-color .12s,transform .1s;
-    animation:profile-item-in .18s ease both;
+    animation:profile-item-in .12s ease both;
   }
   @keyframes profile-item-in{from{opacity:0;transform:translateY(3px);}to{opacity:1;transform:translateY(0);}}
   .profile-item:hover{background:#F7F8FD;border-color:#C9D1EE;}
@@ -1097,9 +1097,40 @@
     .hdr-status-counts{
       flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
       scrollbar-width:none;margin-top:3px;padding-top:5px;
+      position:relative;
     }
     .hdr-status-counts::-webkit-scrollbar{display:none;}
     .hdr-status-counts .sc-item{flex-shrink:0;}
+
+    /* Scroll affordance: fade out the edge(s) that still have hidden
+       chips beyond them, so it reads as "swipe for more" at a glance
+       instead of looking like a cut-off, complete list. updateStatusCountsEdges_()
+       (JS) keeps .at-start/.at-end in sync with actual scroll position,
+       so the fade only appears on the side that truly has more content —
+       .scrollable itself is only added when the chips overflow at all,
+       so a short list gets no fade. */
+    .hdr-status-counts.scrollable{
+      -webkit-mask-image:linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+      mask-image:linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+    }
+    .hdr-status-counts.scrollable.at-start{
+      -webkit-mask-image:linear-gradient(to right, #000, #000 calc(100% - 16px), transparent);
+      mask-image:linear-gradient(to right, #000, #000 calc(100% - 16px), transparent);
+    }
+    .hdr-status-counts.scrollable.at-end{
+      -webkit-mask-image:linear-gradient(to right, transparent, #000 16px, #000);
+      mask-image:linear-gradient(to right, transparent, #000 16px, #000);
+    }
+    /* A tiny pulsing chevron at the trailing edge, only while there's
+       more to scroll to — a quick, unmistakable "there's more, swipe"
+       cue that fades away once you've scrolled to the end. */
+    .hdr-status-counts.scrollable.at-start::after{
+      content:'›';position:absolute;right:2px;top:50%;transform:translateY(-50%);
+      color:#fff;font-size:15px;font-weight:800;pointer-events:none;
+      animation:sc-hint-pulse 1.4s ease-in-out infinite;
+      text-shadow:0 0 6px rgba(0,0,0,.5);
+    }
+    @keyframes sc-hint-pulse{0%,100%{opacity:.35;transform:translateY(-50%) translateX(0);}50%{opacity:1;transform:translateY(-50%) translateX(3px);}}
 
     /* Tighten the rest of the header's vertical rhythm to match. */
     .topband{padding-top:calc(8px + var(--safe-t));padding-bottom:6px;gap:4px;}
@@ -4514,7 +4545,15 @@
   }
 
   function openProfileMenu(){
-    document.getElementById('profileOverlay').classList.add('open');
+    // Guard against rapid repeat taps on the hamburger button: without
+    // this, each tap while the drawer is already open/opening re-ran
+    // loadProfiles_() and fired ANOTHER live listSheets request, which is
+    // exactly what made the menu feel like it was "stacking up" — several
+    // overlapping loads all landing and re-rendering the list one after
+    // another instead of just one clean open.
+    const overlay = document.getElementById('profileOverlay');
+    if(overlay.classList.contains('open')) return;
+    overlay.classList.add('open');
     lockBodyScroll();
     const searchInput = document.getElementById('profileSearch');
     if(searchInput) searchInput.value = '';
@@ -4653,9 +4692,20 @@
 
     try{
       const data = await apiCallJsonRead_('listSheets', {});
-      profilesCache_ = data.sheets || [];
+      const fresh = data.sheets || [];
+      // Only re-render if the live list actually differs from what's
+      // already on screen (from cache or a previous render). Without
+      // this check, a slow/cold-start Apps Script response that comes
+      // back with the SAME list still wiped and rebuilt the whole drawer
+      // — replaying every row's fade-in animation a second time, which
+      // is what made the menu look laggy/"stacked" even when nothing
+      // had actually changed.
+      const changed = !cached || cached.sheets.length !== fresh.length
+        || fresh.some((name, i) => name !== cached.sheets[i]);
+      profilesCache_ = fresh;
       saveSheetsCache_(profilesCache_);
-      renderProfileList_(profilesCache_);
+      if(changed) renderProfileList_(profilesCache_);
+      else updateProfileCount_();
       schedulePrefetch_();
     }catch(err){
       // Same reasoning as loadData()'s AbortError branch: a timeout here
@@ -4733,7 +4783,7 @@
     listEl.innerHTML = sheets.map((name, i) => {
       const isActive = name === currentSheet;
       const canDelete = sheets.length > 1;
-      return '<div class="profile-item' + (isActive ? ' active' : '') + '" data-name="' + escapeHtml(name) + '" style="animation-delay:' + Math.min(i * 20, 200) + 'ms">'
+      return '<div class="profile-item' + (isActive ? ' active' : '') + '" data-name="' + escapeHtml(name) + '" style="animation-delay:' + Math.min(i * 12, 80) + 'ms">'
         + '<div class="p-name-wrap" onclick="switchProfile_(\'' + jsAttr_(name) + '\')">'
         + '<span class="p-name">' + escapeHtml(name) + '</span>'
         + (isActive ? '<span class="p-check">✓ Current branch</span>' : '')
@@ -6317,6 +6367,27 @@
     });
     html += `<span class="sc-item sc-total"><span class="sc-num">${list.length}</span><span class="sc-label">Total</span></span>`;
     el.innerHTML = html;
+    updateStatusCountsEdges_(el);
+  }
+
+  // Keeps the status-chip strip's edge-fade (mobile only — see the
+  // .hdr-status-counts CSS) in sync with where it's actually scrolled to,
+  // so the fade only shows on the side that genuinely has more chips
+  // hidden, instead of a fade that's always there and never accurate.
+  // `.scrollable` is only added when the chips actually overflow their
+  // row, so a branch with few statuses (nothing to scroll) shows no
+  // fade at all.
+  function updateStatusCountsEdges_(el){
+    el = el || document.getElementById('statusCounts');
+    if(!el) return;
+    requestAnimationFrame(() => {
+      const overflowing = el.scrollWidth > el.clientWidth + 1;
+      el.classList.toggle('scrollable', overflowing);
+      if(!overflowing) return;
+      const maxScroll = el.scrollWidth - el.clientWidth;
+      el.classList.toggle('at-start', el.scrollLeft <= 2);
+      el.classList.toggle('at-end', el.scrollLeft >= maxScroll - 2);
+    });
   }
 
   // ---- Status filter options -------------------------------------------
@@ -7648,6 +7719,13 @@
   });
   document.getElementById('overlay').addEventListener('click', e=>{ if(e.target.id==='overlay') closeModal(); });
   document.getElementById('profileOverlay').addEventListener('click', e=>{ if(e.target.id==='profileOverlay') closeProfileMenu(); });
+  {
+    const scEl = document.getElementById('statusCounts');
+    if(scEl){
+      scEl.addEventListener('scroll', () => updateStatusCountsEdges_(scEl), { passive: true });
+      window.addEventListener('resize', () => updateStatusCountsEdges_(scEl));
+    }
+  }
   document.getElementById('newProfileName').addEventListener('keydown', e=>{ if(e.key === 'Enter'){ e.preventDefault(); createProfile_(); } });
   document.addEventListener('keydown', e=>{
     if(e.key === 'Escape'){

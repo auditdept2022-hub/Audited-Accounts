@@ -67,6 +67,26 @@
 
   .shell{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh;}
 
+  /* Pull-to-reload indicator — sits pinned above the header and is
+     pulled into view (translateY) as the user drags down from the very
+     top of the page. A hard-enough pull past the threshold does a full
+     window.location.reload() (the whole HTML/CSS/JS re-fetches), same
+     as a native browser/PWA pull-to-refresh — see initPullToReload_ near
+     the bottom of the script. Purely a JS-driven visual; never shown by
+     CSS alone. */
+  .ptr-indicator{
+    position:fixed;top:0;left:0;right:0;height:0;
+    display:flex;align-items:center;justify-content:center;
+    overflow:hidden;pointer-events:none;z-index:80;
+    background:var(--panel,#12183A);
+  }
+  .ptr-spinner{
+    width:20px;height:20px;border-radius:50%;
+    border:2px solid rgba(255,255,255,.25);border-top-color:#fff;
+  }
+  .ptr-indicator.ptr-ready .ptr-spinner{border-top-color:var(--accent);}
+  .ptr-indicator.ptr-spinning .ptr-spinner{animation:hdr-sync-spin .8s linear infinite;}
+
   /* Header — dark royal blue, layered gradient with a subtle sheen */
   .topband{
     background:
@@ -410,7 +430,7 @@
   .card{flex:1;min-height:0;display:flex;flex-direction:column;}
   .bulk-bar{flex-shrink:0;}
   .table-wrap{
-    flex:1;min-height:0;
+    flex:1;min-height:0;position:relative;
     overflow-y:auto;-webkit-overflow-scrolling:touch;
   }
 
@@ -1204,6 +1224,7 @@
 </head>
 <body>
 
+<div class="ptr-indicator" id="ptrIndicator"><div class="ptr-spinner" id="ptrSpinner"></div></div>
 <div class="shell">
   <header class="topband">
     <div class="brand">
@@ -1369,7 +1390,7 @@
             <button class="btn danger" id="bulkDeleteBtn" onclick="deleteSelected_()" disabled>🗑 Delete selected</button>
           </div>
         </div>
-        <div class="table-wrap">
+        <div class="table-wrap" id="tableWrap">
           <div class="rec-list" id="tableBody"></div>
           <div class="mark-popover" id="markPopover">
             <button class="mark-option" data-color="green" data-act="mark-set"><span class="mark-swatch" data-color="green"></span><span>Green</span><span class="check">✓</span></button>
@@ -6331,6 +6352,70 @@
   function manualRefresh_(){
     loadData();
   }
+
+  // Pull-to-reload — a hard downward swipe starting at the very top of
+  // the page (the header) does a FULL window.location.reload(), the
+  // same as a native browser/PWA pull-to-refresh. This is deliberately
+  // separate from manualRefresh_()/loadData() above: that only re-pulls
+  // the customer list, this re-fetches the whole HTML/CSS/JS shell too
+  // (picks up a new service-worker/app version, not just new data).
+  const PTR_TRIGGER_PX = 70;   // pull distance (post-resistance) needed to reload
+  const PTR_MAX_PX = 90;       // visual cap on how far the indicator travels
+  const PTR_RESISTANCE = 0.5;  // pull feels "heavier" than a 1:1 finger drag
+  function initPullToReload_(){
+    const header = document.querySelector('.topband');
+    const indicator = document.getElementById('ptrIndicator');
+    if(!header || !indicator) return;
+
+    let startY = 0;
+    let pulling = false;
+    let reloading = false;
+    let dist = 0;
+
+    function setIndicatorHeight(px){
+      indicator.style.height = px + 'px';
+    }
+
+    function reset(){
+      pulling = false;
+      dist = 0;
+      indicator.classList.remove('ptr-ready', 'ptr-spinning');
+      setIndicatorHeight(0);
+    }
+
+    header.addEventListener('touchstart', (e) => {
+      if(reloading || e.touches.length !== 1) return;
+      startY = e.touches[0].clientY;
+      pulling = true;
+      dist = 0;
+    }, { passive: true });
+
+    header.addEventListener('touchmove', (e) => {
+      if(!pulling || reloading) return;
+      const raw = e.touches[0].clientY - startY;
+      if(raw <= 0){ dist = 0; setIndicatorHeight(0); indicator.classList.remove('ptr-ready'); return; }
+      dist = Math.min(raw * PTR_RESISTANCE, PTR_MAX_PX);
+      setIndicatorHeight(dist);
+      indicator.classList.toggle('ptr-ready', dist >= PTR_TRIGGER_PX);
+    }, { passive: true });
+
+    header.addEventListener('touchend', () => {
+      if(!pulling) return;
+      pulling = false;
+      if(dist >= PTR_TRIGGER_PX && !reloading){
+        reloading = true;
+        indicator.classList.add('ptr-spinning');
+        indicator.classList.remove('ptr-ready');
+        setIndicatorHeight(48);
+        window.location.reload();
+      } else {
+        reset();
+      }
+    }, { passive: true });
+
+    header.addEventListener('touchcancel', reset, { passive: true });
+  }
+  initPullToReload_();
 
   function skeletonHtml(n){
     let s = '';

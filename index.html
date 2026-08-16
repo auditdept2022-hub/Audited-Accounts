@@ -295,7 +295,7 @@
      capping out and leaving dead space on wider monitors; side padding
      scales smoothly with viewport width via clamp() so it still looks
      right on phones, laptops, and ultra-wide screens alike. */
-  .main{padding:6px clamp(12px,2.4vw,40px) 32px;width:100%;max-width:100%;margin:0 auto;box-sizing:border-box;}
+  .main{padding:6px clamp(12px,2.4vw,40px) 10px;width:100%;max-width:100%;margin:0 auto;box-sizing:border-box;}
 
   .pagehead{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:8px;flex-wrap:wrap;}
   .pagehead h1{font-family:'Spectral',serif;font-size:25px;margin:0;font-weight:600;letter-spacing:-.2px;color:var(--ink);}
@@ -365,6 +365,38 @@
   /* Record stack — "plate" cards */
   .card{background:var(--card);border-radius:var(--radius);border:1px solid var(--line);overflow:hidden;box-shadow:var(--shadow);}
   .table-wrap{overflow-x:auto;}
+
+  /* ---- App-wide: pin the header + toolbar/search in place, and make
+     the customer list itself the only thing that scrolls, instead of
+     the whole page scrolling with just a sticky header. Applies at
+     every screen size — desktop and mobile both get a fixed header/
+     toolbar with only .table-wrap scrolling underneath. (Mobile also
+     gets its own extra compacting further down, in the phone media
+     query, on top of this.) */
+  html, body{height:100%;overflow:hidden;}
+  .shell{height:100vh;height:100dvh;overflow:hidden;}
+  .topband{flex-shrink:0;}
+  .main{
+    flex:1;min-height:0;overflow:hidden;
+    display:flex;flex-direction:column;
+  }
+  #setupPanel{flex:1;min-height:0;overflow-y:auto;}
+  /* JS toggles this element's inline style between "display:none" and
+     "display:block" (see connect()/disconnect() handlers) — matching on
+     the inline style text lets this rule apply only while it's actually
+     shown, without needing any JS changes. */
+  #dashPanel[style*="block"]{
+    display:flex!important;
+    flex-direction:column;
+    flex:1;min-height:0;overflow:hidden;
+  }
+  #importStatusBar, #conflictBanner, .toolbar{flex-shrink:0;}
+  .card{flex:1;min-height:0;display:flex;flex-direction:column;}
+  .bulk-bar{flex-shrink:0;}
+  .table-wrap{
+    flex:1;min-height:0;
+    overflow-y:auto;-webkit-overflow-scrolling:touch;
+  }
 
   .rec-list{display:flex;flex-direction:column;gap:5px;padding:8px;background:linear-gradient(180deg,#F7F8FC,transparent 120px);}
   .rec{
@@ -903,7 +935,7 @@
   /* ---------- Responsive: tablet ---------- */
   @media(max-width:900px){
     .topband{flex-wrap:wrap;row-gap:6px;padding:calc(10px + var(--safe-t)) 16px 8px;}
-    .main{padding:8px 16px 32px;}
+    .main{padding:8px 16px 10px;}
     .field-grid{grid-template-columns:1fr;}
     .fact-grid{grid-template-columns:repeat(3,1fr);}
   }
@@ -1020,7 +1052,7 @@
        mobile-only override is needed here any more — the same JS keeps
        the menu fully on-screen on any width. */
 
-    .rec-list{padding:6px;gap:6px;}
+    .rec-list{padding:6px 6px calc(6px + var(--safe-b)) 6px;gap:6px;}
     .rec{padding:10px 10px 10px 12px;}
     .rec-top{gap:6px;margin-bottom:6px;padding-bottom:6px;}
     .cust-name{font-size:14px;}
@@ -1054,42 +1086,14 @@
     .toast{left:16px;right:16px;bottom:calc(16px + var(--safe-b));text-align:center;}
   }
 
-  /* ---- Mobile only: pin header + toolbar/search in place, and make the
-     customer list itself the only thing that scrolls, instead of the
-     whole page scrolling with a sticky header. The header is also
-     tightened up (status chips collapse to one scrollable row instead
-     of wrapping 2-3 rows deep) so a customer card is actually visible
-     without scrolling at all. Desktop/tablet (>640px) are completely
+  /* ---- Mobile only: further compact the header on top of the app-wide
+     fixed header/toolbar + scrollable-list layout above (status chips
+     collapse to one scrollable row instead of wrapping 2-3 rows deep,
+     smaller type, tighter padding) so a customer card is actually
+     visible without scrolling at all. Desktop/tablet (>640px) are
      untouched — everything here lives inside this one breakpoint. ---- */
   @media(max-width:640px){
-    html, body{height:100%;overflow:hidden;}
-    .shell{height:100vh;height:100dvh;overflow:hidden;}
-
-    /* Header + toolbar become fixed-height flex items that never
-       scroll; only the space left over goes to the list below. */
-    .topband{flex-shrink:0;}
-    .main{
-      flex:1;min-height:0;overflow:hidden;
-      display:flex;flex-direction:column;
-      padding-bottom:0;
-    }
-    #setupPanel{flex:1;min-height:0;overflow-y:auto;}
-    /* JS toggles this element's inline style between "display:none" and
-       "display:block" (see connect()/disconnect() handlers) — matching
-       on the inline style text lets this rule apply only while it's
-       actually shown, without needing any JS changes. */
-    #dashPanel[style*="block"]{
-      display:flex!important;
-      flex-direction:column;
-      flex:1;min-height:0;overflow:hidden;
-    }
-    #importStatusBar, #conflictBanner, .toolbar{flex-shrink:0;}
-    .card{flex:1;min-height:0;display:flex;flex-direction:column;}
-    .bulk-bar{flex-shrink:0;}
-    .table-wrap{
-      flex:1;min-height:0;
-      overflow-y:auto;-webkit-overflow-scrolling:touch;
-    }
+    .main{padding-bottom:0;}
 
     /* Collapse the status chips to one horizontally-swipeable row
        instead of wrapping across several — this was the single
@@ -1475,7 +1479,6 @@
           <span class="profile-add-icon">+</span>
           <div>
             <div class="profile-add-title-text">Add a new branch</div>
-            <span class="profile-add-title-sub">Starts empty with the standard columns — not copied from any existing branch.</span>
           </div>
         </div>
         <div class="profile-add-combo">

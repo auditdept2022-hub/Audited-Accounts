@@ -248,6 +248,37 @@
   }
   .hdr-bell.ring svg{animation:hdr-bell-ring .55s ease;transform-origin:50% 15%;}
 
+  /* Action-needed button — separate from the bell. The bell/Activity Log
+     is the full history (everything that happened, success included);
+     this button is filtered down to just what still needs a human to
+     look at it (errors + warnings — failed saves, sync conflicts,
+     skipped/duplicate rows, etc.), so a person can tell "is there
+     anything I need to fix?" at a glance without opening the full log.
+     Visually identical to the bell button, just with its own badge/ring
+     state driven off actionUnread_ instead of activityUnread_. */
+  .hdr-action-btn{
+    position:relative;display:flex;align-items:center;justify-content:center;
+    width:32px;height:32px;border-radius:9px;flex-shrink:0;
+    background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);
+    color:#B7C0E8;cursor:pointer;padding:0;touch-action:manipulation;
+    transition:background .15s ease,border-color .15s ease,color .15s ease,transform .08s ease;
+  }
+  .hdr-action-btn:hover{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.26);color:#fff;}
+  .hdr-action-btn:active{transform:scale(.92);}
+  .hdr-action-btn svg{width:16px;height:16px;display:block;}
+  .hdr-action-badge{
+    position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;padding:0 4px;
+    display:none;align-items:center;justify-content:center;
+    background:#D89A2A;color:#fff;border:2px solid var(--panel);
+    border-radius:9px;font-size:9.5px;font-weight:800;line-height:1;
+    font-family:'JetBrains Mono',monospace;
+  }
+  /* Amber badge for warnings-only; escalates to the same red the bell
+     uses the moment at least one unread issue is a hard error. */
+  .hdr-action-btn.has-error{border-color:rgba(228,84,74,.55);}
+  .hdr-action-btn.has-error .hdr-action-badge{background:#E4544A;}
+  .hdr-action-btn.ring svg{animation:hdr-bell-ring .55s ease;transform-origin:50% 15%;}
+
   /* ---- Activity log modal — reuses the .sync-item look/feel but with
      a type-colored icon chip (success/error/warning/info) per entry. ---- */
   .activity-list{display:flex;flex-direction:column;gap:8px;max-height:56vh;overflow-y:auto;}
@@ -1256,6 +1287,14 @@
             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
           </svg>
         </button>
+        <button class="hdr-action-btn" id="hdrActionBtn" onclick="openActionLog()" title="Action needed">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+            <line x1="12" y1="9" x2="12" y2="13"></line>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+          <span class="hdr-action-badge" id="hdrActionBadge">0</span>
+        </button>
         <button class="hdr-bell" id="hdrBellBtn" onclick="openActivityLog()" title="Activity log">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
@@ -1558,6 +1597,27 @@
   </div>
 </div>
 
+<div class="overlay" id="actionOverlay">
+  <div class="modal activity-modal">
+    <div class="modal-head">
+      <div>
+        <h2>Action Needed</h2>
+        <div class="activity-modal-meta">Errors and warnings only — failed saves, sync conflicts, skipped/duplicate rows. Fix these; check the bell for the full history.</div>
+      </div>
+      <button class="modal-close" onclick="closeActionLog()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="actionList" class="activity-list"></div>
+    </div>
+    <div class="modal-foot">
+      <div class="left"></div>
+      <div class="right">
+        <button class="btn primary" onclick="closeActionLog()">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="confirmOverlay">
   <div class="modal confirm-modal" id="confirmModalEl">
     <div class="modal-body">
@@ -1613,6 +1673,15 @@
   let activityLog_ = [];
   let activityUnread_ = 0;
   let activityModalOpen_ = false;
+  // "Action needed" is the SAME underlying activityLog_, just filtered
+  // down to type 'error'/'warning' at render time (see renderActionList_
+  // below) — it is not a second store. actionUnread_/actionModalOpen_
+  // mirror activityUnread_/activityModalOpen_ exactly, just counting and
+  // gating the filtered view instead of the full one, so the bell (full
+  // history) and this button (only what needs fixing) can be read/opened
+  // independently of each other.
+  let actionUnread_ = 0;
+  let actionModalOpen_ = false;
   // Which entries (by id) are currently expanded to show their detail
   // (e.g. the actual list of unmatched/failed customer names) — kept in
   // memory only (not persisted), reset each time the modal is closed.
@@ -1625,14 +1694,16 @@
         const parsed = JSON.parse(raw);
         activityLog_ = Array.isArray(parsed.entries) ? parsed.entries : [];
         activityUnread_ = Number(parsed.unread) || 0;
+        actionUnread_ = Number(parsed.actionUnread) || 0;
       }
-    }catch(e){ activityLog_ = []; activityUnread_ = 0; }
+    }catch(e){ activityLog_ = []; activityUnread_ = 0; actionUnread_ = 0; }
     updateActivityBadge_();
+    updateActionBadge_();
   }
 
   function saveActivityLog_(){
     try{
-      localStorage.setItem(ACTIVITY_LOG_KEY, JSON.stringify({ entries: activityLog_.slice(0, ACTIVITY_LOG_MAX), unread: activityUnread_ }));
+      localStorage.setItem(ACTIVITY_LOG_KEY, JSON.stringify({ entries: activityLog_.slice(0, ACTIVITY_LOG_MAX), unread: activityUnread_, actionUnread: actionUnread_ }));
     }catch(e){ /* best-effort — a full localStorage shouldn't break the app */ }
   }
 
@@ -1788,7 +1859,9 @@
         if(typeof res.version === 'number') lastKnownActivityVersion_ = res.version;
         saveActivityLog_();
         updateActivityBadge_();
+        updateActionBadge_();
         if(activityModalOpen_) renderActivityList_();
+        if(actionModalOpen_) renderActionList_();
       }
     }catch(e){
       // offline, or an older/not-yet-redeployed backend that doesn't know
@@ -1848,9 +1921,13 @@
     activityLog_.unshift(entry);
     if(activityLog_.length > ACTIVITY_LOG_MAX) activityLog_.length = ACTIVITY_LOG_MAX;
     if(!activityModalOpen_) activityUnread_++;
+    const needsAction = (entry.type === 'error' || entry.type === 'warning');
+    if(needsAction && !actionModalOpen_) actionUnread_++;
     saveActivityLog_();
     updateActivityBadge_();
+    updateActionBadge_();
     if(activityModalOpen_) renderActivityList_();
+    if(actionModalOpen_) renderActionList_();
     pushActivityToServer_(entry); // fire-and-forget — see note above
 
     const bell = document.getElementById('hdrBellBtn');
@@ -1858,6 +1935,14 @@
       bell.classList.remove('ring');
       void bell.offsetWidth; // restart the CSS animation
       bell.classList.add('ring');
+    }
+    if(needsAction){
+      const actionBtn = document.getElementById('hdrActionBtn');
+      if(actionBtn){
+        actionBtn.classList.remove('ring');
+        void actionBtn.offsetWidth;
+        actionBtn.classList.add('ring');
+      }
     }
   }
 
@@ -1870,6 +1955,25 @@
     if(activityUnread_ > 0){
       badge.style.display = 'flex';
       badge.textContent = activityUnread_ > 99 ? '99+' : String(activityUnread_);
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+
+  // Same idea as updateActivityBadge_ above, but counting/coloring off
+  // actionUnread_ and only the error/warning slice of the log — see the
+  // actionUnread_ declaration for why this is a separate counter rather
+  // than reusing activityUnread_.
+  function updateActionBadge_(){
+    const btn = document.getElementById('hdrActionBtn');
+    const badge = document.getElementById('hdrActionBadge');
+    if(!btn || !badge) return;
+    const unreadIssues = activityLog_.filter(e => e.type === 'error' || e.type === 'warning').slice(0, actionUnread_);
+    const hasUnreadError = unreadIssues.some(e => e.type === 'error');
+    btn.classList.toggle('has-error', hasUnreadError);
+    if(actionUnread_ > 0){
+      badge.style.display = 'flex';
+      badge.textContent = actionUnread_ > 99 ? '99+' : String(actionUnread_);
     } else {
       badge.style.display = 'none';
     }
@@ -1893,11 +1997,29 @@
     const clearBtn = document.getElementById('activityClearBtn');
     if(!list) return;
     if(clearBtn) clearBtn.disabled = !activityLog_.length;
-    if(!activityLog_.length){
-      list.innerHTML = '<div class="activity-empty">No activity yet — imports, exports, saves, and any errors will show up here.</div>';
+    renderEntriesInto_(list, activityLog_, 'No activity yet — imports, exports, saves, and any errors will show up here.');
+  }
+
+  // "Action needed" view — the SAME entries as the full activity log,
+  // filtered down to just type 'error'/'warning' so a person can see
+  // exactly what still needs fixing (a failed save, a sync conflict, a
+  // skipped/duplicate row) without wading through the successes too.
+  function renderActionList_(){
+    const list = document.getElementById('actionList');
+    if(!list) return;
+    const issues = activityLog_.filter(e => e.type === 'error' || e.type === 'warning');
+    renderEntriesInto_(list, issues, 'Nothing needs action right now — errors and warnings will show up here.');
+  }
+
+  // Shared entry-array → HTML renderer used by both renderActivityList_
+  // (full log) and renderActionList_ (errors/warnings only) above, so
+  // the two views never drift out of sync with each other.
+  function renderEntriesInto_(list, entries, emptyMessage){
+    if(!entries.length){
+      list.innerHTML = `<div class="activity-empty">${escapeHtml(emptyMessage)}</div>`;
       return;
     }
-    list.innerHTML = activityLog_.map(e => {
+    list.innerHTML = entries.map(e => {
       const time = new Date(e.ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       // Any entry that has something beyond the one-line summary — extra
       // groups, a follow-up action, OR just a longer error/detail string
@@ -1955,7 +2077,8 @@
   function toggleActivityDetail_(id){
     if(activityExpanded_.has(id)) activityExpanded_.delete(id);
     else activityExpanded_.add(id);
-    renderActivityList_();
+    if(activityModalOpen_) renderActivityList_();
+    if(actionModalOpen_) renderActionList_();
   }
 
   async function copyActivityDetail_(id){
@@ -1971,12 +2094,14 @@
   }
 
   // Runs an entry's `action` keyword (see logActivity_ above). Currently
-  // only 'openSync' exists — closes the activity log and opens the sync
-  // popup so the person can resolve the conflict right away.
+  // only 'openSync' exists — closes whichever log modal (Activity or
+  // Action Needed) is currently open and opens the sync popup so the
+  // person can resolve the conflict right away.
   function openActivityLogAction_(id){
     const entry = activityLog_.find(e => e.id === id);
     if(!entry || entry.action !== 'openSync') return;
-    closeActivityLog();
+    if(activityModalOpen_) closeActivityLog();
+    if(actionModalOpen_) closeActionLog();
     if(typeof openSyncModal === 'function') openSyncModal();
   }
 
@@ -2001,15 +2126,40 @@
     unlockBodyScroll();
   }
 
+  // Mirrors openActivityLog()/closeActivityLog() above, but for the
+  // filtered "Action Needed" view — its own open flag and its own
+  // unread counter (actionUnread_) so opening one of these two modals
+  // doesn't clear the other's badge.
+  function openActionLog(){
+    actionModalOpen_ = true;
+    actionUnread_ = 0;
+    saveActivityLog_();
+    updateActionBadge_();
+    renderActionList_();
+    document.getElementById('actionOverlay').classList.add('open');
+    lockBodyScroll();
+    syncActivityLog_();
+  }
+
+  function closeActionLog(){
+    actionModalOpen_ = false;
+    activityExpanded_.clear();
+    document.getElementById('actionOverlay').classList.remove('open');
+    unlockBodyScroll();
+  }
+
   async function clearActivityLog_(){
     if(!activityLog_.length) return;
     if(!await appConfirm('Clear the entire activity log? This clears it for everyone on every device, and can\'t be undone.', { danger: true, title: 'Clear activity log?', confirmText: 'Clear log' })) return;
     activityLog_ = [];
     activityUnread_ = 0;
+    actionUnread_ = 0;
     activityExpanded_.clear();
     saveActivityLog_();
     updateActivityBadge_();
+    updateActionBadge_();
     renderActivityList_();
+    if(actionModalOpen_) renderActionList_();
     if(API_URL){
       try{ await apiCallJson_('clearActivity', {}); }
       catch(e){ toast('Cleared locally, but could not clear the shared log — try again once you\'re online.'); }
@@ -2079,7 +2229,8 @@
 
       entry.undone = true;
       saveActivityLog_();
-      renderActivityList_();
+      if(activityModalOpen_) renderActivityList_();
+      if(actionModalOpen_) renderActionList_();
       // Push the undone flag to the shared log too, using a fresh opId
       // (NOT entry.id) so it isn't deduped against the original push —
       // see pushActivityUndoneToServer_ above for why that distinction

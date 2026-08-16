@@ -1054,6 +1054,64 @@
     .toast{left:16px;right:16px;bottom:calc(16px + var(--safe-b));text-align:center;}
   }
 
+  /* ---- Mobile only: pin header + toolbar/search in place, and make the
+     customer list itself the only thing that scrolls, instead of the
+     whole page scrolling with a sticky header. The header is also
+     tightened up (status chips collapse to one scrollable row instead
+     of wrapping 2-3 rows deep) so a customer card is actually visible
+     without scrolling at all. Desktop/tablet (>640px) are completely
+     untouched — everything here lives inside this one breakpoint. ---- */
+  @media(max-width:640px){
+    html, body{height:100%;overflow:hidden;}
+    .shell{height:100vh;height:100dvh;overflow:hidden;}
+
+    /* Header + toolbar become fixed-height flex items that never
+       scroll; only the space left over goes to the list below. */
+    .topband{flex-shrink:0;}
+    .main{
+      flex:1;min-height:0;overflow:hidden;
+      display:flex;flex-direction:column;
+      padding-bottom:0;
+    }
+    #setupPanel{flex:1;min-height:0;overflow-y:auto;}
+    /* JS toggles this element's inline style between "display:none" and
+       "display:block" (see connect()/disconnect() handlers) — matching
+       on the inline style text lets this rule apply only while it's
+       actually shown, without needing any JS changes. */
+    #dashPanel[style*="block"]{
+      display:flex!important;
+      flex-direction:column;
+      flex:1;min-height:0;overflow:hidden;
+    }
+    #importStatusBar, #conflictBanner, .toolbar{flex-shrink:0;}
+    .card{flex:1;min-height:0;display:flex;flex-direction:column;}
+    .bulk-bar{flex-shrink:0;}
+    .table-wrap{
+      flex:1;min-height:0;
+      overflow-y:auto;-webkit-overflow-scrolling:touch;
+    }
+
+    /* Collapse the status chips to one horizontally-swipeable row
+       instead of wrapping across several — this was the single
+       biggest space-hog pushing the customer card below the fold. */
+    .hdr-status-counts{
+      flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
+      scrollbar-width:none;margin-top:3px;padding-top:5px;
+    }
+    .hdr-status-counts::-webkit-scrollbar{display:none;}
+    .hdr-status-counts .sc-item{flex-shrink:0;}
+
+    /* Tighten the rest of the header's vertical rhythm to match. */
+    .topband{padding-top:calc(8px + var(--safe-t));padding-bottom:6px;gap:4px;}
+    .brand .mark{font-size:14px;}
+    .hdr-clock-wrap{margin-top:0;padding-top:4px;gap:6px;}
+    .hdr-clock-time{font-size:15px;}
+    .hdr-clock-date{font-size:9px;}
+    .hdr-bell{width:26px;height:26px;}
+
+    .toolbar{padding:6px 8px;margin-bottom:4px;}
+  }
+
   /* ---- Narrow phones: shrink the clock a touch further; the full-width
      stacked layout itself is already set at the 640px breakpoint above. ---- */
   @media(max-width:480px){

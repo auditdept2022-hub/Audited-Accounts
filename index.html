@@ -457,7 +457,7 @@
     flex-direction:column;
     flex:1;min-height:0;overflow:hidden;
   }
-  #importStatusBar, #conflictBanner, .toolbar{flex-shrink:0;}
+  #importStatusBar, .toolbar{flex-shrink:0;}
   .card{flex:1;min-height:0;display:flex;flex-direction:column;}
   .bulk-bar{flex-shrink:0;}
   .table-wrap{
@@ -909,17 +909,14 @@
      amber, error cards use red — same accent-bar pattern so the two read
      as a family instead of two different components.
 
-     Scrolling: #conflictBanner sits inside #dashPanel, which is
-     `overflow:hidden` by design (see the #dashPanel[style*="block"] rule
-     above) so that only .table-wrap scrolls for the customer list. That
-     meant a banner with several conflict/error cards had nowhere to go —
-     content past the visible area was silently clipped with no way to
-     reach it, hiding the very name/fields the person needed to see when
-     deciding what to keep. #conflictBanner now scrolls internally (own
-     max-height + overflow-y), and each panel's header stays pinned
-     (position:sticky) while its cards scroll underneath, so it's always
-     clear how many changes are still waiting as you scroll. */
-  #conflictBanner{max-height:52vh;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;border-radius:16px;scrollbar-gutter:stable;}
+     Scrolling: #conflictBanner now lives inside the "Action Needed"
+     popup (#actionOverlay .modal-body), not inline above the search bar
+     — it's tucked behind the ⚠ toolbar icon instead of always taking up
+     space on the main screen. .modal-body already scrolls on its own
+     (see the shared .modal-body rule), so the banner just needs to lay
+     its cards out; no separate internal scroll region is needed here
+     anymore. */
+  #conflictBanner{border-radius:16px;}
   .cf-panel{position:relative;background:linear-gradient(180deg,#FFFDF8,#FFFBF2);border:1px solid #EEDFB6;border-radius:16px;padding:0 16px 14px 18px;margin-bottom:12px;font-size:12.5px;color:var(--text);box-shadow:var(--shadow);overflow:hidden;}
   .cf-panel::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:linear-gradient(180deg,var(--gold),var(--rstr));}
   .cf-panel.is-error{background:linear-gradient(180deg,#FFF9F9,#FFF5F6);border-color:#F3CBD5;}
@@ -1376,7 +1373,6 @@
 
     <div id="dashPanel" style="display:none;">
       <div id="importStatusBar" class="import-status-bar"><span id="importStatus" class="import-status"></span></div>
-      <div id="conflictBanner" style="display:none;"></div>
       <div class="toolbar">
         <div class="toolbar-extra" id="toolbarExtra">
         <div class="left">
@@ -1663,11 +1659,12 @@
     <div class="modal-head">
       <div>
         <h2>Action Needed</h2>
-        <div class="activity-modal-meta">Errors and warnings only — failed saves, sync conflicts, skipped/duplicate rows. Fix these; check the bell for the full history.</div>
+        <div class="activity-modal-meta">Sync conflicts to resolve, plus failed saves, skipped/duplicate rows &amp; other warnings. Fix these here; check the bell for the full history.</div>
       </div>
       <button class="modal-close" onclick="closeActionLog()">✕</button>
     </div>
     <div class="modal-body">
+      <div id="conflictBanner" style="display:none;"></div>
       <div id="actionList" class="activity-list"></div>
     </div>
     <div class="modal-foot">
@@ -2155,15 +2152,18 @@
   }
 
   // Runs an entry's `action` keyword (see logActivity_ above). Currently
-  // only 'openSync' exists — closes whichever log modal (Activity or
-  // Action Needed) is currently open and opens the sync popup so the
-  // person can resolve the conflict right away.
+  // only 'openSync' exists — jumps straight to the conflict-resolution
+  // cards, which live inside the "Action Needed" popup (#conflictBanner
+  // is nested in #actionOverlay now) rather than a separate modal, so
+  // this just makes sure that popup is open and scrolls the banner into
+  // view instead of closing everything and opening a different modal.
   function openActivityLogAction_(id){
     const entry = activityLog_.find(e => e.id === id);
     if(!entry || entry.action !== 'openSync') return;
     if(activityModalOpen_) closeActivityLog();
-    if(actionModalOpen_) closeActionLog();
-    if(typeof openSyncModal === 'function') openSyncModal();
+    if(!actionModalOpen_) openActionLog();
+    const banner = document.getElementById('conflictBanner');
+    if(banner) banner.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }
 
   function openActivityLog(){
@@ -2197,6 +2197,7 @@
     saveActivityLog_();
     updateActionBadge_();
     renderActionList_();
+    updateSyncUI(); // refreshes #conflictBanner, which now lives inside this modal
     document.getElementById('actionOverlay').classList.add('open');
     lockBodyScroll();
     syncActivityLog_();
@@ -4912,7 +4913,7 @@
     if(!navigator.onLine){
       statusEl.textContent = 'Offline — will resume automatically once you\'re back online.';
     } else if(outbox.some(o => o.status === 'conflict' || o.status === 'error')){
-      statusEl.textContent = 'Some changes need your attention — see the banner on the main screen.';
+      statusEl.textContent = 'Some changes need your attention — tap ⚠ Action needed in the header.';
     } else {
       statusEl.textContent = '';
     }

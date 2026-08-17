@@ -8298,7 +8298,11 @@
     clearTimeout(searchDebounce);
     searchDebounce = setTimeout(render, 150);
   });
-  document.getElementById('overlay').addEventListener('click', e=>{ if(e.target.id==='overlay') closeModal(); });
+  // NOTE: the edit/add customer modal (#overlay) intentionally does NOT
+  // close on an outside/backdrop click — it can hold unsaved edits, so a
+  // stray tap outside it must never silently discard them. Only the ✕
+  // button and the Cancel button (both wired to closeModal() in the HTML)
+  // close it.
   document.getElementById('profileOverlay').addEventListener('click', e=>{ if(e.target.id==='profileOverlay') closeProfileMenu(); });
   {
     const scEl = document.getElementById('statusCounts');

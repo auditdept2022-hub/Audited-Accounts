@@ -902,22 +902,43 @@
 
   /* Offline / sync status: see .hdr-dot / .sub-row above (header). */
 
-  .conflict-banner{background:var(--rstr-soft);border:1px solid #E7D08C;border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;font-size:12.5px;color:var(--text);}
-  .conflict-banner .cb-head{font-weight:700;margin-bottom:8px;color:var(--rstr);}
-  .conflict-item{background:#fff;border:1px solid #EFE3BC;border-radius:8px;padding:10px 12px;margin-bottom:8px;}
+  /* ---- Conflict / sync-attention panel (redesign) --------------------
+     Modern layered card instead of the old flat gold banner: soft tinted
+     surface, a colored accent bar down the left edge, a round icon badge
+     in the header, and pill-shaped meta/action chips. Conflict cards use
+     amber, error cards use red — same accent-bar pattern so the two read
+     as a family instead of two different components. */
+  .cf-panel{position:relative;background:linear-gradient(180deg,#FFFDF8,#FFFBF2);border:1px solid #EEDFB6;border-radius:16px;padding:14px 16px 14px 18px;margin-bottom:12px;font-size:12.5px;color:var(--text);box-shadow:var(--shadow);overflow:hidden;}
+  .cf-panel::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:linear-gradient(180deg,var(--gold),var(--rstr));}
+  .cf-panel.is-error{background:linear-gradient(180deg,#FFF9F9,#FFF5F6);border-color:#F3CBD5;}
+  .cf-panel.is-error::before{background:linear-gradient(180deg,var(--del),#8C2138);}
+  .cf-panel-head{display:flex;align-items:center;gap:9px;margin-bottom:10px;}
+  .cf-panel-icon{flex:0 0 auto;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;background:var(--gold-soft);color:var(--rstr);box-shadow:0 0 0 3px rgba(184,147,74,.12);}
+  .cf-panel.is-error .cf-panel-icon{background:var(--del-soft);color:var(--del);box-shadow:0 0 0 3px rgba(176,48,74,.12);}
+  .cf-panel-title{font-weight:700;color:var(--rstr);line-height:1.35;}
+  .cf-panel.is-error .cf-panel-title{color:var(--del);}
+  .cf-panel-sub{font-weight:500;color:var(--muted);font-size:11px;margin-top:1px;}
+
+  .conflict-item{background:#fff;border:1px solid #EFE3BC;border-radius:12px;padding:12px 13px;margin-bottom:10px;box-shadow:0 1px 0 rgba(16,22,60,.02);}
+  .cf-panel.is-error .conflict-item{border-color:#F3CBD5;}
   .conflict-item:last-child{margin-bottom:0;}
-  .conflict-item .ci-name{font-weight:700;margin-bottom:4px;}
+  .conflict-item .ci-name{font-weight:700;margin-bottom:4px;font-size:13px;}
   .conflict-item .ci-detail{color:var(--muted);font-size:11.5px;margin-bottom:8px;line-height:1.5;}
-  .conflict-item .ci-meta{color:var(--muted-2);font-size:10.5px;margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.2px;}
-  .conflict-item .ci-actions.ci-bulk{margin-bottom:8px;}
-  .conflict-item .ci-actions.ci-bulk button{font-size:11px;padding:4px 9px;}
-  .conflict-item .ci-actions{display:flex;gap:8px;}
-  .conflict-item .ci-actions button{font-size:11.5px;padding:5px 10px;border-radius:6px;border:1px solid #DDD6C4;background:#fff;cursor:pointer;}
+  .conflict-item .ci-meta{display:inline-flex;align-items:center;gap:6px;color:var(--rstr);background:var(--gold-soft);border:1px solid #EFE0B4;border-radius:20px;padding:3px 10px 3px 8px;margin-bottom:10px;font-size:10px;font-weight:600;letter-spacing:.1px;}
+  .conflict-item .ci-actions.ci-bulk{display:flex;gap:6px;margin-bottom:10px;}
+  .conflict-item .ci-actions.ci-bulk button{font-size:10.5px;font-weight:600;padding:5px 11px;border-radius:20px;border:1px solid var(--line);background:#F7F8FC;color:var(--muted);cursor:pointer;transition:background .15s,color .15s,border-color .15s;}
+  .conflict-item .ci-actions.ci-bulk button:hover{background:var(--accent-soft);color:var(--accent-dark);border-color:#C9D1F2;}
+  .conflict-item .ci-actions{display:flex;gap:8px;flex-wrap:wrap;}
+  .conflict-item .ci-actions button{font-size:11.5px;font-weight:600;padding:7px 14px;border-radius:9px;border:1px solid #DDD6C4;background:#fff;cursor:pointer;transition:transform .1s,box-shadow .15s;}
+  .conflict-item .ci-actions button:hover{box-shadow:var(--shadow);}
+  .conflict-item .ci-actions button:active{transform:scale(.97);}
   .conflict-item .ci-actions button.keep{background:var(--accent);color:#fff;border-color:var(--accent);}
   .conflict-item .ci-actions button.discard{color:var(--del);border-color:#EFC6CE;}
+  .conflict-item .ci-actions button.save{background:linear-gradient(135deg,var(--accent),var(--accent-dark));color:#fff;border-color:var(--accent-dark);box-shadow:0 2px 8px rgba(42,61,154,.25);}
+  .conflict-item .ci-actions button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;}
 
   .ci-versions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}
-  .ci-version{border-radius:8px;padding:9px 10px;font-size:11.5px;line-height:1.5;}
+  .ci-version{border-radius:10px;padding:9px 10px;font-size:11.5px;line-height:1.5;}
   .ci-version.mine{background:var(--accent-soft);border:1px solid #C9D1F2;}
   .ci-version.theirs{background:var(--del-soft);border:1px solid #EFC6CE;}
   .ci-version-label{font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.3px;margin-bottom:6px;}
@@ -931,19 +952,31 @@
   .ci-empty{color:var(--muted);font-style:italic;}
   @media(max-width:640px){ .ci-versions{grid-template-columns:1fr;} }
 
-  .ci-picker{margin-bottom:10px;}
-  .ci-pick-field{border:1px solid #EFE3BC;border-radius:8px;padding:8px 10px;margin-bottom:8px;background:#FFFCF4;}
-  .ci-pick-field:last-child{margin-bottom:0;}
-  .ci-pick-label{font-weight:700;font-size:11px;color:var(--text);margin-bottom:6px;}
-  .ci-pick-opt{display:flex;align-items:flex-start;gap:7px;padding:6px 7px;border-radius:6px;cursor:pointer;font-size:11.5px;line-height:1.45;}
-  .ci-pick-opt:hover{background:#F3ECD8;}
-  .ci-pick-opt input{margin-top:3px;flex:0 0 auto;}
-  .ci-pick-opt .ci-pick-tag{font-weight:700;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:1px;}
-  .ci-pick-opt.mine .ci-pick-tag{color:var(--accent-dark);}
-  .ci-pick-opt.theirs .ci-pick-tag{color:var(--del);}
+  /* Per-field picker — restyled as tappable multi-select chips (checkbox
+     look, not radio dots) so it visually reads as "pick freely per row",
+     even though each individual field still resolves to one winner.
+     Selecting "Yours" on one field and "On sheet" on the next is exactly
+     the point — the chip styling just makes that obvious at a glance. */
+  .ci-picker{margin-bottom:10px;display:flex;flex-direction:column;gap:9px;}
+  .ci-pick-field{border:1px solid #EFE3BC;border-radius:10px;padding:9px 10px 10px;background:#FFFCF4;}
+  .ci-pick-label{display:flex;align-items:center;gap:6px;font-weight:700;font-size:11px;color:var(--text);margin-bottom:7px;}
+  .ci-pick-label::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--gold);flex:0 0 auto;}
+  .ci-pick-opts{display:flex;flex-direction:column;gap:6px;}
+  .ci-pick-opt{position:relative;display:flex;align-items:flex-start;gap:9px;padding:8px 10px;border-radius:9px;cursor:pointer;font-size:11.5px;line-height:1.45;background:#fff;border:1.5px solid #E9E2CC;transition:border-color .15s,background .15s,box-shadow .15s;}
+  .ci-pick-opt:hover{border-color:#D8CBA0;}
+  .ci-pick-opt input{position:absolute;opacity:0;width:1px;height:1px;}
+  .ci-pick-opt .ci-pick-box{flex:0 0 auto;width:16px;height:16px;margin-top:1px;border-radius:5px;border:1.5px solid #C9BE9C;background:#fff;display:flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s;}
+  .ci-pick-opt .ci-pick-box::after{content:'';width:8px;height:8px;border-radius:2px;background:transparent;transition:background .15s;}
+  .ci-pick-opt .ci-pick-body{flex:1;min-width:0;}
+  .ci-pick-opt .ci-pick-tag{font-weight:700;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:2px;color:var(--muted);}
   .ci-pick-opt .ci-pick-val{color:var(--text);white-space:pre-wrap;word-break:break-word;}
-  .conflict-item .ci-actions button.save{background:var(--accent);color:#fff;border-color:var(--accent);}
-  .conflict-item .ci-actions button:disabled{opacity:.5;cursor:not-allowed;}
+  .ci-pick-opt.is-checked{background:var(--accent-soft);border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;}
+  .ci-pick-opt.is-checked .ci-pick-box{background:var(--accent);border-color:var(--accent);}
+  .ci-pick-opt.is-checked .ci-pick-box::after{background:#fff;border-radius:1px;clip-path:polygon(14% 44%,0 65%,38% 100%,100% 20%,82% 4%,37% 68%);width:11px;height:11px;}
+  .ci-pick-opt.is-checked .ci-pick-tag{color:var(--accent-dark);}
+  .ci-pick-opt.theirs.is-checked{background:var(--del-soft);border-color:var(--del);box-shadow:0 0 0 1px var(--del) inset;}
+  .ci-pick-opt.theirs.is-checked .ci-pick-box{background:var(--del);border-color:var(--del);}
+  .ci-pick-opt.theirs.is-checked .ci-pick-tag{color:var(--del);}
 
   /* Branch profiles (hamburger menu + drawer) */
   .hamburger-btn{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);color:#DCE3FA;font-size:15px;cursor:pointer;padding:8px 11px;line-height:1;border-radius:8px;transition:background .15s;flex-shrink:0;}
@@ -5307,14 +5340,18 @@
     const fieldsHtml = rows.map(r => `
       <div class="ci-pick-field" data-key="${escapeHtml(r.key)}">
         <div class="ci-pick-label">${escapeHtml(r.label)}</div>
-        <label class="ci-pick-opt mine">
-          <input type="radio" name="pick_${item.id}_${escapeHtml(r.key)}" value="mine" checked>
-          <span><span class="ci-pick-tag">Your version</span><span class="ci-pick-val">${ciVal_(r.mineVal)}</span></span>
-        </label>
-        <label class="ci-pick-opt theirs">
-          <input type="radio" name="pick_${item.id}_${escapeHtml(r.key)}" value="theirs">
-          <span><span class="ci-pick-tag">Currently on the sheet</span><span class="ci-pick-val">${ciVal_(r.theirsVal)}</span></span>
-        </label>
+        <div class="ci-pick-opts">
+          <label class="ci-pick-opt mine is-checked">
+            <input type="radio" name="pick_${item.id}_${escapeHtml(r.key)}" value="mine" checked>
+            <span class="ci-pick-box"></span>
+            <span class="ci-pick-body"><span class="ci-pick-tag">Your version</span><span class="ci-pick-val">${ciVal_(r.mineVal)}</span></span>
+          </label>
+          <label class="ci-pick-opt theirs">
+            <input type="radio" name="pick_${item.id}_${escapeHtml(r.key)}" value="theirs">
+            <span class="ci-pick-box"></span>
+            <span class="ci-pick-body"><span class="ci-pick-tag">Currently on the sheet</span><span class="ci-pick-val">${ciVal_(r.theirsVal)}</span></span>
+          </label>
+        </div>
       </div>`).join('');
 
     return `<div class="ci-picker" data-item="${item.id}">${fieldsHtml}</div>`;
@@ -5369,7 +5406,14 @@
     banner.style.display = 'block';
     let html = '';
     if(conflicts.length){
-      html += `<div class="conflict-banner"><div class="cb-head">⚠ ${conflicts.length} change${conflicts.length>1?'s':''} couldn't auto-sync — someone else edited ${conflicts.length>1?'these':'this'} while you were offline</div>` +
+      html += `<div class="cf-panel">
+        <div class="cf-panel-head">
+          <div class="cf-panel-icon">⚠</div>
+          <div>
+            <div class="cf-panel-title">${conflicts.length} change${conflicts.length>1?'s':''} couldn't auto-sync</div>
+            <div class="cf-panel-sub">Someone else edited ${conflicts.length>1?'these records':'this record'} while you were offline</div>
+          </div>
+        </div>` +
         conflicts.map(c=>{
           const name = (c.fields && c.fields.customer) || (c.snapshot && c.snapshot.customer) || 'this customer';
           const isDelete = c.kind === 'delete';
@@ -5380,11 +5424,11 @@
           if(!isDelete) metaBits.push(diffCount + ' field' + (diffCount === 1 ? '' : 's') + ' differ' + (diffCount === 1 ? 's' : ''));
           return `<div class="conflict-item">
             <div class="ci-name">${escapeHtml(name)}</div>
-            <div class="ci-detail">${isDelete ? "Someone else edited this record while you had it queued for deletion. Choose whether to delete it or leave it as-is." : "Someone else edited this record while you were offline. Only the fields that actually differ are shown below — pick which side to keep for each, then Save."}</div>
+            <div class="ci-detail">${isDelete ? "Someone else edited this record while you had it queued for deletion. Choose whether to delete it or leave it as-is." : "Someone else edited this record while you were offline. Only the fields that actually differ are shown below — tap to pick which side to keep for each, mixing and matching as you like, then Save."}</div>
             ${metaBits.length ? `<div class="ci-meta">${escapeHtml(metaBits.join(' · '))}</div>` : ''}
             ${(!isDelete && diffCount > 1) ? `<div class="ci-actions ci-bulk">
-              <button type="button" onclick="ciPickAll_('${c.id}','mine')">Keep all mine</button>
-              <button type="button" onclick="ciPickAll_('${c.id}','theirs')">Keep all from sheet</button>
+              <button type="button" onclick="ciPickAll_('${c.id}','mine')">✓ Keep all mine</button>
+              <button type="button" onclick="ciPickAll_('${c.id}','theirs')">✓ Keep all from sheet</button>
             </div>` : ''}
             ${renderConflictPicker_(c)}
             <div class="ci-actions">
@@ -5399,7 +5443,14 @@
       html += `</div>`;
     }
     if(errored.length){
-      html += `<div class="conflict-banner"><div class="cb-head">⚠ ${errored.length} change${errored.length>1?'s':''} failed to save to the sheet</div>` +
+      html += `<div class="cf-panel is-error">
+        <div class="cf-panel-head">
+          <div class="cf-panel-icon">✕</div>
+          <div>
+            <div class="cf-panel-title">${errored.length} change${errored.length>1?'s':''} failed to save</div>
+            <div class="cf-panel-sub">The sheet rejected ${errored.length>1?'these changes':'this change'} — retry or discard below</div>
+          </div>
+        </div>` +
         errored.map(c=>{
           const name = (c.fields && c.fields.customer) || (c.snapshot && c.snapshot.customer) || 'this customer';
           return `<div class="conflict-item">
@@ -6117,8 +6168,26 @@
     picker.querySelectorAll('.ci-pick-field').forEach(fieldEl => {
       const radio = fieldEl.querySelector(`input[type="radio"][value="${choice}"]`);
       if(radio) radio.checked = true;
+      fieldEl.querySelectorAll('.ci-pick-opt').forEach(opt => {
+        opt.classList.toggle('is-checked', opt.querySelector('input').value === choice);
+      });
     });
   }
+
+  // Keeps each option's "is-checked" chip styling (checkbox-style fill +
+  // check mark) in sync with the actual radio selection whenever the
+  // person taps a different option by hand — ciPickAll_ above handles
+  // the bulk "keep all mine / keep all from sheet" case. Delegated on
+  // the banner container itself since its contents are fully rebuilt
+  // (innerHTML) every time updateSyncUI() runs.
+  document.getElementById('conflictBanner').addEventListener('change', (e) => {
+    const input = e.target;
+    if(!input.matches || !input.matches('.ci-pick-opt input[type="radio"]')) return;
+    const field = input.closest('.ci-pick-field');
+    if(field) field.querySelectorAll('.ci-pick-opt').forEach(opt => opt.classList.remove('is-checked'));
+    const opt = input.closest('.ci-pick-opt');
+    if(opt) opt.classList.add('is-checked');
+  });
 
   function applyConflictPick(id){
     const item = outbox.find(o => o.id === id);

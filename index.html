@@ -533,8 +533,7 @@
   .rec-remarks .rtag.cur{background:var(--accent-soft);color:var(--accent);}
   .rec-remarks .rtag.prev{background:#EDEFF6;color:#8B94B3;}
 
-  .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px 3px 8px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;}
-  .badge::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0;}
+  .badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;}
   .badge.od{background:var(--od-soft);color:var(--od);}
   .badge.del{background:var(--del-soft);color:var(--del);}
   .badge.rstr{background:var(--rstr-soft);color:var(--rstr);}
@@ -542,9 +541,9 @@
 
   /* Unit Status badges — one distinct color per preset value so a status
      is recognizable at a glance in the card list, the summary fact-grid,
-     and the combo picker in the edit modal (see UNIT_STATUS_OPTIONS /
-     unitStatusMeta_ in the script below). us-custom covers any manually
-     typed value that isn't one of the presets; us-none covers blank. */
+     and the live preview in the edit modal (see unitStatusMeta_ in the
+     script below). us-custom covers any manually typed value that isn't
+     one of the presets; us-none covers blank. */
   .badge.us-missing{background:#FBE4E4;color:#C23B3B;}
   .badge.us-tracing{background:#FDF1D6;color:#B8860B;}
   .badge.us-good{background:var(--ok-soft);color:var(--ok);}
@@ -554,17 +553,42 @@
   .badge.us-custom{background:#E9EBF6;color:var(--muted);}
   .badge.us-none{background:#E9EBF6;color:var(--muted-2);}
 
-  /* Unit Status combo control in the edit modal: a free-text input (still
-     typable) plus a live color preview badge, and a row of one-tap preset
-     chips underneath. Chips reuse the .badge color classes above so a
-     chip's color always matches what typing/selecting that same value
-     would show as a preview and everywhere else it's displayed. */
-  .us-combo{display:flex;align-items:center;gap:8px;}
+  /* Unit Status control in the edit modal: a minimalist free-text input
+     (still typable) plus a toggle that opens a dropdown of preset
+     values — each option colored by status (see unitStatusMeta_ /
+     refreshUnitStatusActive_ below). Closed by default (.us-options only
+     shows inside an "open" .us-combo); opens on tapping the input or the
+     chevron, closes on picking an option, pressing Escape, or tapping
+     outside — see the delegated listeners after buildFieldGrid. */
+  .us-combo{position:relative;display:flex;align-items:center;gap:8px;}
   .us-combo .card-input{flex:1;min-width:0;}
-  .us-preview{flex-shrink:0;white-space:nowrap;}
-  .us-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
-  .us-chip{border:1px solid transparent;font:inherit;cursor:pointer;}
-  .us-chip.active{outline:2px solid currentColor;outline-offset:1px;}
+  .us-toggle{flex-shrink:0;width:22px;height:22px;border:none;background:transparent;color:var(--muted-2);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;}
+  .us-toggle svg{width:14px;height:14px;transition:transform .15s ease;}
+  .us-combo.open .us-toggle svg{transform:rotate(180deg);}
+  .us-options{display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-md);padding:6px;z-index:60;max-height:220px;overflow-y:auto;}
+  .us-combo.open .us-options{display:block;}
+  .us-option{display:flex;align-items:center;width:100%;text-align:left;border:none;background:transparent;font:inherit;cursor:pointer;padding:7px 8px;border-radius:7px;margin-bottom:2px;}
+  .us-option:last-child{margin-bottom:0;}
+  .us-option:active,.us-option:hover{filter:brightness(0.96);}
+  .us-option.active{outline:2px solid rgba(0,0,0,.12);outline-offset:-2px;}
+
+  /* Generic preset-combo: a free-text input (still typable) plus a
+     toggle that opens a small panel of one-tap preset values — used for
+     fields like Payment Mode where the value isn't color-coded, just a
+     shortlist of common answers. Closed by default (.preset-options only
+     shows inside an "open" .preset-combo); opens on tapping the input or
+     the chevron, closes on picking an option, pressing Escape, or
+     tapping outside — see the delegated listeners after buildFieldGrid. */
+  .preset-combo{position:relative;display:flex;align-items:center;gap:8px;}
+  .preset-combo .card-input{flex:1;min-width:0;}
+  .preset-toggle{flex-shrink:0;width:22px;height:22px;border:none;background:transparent;color:var(--muted-2);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;}
+  .preset-toggle svg{width:14px;height:14px;transition:transform .15s ease;}
+  .preset-combo.open .preset-toggle svg{transform:rotate(180deg);}
+  .preset-options{display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-md);padding:6px;z-index:60;max-height:220px;overflow-y:auto;}
+  .preset-combo.open .preset-options{display:block;}
+  .preset-option{display:flex;align-items:center;width:100%;text-align:left;border:none;background:transparent;font:inherit;font-size:12.5px;font-weight:600;color:var(--text);cursor:pointer;padding:8px;border-radius:7px;}
+  .preset-option:active,.preset-option:hover{background:var(--paper);}
+  .preset-option.active{background:var(--accent-soft);color:var(--accent-dark);}
   /* Note: the account-status counter strip now lives in the header —
      see .hdr-status-counts above — instead of here above the card list. */
   .amount{font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace;font-size:12px;}
@@ -2886,9 +2910,9 @@
     { key:'dueThisMonth',   label:'Due This Month (₱)',           type:'number', lockedOnEdit:true, money:true },
     { key:'paymentAdv',     label:'Payment / Advance (₱)',        type:'number', lockedOnEdit:true, money:true },
     { key:'penaltyDue',     label:'Penalty Due (₱)',              type:'number', lockedOnEdit:true, money:true },
-    { key:'customerStatus', label:'Customer Status',              type:'text', placeholder:'e.g. OD, DEL, RSTR, CURRENT', lockedOnEdit:true },
+    { key:'customerStatus', label:'Customer Status',              type:'text', placeholder:'e.g. OD, DEL, RSTR, CURRENT', lockedOnEdit:true, span:2 },
     { key:'unitStatus',     label:'Unit Status',                  type:'combo', lockedOnEdit:false },
-    { key:'paymentMode',    label:'Payment Mode',                 type:'text', lockedOnEdit:false },
+    { key:'paymentMode',    label:'Payment Mode',                 type:'preset', presets:['Cash','Branch 7/11','Bank Transfer','GCash'], lockedOnEdit:false },
   ];
 
   let customers = [];
@@ -6728,11 +6752,11 @@
     return 'other';
   }
 
-  // Unit Status presets — shown as one-tap chips in the edit modal and
-  // used to color-code the value everywhere it's displayed (card list,
-  // fact-grid, modal preview). The field itself stays free text — typing
-  // anything else is always allowed, it just falls back to the neutral
-  // "us-custom" color since there's no preset to match.
+  // Unit Status is free text, color-coded everywhere it's displayed
+  // (card list, fact-grid, modal preview) whenever it matches one of the
+  // recognized presets below; anything else falls back to the neutral
+  // "us-custom" color. Also shown as one-tap chips in the edit modal's
+  // dropdown — typing anything else is always allowed too.
   const UNIT_STATUS_OPTIONS = ['Missing', 'Tracing', 'Good condition', 'Impounded', 'Car-napped', 'Not Confirmed'];
 
   function unitStatusMeta_(status){
@@ -7732,25 +7756,46 @@
         }
 
         if(f.type === 'combo'){
-          // Free-text input (still typable, same as before) plus a live
-          // color preview badge and a row of one-tap preset chips — see
-          // UNIT_STATUS_OPTIONS / unitStatusMeta_ above. Wiring for the
-          // chip clicks and the live preview update is delegated on
-          // #fieldGrid (see the listener added right after buildFieldGrid),
-          // not attached here, since this HTML is rebuilt on every open.
-          const meta = unitStatusMeta_(raw);
-          const chipsHtml = UNIT_STATUS_OPTIONS.map(opt => {
+          // Free-text input (still typable) plus a dropdown of presets —
+          // see UNIT_STATUS_OPTIONS / unitStatusMeta_ above. The panel
+          // starts closed (.us-options only shows inside an "open"
+          // .us-combo — see the CSS) and opens on tapping the input or
+          // the chevron; wiring for that, the option clicks, and keeping
+          // the active option in sync is delegated on #fieldGrid (see
+          // the listeners added right after buildFieldGrid), not
+          // attached here, since this HTML is rebuilt on every open.
+          const optionsHtml = UNIT_STATUS_OPTIONS.map(opt => {
             const optMeta = unitStatusMeta_(opt);
             const isActive = raw.trim().toLowerCase() === opt.toLowerCase();
-            return `<button type="button" class="badge us-chip ${optMeta.cls}${isActive ? ' active' : ''}" data-us-chip="${escapeHtml(opt)}">${escapeHtml(opt)}</button>`;
+            return `<button type="button" class="badge us-option ${optMeta.cls}${isActive ? ' active' : ''}" data-us-option="${escapeHtml(opt)}">${escapeHtml(opt)}</button>`;
           }).join('');
           return `<div class="info-card editable${spanClass}">
             <span class="k">${escapeHtml(f.label)}${f.required ? ' *' : ''}</span>
             <div class="us-combo">
-              <input class="card-input us-input" data-key="${f.key}" type="text" value="${escapeHtml(raw)}" placeholder="Select a chip or type manually">
-              <span class="badge us-preview ${meta.cls}" data-us-preview>${escapeHtml(meta.label)}</span>
+              <input class="card-input us-input" data-key="${f.key}" type="text" value="${escapeHtml(raw)}" placeholder="Tap to choose, or type manually" autocomplete="off">
+              <button type="button" class="us-toggle" data-us-toggle title="Show options"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
+              <div class="us-options">${optionsHtml}</div>
             </div>
-            <div class="us-chips">${chipsHtml}</div>
+          </div>`;
+        }
+
+        if(f.type === 'preset'){
+          // Free-text input (still typable) plus a small dropdown of
+          // one-tap preset values (f.presets) for fields with a short
+          // list of common answers — e.g. Payment Mode. Not color-coded
+          // like the Unit Status combo above, just plain option rows.
+          const val = raw.trim().toLowerCase();
+          const optionsHtml = (f.presets || []).map(opt => {
+            const isActive = val === opt.toLowerCase();
+            return `<button type="button" class="preset-option${isActive ? ' active' : ''}" data-preset-option="${escapeHtml(opt)}">${escapeHtml(opt)}</button>`;
+          }).join('');
+          return `<div class="info-card editable${spanClass}">
+            <span class="k">${escapeHtml(f.label)}${f.required ? ' *' : ''}</span>
+            <div class="preset-combo">
+              <input class="card-input preset-input" data-key="${f.key}" type="text" value="${escapeHtml(raw)}" placeholder="Tap to choose, or type manually" autocomplete="off">
+              <button type="button" class="preset-toggle" data-preset-toggle title="Show options"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
+              <div class="preset-options">${optionsHtml}</div>
+            </div>
           </div>`;
         }
 
@@ -7770,31 +7815,83 @@
   }
 
   // Delegated once (not re-attached on every buildFieldGrid rebuild):
-  // handles the Unit Status combo's preset chips and keeps its live color
-  // preview in sync whether the value came from a chip click or was typed
-  // by hand.
-  function refreshUnitStatusPreview_(){
+  // handles the Unit Status combo — opening/closing its dropdown panel,
+  // the preset option clicks, and keeping the active/highlighted option
+  // in sync with whatever's typed, whether it matches a preset or not.
+  function refreshUnitStatusActive_(){
     const input = document.querySelector('#fieldGrid .us-input');
-    const preview = document.querySelector('#fieldGrid [data-us-preview]');
-    if(!input || !preview) return;
-    const meta = unitStatusMeta_(input.value);
-    preview.textContent = meta.label;
-    preview.className = 'badge us-preview ' + meta.cls;
+    if(!input) return;
     const val = input.value.trim().toLowerCase();
-    document.querySelectorAll('#fieldGrid .us-chip').forEach(chip=>{
-      chip.classList.toggle('active', chip.dataset.usChip.toLowerCase() === val);
+    document.querySelectorAll('#fieldGrid .us-option').forEach(opt=>{
+      opt.classList.toggle('active', opt.dataset.usOption.toLowerCase() === val);
+    });
+  }
+  function closeAllDropdowns_(except){
+    document.querySelectorAll('#fieldGrid .us-combo.open, #fieldGrid .preset-combo.open').forEach(combo=>{
+      if(combo !== except) combo.classList.remove('open');
     });
   }
   document.getElementById('fieldGrid').addEventListener('click', (e)=>{
-    const chip = e.target.closest('.us-chip');
-    if(!chip) return;
-    const input = document.querySelector('#fieldGrid .us-input');
-    if(!input) return;
-    input.value = chip.dataset.usChip;
-    refreshUnitStatusPreview_();
+    // Unit Status: preset option pick
+    const usOption = e.target.closest('.us-option');
+    if(usOption){
+      const input = document.querySelector('#fieldGrid .us-input');
+      if(input) input.value = usOption.dataset.usOption;
+      refreshUnitStatusActive_();
+      closeAllDropdowns_();
+      return;
+    }
+    // Payment Mode (or any other generic preset field): preset option pick
+    const presetOption = e.target.closest('.preset-option');
+    if(presetOption){
+      const combo = presetOption.closest('.preset-combo');
+      const input = combo && combo.querySelector('.preset-input');
+      if(input){
+        input.value = presetOption.dataset.presetOption;
+        combo.querySelectorAll('.preset-option').forEach(opt=>{
+          opt.classList.toggle('active', opt.dataset.presetOption === presetOption.dataset.presetOption);
+        });
+      }
+      closeAllDropdowns_();
+      return;
+    }
+    // Tapping the input or the chevron toggles that field's own dropdown
+    // open, and closes any other dropdown that happened to be open.
+    const combo = (e.target.closest('.us-toggle') || e.target.closest('.us-input'))
+      ? e.target.closest('.us-combo')
+      : (e.target.closest('.preset-toggle') || e.target.closest('.preset-input'))
+        ? e.target.closest('.preset-combo')
+        : null;
+    if(combo){
+      const willOpen = !combo.classList.contains('open');
+      closeAllDropdowns_(combo);
+      combo.classList.toggle('open', willOpen);
+    }
   });
   document.getElementById('fieldGrid').addEventListener('input', (e)=>{
-    if(e.target.classList.contains('us-input')) refreshUnitStatusPreview_();
+    if(e.target.classList.contains('us-input')){
+      refreshUnitStatusActive_();
+      return;
+    }
+    if(e.target.classList.contains('preset-input')){
+      const combo = e.target.closest('.preset-combo');
+      if(!combo) return;
+      const val = e.target.value.trim().toLowerCase();
+      combo.querySelectorAll('.preset-option').forEach(opt=>{
+        opt.classList.toggle('active', opt.dataset.presetOption.toLowerCase() === val);
+      });
+    }
+  });
+  // Closes any open dropdown (Unit Status or a preset combo) on a click
+  // outside it, and on Escape — otherwise it would stay open over the
+  // rest of the form after picking elsewhere, or after typing and
+  // clicking away.
+  document.addEventListener('click', (e)=>{
+    if(e.target.closest('.us-combo') || e.target.closest('.preset-combo')) return;
+    closeAllDropdowns_();
+  });
+  document.addEventListener('keydown', (e)=>{
+    if(e.key === 'Escape') closeAllDropdowns_();
   });
 
   function collectFieldValues(){

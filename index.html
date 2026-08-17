@@ -2316,6 +2316,7 @@
       currentEdit: u.revertCurrent,
       historyEdit: u.revertHistory,
       status: 'pending',
+      customerName: (u.afterSnapshot && u.afterSnapshot.customer) || null,
       snapshot: u.afterSnapshot || null
     };
     await queueOrSend_(item);
@@ -2719,7 +2720,7 @@
     for(const row of rows){
       btn.textContent = 'Deleting ' + (done + failed + 1) + '/' + rows.length + '…';
       try{
-        await queueOrSend_({ id: genId_(), kind: 'delete', row: row, status: 'pending' });
+        await queueOrSend_({ id: genId_(), kind: 'delete', row: row, status: 'pending', customerName: (undoSnapshots.find(s => s.row === row) || {}).customer || null });
         clearDraft_(row);
         selectedRows.delete(row);
         const snap = undoSnapshots.find(s => s.row === row);
@@ -2818,6 +2819,7 @@
       remark: null,
       auditor: null,
       status: 'pending',
+      customerName: c.customer || null,
       // Only the marker field is being touched, so only it needs to be
       // snapshotted for drift detection at sync time.
       snapshot: { marker: prev }
@@ -4851,7 +4853,7 @@
   // shown as a row in the sync popup so it's obvious WHO/WHAT is about
   // to sync, not just a bare count.
   function describeOutboxItem_(item){
-    const name = (item.fields && item.fields.customer) || (item.snapshot && item.snapshot.customer) || 'Unnamed customer';
+    const name = item.customerName || (item.fields && item.fields.customer) || (item.snapshot && item.snapshot.customer) || 'Unnamed customer';
     if(item.kind === 'create'){
       return { icon: '＋', title: name, sub: 'New customer' + (item.remark ? ' · with opening remark' : '') };
     }
@@ -5429,7 +5431,7 @@
         </div>
         <div class="cf-panel-items">` +
         conflicts.map(c=>{
-          const name = (c.fields && c.fields.customer) || (c.snapshot && c.snapshot.customer) || 'this customer';
+          const name = c.customerName || (c.fields && c.fields.customer) || (c.snapshot && c.snapshot.customer) || 'this customer';
           const isDelete = c.kind === 'delete';
           const detectedTime = c.conflictDetectedAt ? new Date(c.conflictDetectedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
           const diffCount = (!isDelete && c.serverSnapshot) ? Object.keys(c.snapshot || {}).filter(k => String(c.serverSnapshot[k] ?? '') !== String((c.snapshot || {})[k] ?? '')).length : 0;
@@ -5468,7 +5470,7 @@
         </div>
         <div class="cf-panel-items">` +
         errored.map(c=>{
-          const name = (c.fields && c.fields.customer) || (c.snapshot && c.snapshot.customer) || 'this customer';
+          const name = c.customerName || (c.fields && c.fields.customer) || (c.snapshot && c.snapshot.customer) || 'this customer';
           return `<div class="conflict-item">
             <div class="ci-name">${escapeHtml(name)}</div>
             <div class="ci-detail">Server said: ${escapeHtml(c.error || 'unknown error')}</div>
@@ -7910,7 +7912,8 @@
           fields,
           remark: remark || null,
           auditor: auditor || null,
-          status: 'pending'
+          status: 'pending',
+          customerName: fields.customer || null
         };
         await queueOrSend_(item);
         toast('Customer added — syncing…');
@@ -7943,6 +7946,7 @@
           currentEdit,
           historyEdit,
           status: 'pending',
+          customerName: (c ? c.customer : fields.customer) || null,
           // Snapshot of what THIS client last saw on the server for the
           // fields being touched — used at sync time to detect if
           // someone else changed this row in the meantime.
@@ -8054,7 +8058,7 @@
 
     try{
       const snapshotForUndo = c ? Object.assign({}, c) : null;
-      const item = { id: genId_(), kind: 'delete', row: activeRow, status: 'pending' };
+      const item = { id: genId_(), kind: 'delete', row: activeRow, status: 'pending', customerName: c ? c.customer : null };
       await queueOrSend_(item);
       toast('Customer deleted — syncing…');
       logActivity_('success', 'Customer deleted', label + ' removed from "' + currentSheet + '".', null, undefined, snapshotForUndo ? {

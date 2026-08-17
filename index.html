@@ -954,6 +954,18 @@
   .profile-search{flex:1;min-width:0;background:#F1F3FB url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238B94B3' stroke-width='2' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>") no-repeat 11px center;background-size:14px;padding-left:32px;}
   .profile-count{font-size:11px;color:var(--muted-2);white-space:nowrap;font-family:'JetBrains Mono',monospace;}
 
+  /* Manual "refresh just the branch list" button, sat on the side of the
+     search row — calls loadProfiles_() only, never loadData(), so it
+     never touches the customer records of whichever branch is on
+     screen. Spins its glyph while a refresh is in flight and disables
+     itself so rapid taps can't stack up multiple live requests (same
+     reasoning as the openProfileMenu() guard above). */
+  .profile-refresh-btn{flex-shrink:0;width:26px;height:26px;}
+  .profile-refresh-btn svg{width:14px;height:14px;display:block;transition:transform .2s;}
+  .profile-refresh-btn.spinning svg{animation:profile-refresh-spin .7s linear infinite;}
+  .profile-refresh-btn:disabled{opacity:.6;cursor:default;}
+  @keyframes profile-refresh-spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+
   .profile-list{display:flex;flex-direction:column;gap:4px;margin-bottom:12px;max-height:52vh;overflow-y:auto;padding-right:2px;}
   .profile-loading{color:var(--muted);font-size:12.5px;padding:14px 2px;display:flex;align-items:center;gap:8px;}
   .profile-loading.is-error{color:var(--del);}
@@ -1553,6 +1565,9 @@
       <div class="profile-search-row">
         <input class="input profile-search" id="profileSearch" placeholder="Search branches…" oninput="filterProfileList_(this.value)">
         <span class="profile-count" id="profileCount"></span>
+        <button class="icon-btn profile-refresh-btn" id="profileRefreshBtn" title="Refresh branch list" onclick="loadProfiles_()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        </button>
       </div>
       <div id="profileOfflineNote" class="profile-offline-note" style="display:none;"></div>
       <div id="profileList" class="profile-list">
@@ -4875,7 +4890,19 @@
   async function loadProfiles_(isColdStartRetry){
     const listEl = document.getElementById('profileList');
     const noteEl = document.getElementById('profileOfflineNote');
+    const refreshBtn = document.getElementById('profileRefreshBtn');
     noteEl.style.display = 'none';
+
+    // Spin the refresh glyph and disable the button for the duration of
+    // this call (including the automatic cold-start retry below), so a
+    // fast double-tap can't fire a second overlapping listSheets
+    // request. Only the button is touched here — this function only
+    // ever re-fetches/re-renders the branch list itself, never the
+    // customer data for the branch on screen.
+    if(refreshBtn && !isColdStartRetry){
+      refreshBtn.classList.add('spinning');
+      refreshBtn.disabled = true;
+    }
 
     // Paint instantly from whatever branch list we last saw, so opening
     // the drawer never stalls on a skeleton if we already know the
@@ -4906,6 +4933,7 @@
       if(changed) renderProfileList_(profilesCache_);
       else updateProfileCount_();
       schedulePrefetch_();
+      if(refreshBtn){ refreshBtn.classList.remove('spinning'); refreshBtn.disabled = false; }
     }catch(err){
       // Same reasoning as loadData()'s AbortError branch: a timeout here
       // is almost always a one-off Apps Script cold start, so retry once,
@@ -4933,6 +4961,7 @@
         listEl.innerHTML = '<div class="profile-loading is-error">⚠ Could not load branch profiles: ' + escapeHtml(err.message) + '<span class="retry-link" onclick="loadProfiles_()">Retry</span></div>';
         document.getElementById('profileCount').textContent = '';
       }
+      if(refreshBtn){ refreshBtn.classList.remove('spinning'); refreshBtn.disabled = false; }
     }
   }
 

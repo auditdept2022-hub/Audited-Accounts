@@ -907,17 +907,30 @@
      surface, a colored accent bar down the left edge, a round icon badge
      in the header, and pill-shaped meta/action chips. Conflict cards use
      amber, error cards use red — same accent-bar pattern so the two read
-     as a family instead of two different components. */
-  .cf-panel{position:relative;background:linear-gradient(180deg,#FFFDF8,#FFFBF2);border:1px solid #EEDFB6;border-radius:16px;padding:14px 16px 14px 18px;margin-bottom:12px;font-size:12.5px;color:var(--text);box-shadow:var(--shadow);overflow:hidden;}
+     as a family instead of two different components.
+
+     Scrolling: #conflictBanner sits inside #dashPanel, which is
+     `overflow:hidden` by design (see the #dashPanel[style*="block"] rule
+     above) so that only .table-wrap scrolls for the customer list. That
+     meant a banner with several conflict/error cards had nowhere to go —
+     content past the visible area was silently clipped with no way to
+     reach it, hiding the very name/fields the person needed to see when
+     deciding what to keep. #conflictBanner now scrolls internally (own
+     max-height + overflow-y), and each panel's header stays pinned
+     (position:sticky) while its cards scroll underneath, so it's always
+     clear how many changes are still waiting as you scroll. */
+  #conflictBanner{max-height:52vh;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;border-radius:16px;scrollbar-gutter:stable;}
+  .cf-panel{position:relative;background:linear-gradient(180deg,#FFFDF8,#FFFBF2);border:1px solid #EEDFB6;border-radius:16px;padding:0 16px 14px 18px;margin-bottom:12px;font-size:12.5px;color:var(--text);box-shadow:var(--shadow);overflow:hidden;}
   .cf-panel::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:linear-gradient(180deg,var(--gold),var(--rstr));}
   .cf-panel.is-error{background:linear-gradient(180deg,#FFF9F9,#FFF5F6);border-color:#F3CBD5;}
   .cf-panel.is-error::before{background:linear-gradient(180deg,var(--del),#8C2138);}
-  .cf-panel-head{display:flex;align-items:center;gap:9px;margin-bottom:10px;}
+  .cf-panel-head{display:flex;align-items:center;gap:9px;padding:14px 0 10px;margin-bottom:2px;}
   .cf-panel-icon{flex:0 0 auto;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;background:var(--gold-soft);color:var(--rstr);box-shadow:0 0 0 3px rgba(184,147,74,.12);}
   .cf-panel.is-error .cf-panel-icon{background:var(--del-soft);color:var(--del);box-shadow:0 0 0 3px rgba(176,48,74,.12);}
   .cf-panel-title{font-weight:700;color:var(--rstr);line-height:1.35;}
   .cf-panel.is-error .cf-panel-title{color:var(--del);}
   .cf-panel-sub{font-weight:500;color:var(--muted);font-size:11px;margin-top:1px;}
+  .cf-panel-items{display:flex;flex-direction:column;}
 
   .conflict-item{background:#fff;border:1px solid #EFE3BC;border-radius:12px;padding:12px 13px;margin-bottom:10px;box-shadow:0 1px 0 rgba(16,22,60,.02);}
   .cf-panel.is-error .conflict-item{border-color:#F3CBD5;}
@@ -5306,11 +5319,11 @@
   // already there into history) rather than a plain field overwrite.
   function renderConflictPicker_(item){
     if(item.kind === 'delete'){
-      return `<div class="ci-picker"><div class="ci-empty">This change deletes the record entirely — there's nothing to merge field-by-field. Use the buttons below to delete it or leave it as-is.</div></div>`;
+      return `<div class="ci-picker"><div class="ci-empty">This deletes the record — nothing to merge. Use the buttons below.</div></div>`;
     }
     const snap = item.serverSnapshot;
     if(snap === null){
-      return `<div class="ci-picker"><div class="ci-empty">This row no longer exists on the sheet — it may have been deleted. It can't be merged field-by-field; discard your change or leave it queued to retry.</div></div>`;
+      return `<div class="ci-picker"><div class="ci-empty">This row no longer exists on the sheet. Discard your change, or leave it queued to retry.</div></div>`;
     }
     if(!snap){
       return `<div class="ci-picker"><div class="ci-empty">Current sheet values unavailable.</div></div>`;
@@ -5334,7 +5347,7 @@
     }
 
     if(!rows.length){
-      return `<div class="ci-picker"><div class="ci-empty">No fields actually differ from what's on the sheet now — safe to save.</div></div>`;
+      return `<div class="ci-picker"><div class="ci-empty">Nothing differs from the sheet now — safe to save.</div></div>`;
     }
 
     const fieldsHtml = rows.map(r => `
@@ -5411,20 +5424,21 @@
           <div class="cf-panel-icon">⚠</div>
           <div>
             <div class="cf-panel-title">${conflicts.length} change${conflicts.length>1?'s':''} couldn't auto-sync</div>
-            <div class="cf-panel-sub">Someone else edited ${conflicts.length>1?'these records':'this record'} while you were offline</div>
+            <div class="cf-panel-sub">Edited elsewhere while you were offline — review below</div>
           </div>
-        </div>` +
+        </div>
+        <div class="cf-panel-items">` +
         conflicts.map(c=>{
           const name = (c.fields && c.fields.customer) || (c.snapshot && c.snapshot.customer) || 'this customer';
           const isDelete = c.kind === 'delete';
           const detectedTime = c.conflictDetectedAt ? new Date(c.conflictDetectedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
           const diffCount = (!isDelete && c.serverSnapshot) ? Object.keys(c.snapshot || {}).filter(k => String(c.serverSnapshot[k] ?? '') !== String((c.snapshot || {})[k] ?? '')).length : 0;
           const metaBits = [];
-          if(detectedTime) metaBits.push('Detected ' + detectedTime);
+          if(detectedTime) metaBits.push(detectedTime);
           if(!isDelete) metaBits.push(diffCount + ' field' + (diffCount === 1 ? '' : 's') + ' differ' + (diffCount === 1 ? 's' : ''));
           return `<div class="conflict-item">
             <div class="ci-name">${escapeHtml(name)}</div>
-            <div class="ci-detail">${isDelete ? "Someone else edited this record while you had it queued for deletion. Choose whether to delete it or leave it as-is." : "Someone else edited this record while you were offline. Only the fields that actually differ are shown below — tap to pick which side to keep for each, mixing and matching as you like, then Save."}</div>
+            <div class="ci-detail">${isDelete ? "Queued for deletion, but also edited elsewhere. Delete it or keep it as-is." : "Pick which side to keep for each changed field below, then save."}</div>
             ${metaBits.length ? `<div class="ci-meta">${escapeHtml(metaBits.join(' · '))}</div>` : ''}
             ${(!isDelete && diffCount > 1) ? `<div class="ci-actions ci-bulk">
               <button type="button" onclick="ciPickAll_('${c.id}','mine')">✓ Keep all mine</button>
@@ -5439,8 +5453,9 @@
                    <button class="discard" onclick="resolveConflict('${c.id}','discard')">Discard all my changes</button>`}
             </div>
           </div>`;
-        }).join('');
-      html += `</div>`;
+        }).join('') +
+        `</div>
+      </div>`;
     }
     if(errored.length){
       html += `<div class="cf-panel is-error">
@@ -5448,9 +5463,10 @@
           <div class="cf-panel-icon">✕</div>
           <div>
             <div class="cf-panel-title">${errored.length} change${errored.length>1?'s':''} failed to save</div>
-            <div class="cf-panel-sub">The sheet rejected ${errored.length>1?'these changes':'this change'} — retry or discard below</div>
+            <div class="cf-panel-sub">Rejected by the sheet — retry or discard below</div>
           </div>
-        </div>` +
+        </div>
+        <div class="cf-panel-items">` +
         errored.map(c=>{
           const name = (c.fields && c.fields.customer) || (c.snapshot && c.snapshot.customer) || 'this customer';
           return `<div class="conflict-item">
@@ -5462,8 +5478,9 @@
               <button class="discard" onclick="resolveConflict('${c.id}','discard')">Discard mine</button>
             </div>
           </div>`;
-        }).join('');
-      html += `</div>`;
+        }).join('') +
+        `</div>
+      </div>`;
     }
     banner.innerHTML = html;
   }

@@ -1145,7 +1145,7 @@
      (filled accent bar + tinted background + pill badge) rather than a
      thin left sliver that's easy to miss. */
   .profile-item{
-    position:relative;display:flex;align-items:center;gap:12px;padding:9px 10px 9px 16px;min-height:54px;
+    position:relative;display:flex;align-items:center;gap:12px;padding:11px 10px 11px 18px;min-height:54px;
     border:1.5px solid var(--line);border-radius:12px;background:#fff;
     box-shadow:0 1px 2px rgba(16,22,60,.04);
     transition:background .14s,border-color .14s,box-shadow .14s,transform .1s;
@@ -1156,14 +1156,6 @@
   .profile-item.active{background:var(--accent-soft);border-color:var(--accent);box-shadow:0 2px 8px rgba(42,61,154,.14);}
   .profile-item.active::before{content:'';position:absolute;left:0;top:8px;bottom:8px;width:4px;border-radius:4px;background:var(--accent);}
   .profile-item.hidden-by-search{display:none;}
-
-  .p-avatar{
-    flex-shrink:0;width:34px;height:34px;border-radius:10px;
-    display:flex;align-items:center;justify-content:center;
-    font-weight:800;font-size:13.5px;letter-spacing:.2px;
-    background:linear-gradient(155deg,#3E55BC 0%,#1D2C74 100%);color:#fff;
-  }
-  .profile-item.active .p-avatar{background:linear-gradient(155deg,var(--accent) 0%,var(--accent-dark) 100%);box-shadow:0 0 0 2px #fff,0 0 0 3.5px var(--accent);}
 
   .p-name-wrap{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:2px;cursor:pointer;padding:2px 0;}
   .profile-item .p-name{font-weight:700;font-size:13.5px;color:var(--text);min-width:0;overflow-wrap:anywhere;line-height:1.3;}
@@ -5226,9 +5218,7 @@
     listEl.innerHTML = sheets.map((name, i) => {
       const isActive = name === currentSheet;
       const canDelete = sheets.length > 1;
-      const initial = (name.trim().charAt(0) || '?').toUpperCase();
       return '<div class="profile-item' + (isActive ? ' active' : '') + '" data-name="' + escapeHtml(name) + '" style="animation-delay:' + Math.min(i * 12, 80) + 'ms">'
-        + '<div class="p-avatar" aria-hidden="true">' + escapeHtml(initial) + '</div>'
         + '<div class="p-name-wrap" onclick="switchProfile_(\'' + jsAttr_(name) + '\')">'
         + '<span class="p-name">' + escapeHtml(name) + '</span>'
         + (isActive ? '<span class="p-check">✓ Current branch</span>' : '')

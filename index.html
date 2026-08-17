@@ -1335,7 +1335,21 @@
     .toolbar-toggle:hover{background:#F4F5FB;color:var(--text);}
     .toolbar-toggle.open{transform:rotate(180deg);color:var(--accent);border-color:#B9C4EE;background:var(--accent-soft);}
     .toolbar-extra{display:none;order:2;width:100%;}
-    .toolbar-extra.open{display:flex;flex-direction:column;gap:10px;padding-top:10px;border-top:1px solid var(--line);margin-top:2px;}
+    /* The header + toolbar are pinned (overflow:hidden on their parent —
+       only the customer list scrolls, see the "pin header/toolbar"
+       block above). That's fine while the toolbar is short, but this
+       panel can be 4-5 rows tall once opened, and on a short phone
+       screen that's taller than the space left below the header —
+       without its own scroll, the parent's overflow:hidden clipped the
+       bottom rows right off, making Import/Export/filters impossible
+       to reach ("can't see settings"). Capping its height and letting
+       IT scroll (instead of relying on the page to grow) keeps every
+       control reachable no matter how little vertical space is left. */
+    .toolbar-extra.open{
+      display:flex;flex-direction:column;gap:10px;
+      padding-top:10px;border-top:1px solid var(--line);margin-top:2px;
+      max-height:min(52vh,420px);overflow-y:auto;-webkit-overflow-scrolling:touch;
+    }
 
     /* Positioning for .view-menu/.status-menu is now handled entirely by
        positionMenu_() at open time (fixed + viewport-clamped), so no

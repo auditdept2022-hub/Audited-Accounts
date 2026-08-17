@@ -539,6 +539,32 @@
   .badge.del{background:var(--del-soft);color:var(--del);}
   .badge.rstr{background:var(--rstr-soft);color:var(--rstr);}
   .badge.other{background:#E9EBF6;color:var(--muted);}
+
+  /* Unit Status badges — one distinct color per preset value so a status
+     is recognizable at a glance in the card list, the summary fact-grid,
+     and the combo picker in the edit modal (see UNIT_STATUS_OPTIONS /
+     unitStatusMeta_ in the script below). us-custom covers any manually
+     typed value that isn't one of the presets; us-none covers blank. */
+  .badge.us-missing{background:#FBE4E4;color:#C23B3B;}
+  .badge.us-tracing{background:#FDF1D6;color:#B8860B;}
+  .badge.us-good{background:var(--ok-soft);color:var(--ok);}
+  .badge.us-impounded{background:#EDE3F7;color:#6B3FA0;}
+  .badge.us-carnapped{background:#F6DCE4;color:#8B1E3F;}
+  .badge.us-notconfirmed{background:#E7E9F2;color:#5B6482;}
+  .badge.us-custom{background:#E9EBF6;color:var(--muted);}
+  .badge.us-none{background:#E9EBF6;color:var(--muted-2);}
+
+  /* Unit Status combo control in the edit modal: a free-text input (still
+     typable) plus a live color preview badge, and a row of one-tap preset
+     chips underneath. Chips reuse the .badge color classes above so a
+     chip's color always matches what typing/selecting that same value
+     would show as a preview and everywhere else it's displayed. */
+  .us-combo{display:flex;align-items:center;gap:8px;}
+  .us-combo .card-input{flex:1;min-width:0;}
+  .us-preview{flex-shrink:0;white-space:nowrap;}
+  .us-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+  .us-chip{border:1px solid transparent;font:inherit;cursor:pointer;}
+  .us-chip.active{outline:2px solid currentColor;outline-offset:1px;}
   /* Note: the account-status counter strip now lives in the header —
      see .hdr-status-counts above — instead of here above the card list. */
   .amount{font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace;font-size:12px;}
@@ -2861,7 +2887,7 @@
     { key:'paymentAdv',     label:'Payment / Advance (₱)',        type:'number', lockedOnEdit:true, money:true },
     { key:'penaltyDue',     label:'Penalty Due (₱)',              type:'number', lockedOnEdit:true, money:true },
     { key:'customerStatus', label:'Customer Status',              type:'text', placeholder:'e.g. OD, DEL, RSTR, CURRENT', lockedOnEdit:true },
-    { key:'unitStatus',     label:'Unit Status',                  type:'text', lockedOnEdit:false },
+    { key:'unitStatus',     label:'Unit Status',                  type:'combo', lockedOnEdit:false },
     { key:'paymentMode',    label:'Payment Mode',                 type:'text', lockedOnEdit:false },
   ];
 
@@ -6702,6 +6728,26 @@
     return 'other';
   }
 
+  // Unit Status presets — shown as one-tap chips in the edit modal and
+  // used to color-code the value everywhere it's displayed (card list,
+  // fact-grid, modal preview). The field itself stays free text — typing
+  // anything else is always allowed, it just falls back to the neutral
+  // "us-custom" color since there's no preset to match.
+  const UNIT_STATUS_OPTIONS = ['Missing', 'Tracing', 'Good condition', 'Impounded', 'Car-napped', 'Not Confirmed'];
+
+  function unitStatusMeta_(status){
+    const raw = str_(status).trim();
+    const s = raw.toLowerCase();
+    if(!s) return { cls: 'us-none', label: '—' };
+    if(s === 'missing') return { cls: 'us-missing', label: raw };
+    if(s === 'tracing') return { cls: 'us-tracing', label: raw };
+    if(s === 'good condition' || s === 'good') return { cls: 'us-good', label: raw };
+    if(s === 'impounded') return { cls: 'us-impounded', label: raw };
+    if(s === 'car-napped' || s === 'carnapped' || s === 'car napped') return { cls: 'us-carnapped', label: raw };
+    if(s === 'not confirmed' || s === 'notconfirmed') return { cls: 'us-notconfirmed', label: raw };
+    return { cls: 'us-custom', label: raw };
+  }
+
   // Minimalist counter strip: one colored entry per DISTINCT Customer
   // Status value present in the list currently being shown (whatever
   // your team typed — "DEL", "OD - BN", "CURRENT", "FULLY PAID", etc.),
@@ -7462,11 +7508,15 @@
         ['Due This Month', '₱' + fmtMoney(c.dueThisMonth)],
         ['Payment / Advance', c.paymentAdv !== '' && c.paymentAdv != null ? '₱' + fmtMoney(c.paymentAdv) : '—'],
         ['Penalty Due', c.penaltyDue !== '' && c.penaltyDue != null ? '₱' + fmtMoney(c.penaltyDue) : '—'],
-        ['Unit Status', c.unitStatus || '—'],
         ['Payment Mode', c.paymentMode || '—'],
       ];
+      const usMeta = unitStatusMeta_(c.unitStatus);
 
       let factsHtml = '';
+      // Unit Status renders as its own colored badge (see unitStatusMeta_)
+      // instead of a plain text fact, so it's recognizable at a glance the
+      // same way Customer Status already is up in the card header.
+      factsHtml += `<div class="fact"><div class="k">Unit Status</div><div class="v"><span class="badge ${usMeta.cls}">${escapeHtml(usMeta.label)}</span></div></div>`;
       for(let j = 0; j < facts.length; j++){
         factsHtml += `<div class="fact"><div class="k">${escapeHtml(facts[j][0])}</div><div class="v">${escapeHtml(String(facts[j][1]))}</div></div>`;
       }
@@ -7681,6 +7731,29 @@
           </div>`;
         }
 
+        if(f.type === 'combo'){
+          // Free-text input (still typable, same as before) plus a live
+          // color preview badge and a row of one-tap preset chips — see
+          // UNIT_STATUS_OPTIONS / unitStatusMeta_ above. Wiring for the
+          // chip clicks and the live preview update is delegated on
+          // #fieldGrid (see the listener added right after buildFieldGrid),
+          // not attached here, since this HTML is rebuilt on every open.
+          const meta = unitStatusMeta_(raw);
+          const chipsHtml = UNIT_STATUS_OPTIONS.map(opt => {
+            const optMeta = unitStatusMeta_(opt);
+            const isActive = raw.trim().toLowerCase() === opt.toLowerCase();
+            return `<button type="button" class="badge us-chip ${optMeta.cls}${isActive ? ' active' : ''}" data-us-chip="${escapeHtml(opt)}">${escapeHtml(opt)}</button>`;
+          }).join('');
+          return `<div class="info-card editable${spanClass}">
+            <span class="k">${escapeHtml(f.label)}${f.required ? ' *' : ''}</span>
+            <div class="us-combo">
+              <input class="card-input us-input" data-key="${f.key}" type="text" value="${escapeHtml(raw)}" placeholder="Select a chip or type manually">
+              <span class="badge us-preview ${meta.cls}" data-us-preview>${escapeHtml(meta.label)}</span>
+            </div>
+            <div class="us-chips">${chipsHtml}</div>
+          </div>`;
+        }
+
         const ph = f.placeholder ? ` placeholder="${escapeHtml(f.placeholder)}"` : '';
         const step = f.type === 'number' ? ' step="0.01"' : '';
         return `<div class="info-card editable${spanClass}">
@@ -7695,6 +7768,34 @@
 
     grid.innerHTML = groupsHtml;
   }
+
+  // Delegated once (not re-attached on every buildFieldGrid rebuild):
+  // handles the Unit Status combo's preset chips and keeps its live color
+  // preview in sync whether the value came from a chip click or was typed
+  // by hand.
+  function refreshUnitStatusPreview_(){
+    const input = document.querySelector('#fieldGrid .us-input');
+    const preview = document.querySelector('#fieldGrid [data-us-preview]');
+    if(!input || !preview) return;
+    const meta = unitStatusMeta_(input.value);
+    preview.textContent = meta.label;
+    preview.className = 'badge us-preview ' + meta.cls;
+    const val = input.value.trim().toLowerCase();
+    document.querySelectorAll('#fieldGrid .us-chip').forEach(chip=>{
+      chip.classList.toggle('active', chip.dataset.usChip.toLowerCase() === val);
+    });
+  }
+  document.getElementById('fieldGrid').addEventListener('click', (e)=>{
+    const chip = e.target.closest('.us-chip');
+    if(!chip) return;
+    const input = document.querySelector('#fieldGrid .us-input');
+    if(!input) return;
+    input.value = chip.dataset.usChip;
+    refreshUnitStatusPreview_();
+  });
+  document.getElementById('fieldGrid').addEventListener('input', (e)=>{
+    if(e.target.classList.contains('us-input')) refreshUnitStatusPreview_();
+  });
 
   function collectFieldValues(){
     const out = {};

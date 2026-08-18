@@ -8514,6 +8514,91 @@
     }
   });
 
+  // ---- Back-gesture / swipe guard ----------------------------------------
+  //
+  // A left/right swipe (or the mobile back gesture, or a trackpad two-
+  // finger swipe on desktop Safari/Chrome) is the browser's normal "go
+  // back in history" action. Since this is a single-page app with
+  // nothing meaningful behind it in the browser's history, that back
+  // navigation was silently exiting the whole app — no warning, no
+  // chance to catch an in-progress edit.
+  //
+  // Fix: push one extra "guard" entry into the browser history right
+  // after load. When the back gesture fires (a 'popstate' event), we
+  // immediately push the guard entry right back — so the app doesn't
+  // visibly navigate anywhere — and THEN decide what to do:
+  //   1. If a menu/modal/popover is open, just close that (matches what
+  //      people expect a back gesture to do first) and stop there.
+  //   2. Otherwise, ask "Quit the app?" via the existing appConfirm()
+  //      dialog. Confirming actually lets the exit through (by calling
+  //      history.back() once more, which pops the guard we just pushed);
+  //      cancelling just leaves the guard in place and the app stays open.
+  //
+  // Caveat: this only intercepts *in-app* back navigation (swipe/edge-
+  // gesture/back-button history traversal). It can't stop someone from
+  // force-closing the tab, closing it from a tab switcher, or an OS-level
+  // app-switch gesture — no page-level JS can catch those.
+  let backGuardActive_ = false;
+  let backExitRequested_ = false;
+  let backConfirmShowing_ = false;
+
+  function pushBackGuard_(){
+    try{ history.pushState({ aaBackGuard: true }, '', location.href); }catch(e){ /* ignore — worst case the guard just doesn't engage this once */ }
+  }
+
+  // Closes whichever overlay/menu is currently topmost, if any. Returns
+  // true if something was closed (so the back gesture shouldn't also
+  // trigger the quit prompt), false if nothing was open.
+  function closeTopmostOverlayForBack_(){
+    if(typeof openPositionedMenu_ !== 'undefined' && openPositionedMenu_){
+      closePositionedMenu(openPositionedMenu_.menuEl);
+      return true;
+    }
+    const confirmOverlay = document.getElementById('confirmOverlay');
+    if(confirmOverlay && confirmOverlay.classList.contains('open')){
+      // A confirm dialog (possibly even our own quit prompt) is already
+      // open — treat this like pressing Escape on it, i.e. Cancel,
+      // instead of stacking a second dialog on top.
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      return true;
+    }
+    const editOverlay = document.getElementById('overlay');
+    if(editOverlay && editOverlay.classList.contains('open')){ closeModal(); return true; }
+    const syncOverlay = document.getElementById('syncOverlay');
+    if(syncOverlay && syncOverlay.classList.contains('open')){ closeSyncModal(); return true; }
+    const activityOverlay = document.getElementById('activityOverlay');
+    if(activityOverlay && activityOverlay.classList.contains('open')){ closeActivityLog(); return true; }
+    const actionOverlay = document.getElementById('actionOverlay');
+    if(actionOverlay && actionOverlay.classList.contains('open')){ closeActionLog(); return true; }
+    const profileOverlay = document.getElementById('profileOverlay');
+    if(profileOverlay && profileOverlay.classList.contains('open')){ closeProfileMenu(); return true; }
+    return false;
+  }
+
+  function handleBackGuardPopState_(){
+    if(backExitRequested_) return; // this is the real exit we just asked history.back() for — let it proceed
+    pushBackGuard_(); // restore the guard immediately so nothing visibly navigates away yet
+    if(closeTopmostOverlayForBack_()) return; // something was open — closing it was enough for this gesture
+    if(backConfirmShowing_) return; // already asking — don't stack a second prompt
+    backConfirmShowing_ = true;
+    appConfirm('Leaving now will close the app. Anything still queued to sync stays queued until you come back.', {
+      title: 'Quit the app?', confirmText: 'Quit', cancelText: 'Stay'
+    }).then(yes => {
+      backConfirmShowing_ = false;
+      if(yes){
+        backExitRequested_ = true;
+        history.back(); // pop the guard we just pushed — this time the exit is allowed through
+      }
+    });
+  }
+
+  function initBackGuard_(){
+    if(backGuardActive_) return;
+    backGuardActive_ = true;
+    pushBackGuard_();
+    window.addEventListener('popstate', handleBackGuardPopState_);
+  }
+
   // Auto-refresh: quietly re-pull the list on an interval so edits made by
   // someone else (another tab, or a direct edit in the sheet) show up
   // without the user having to hit the ⟳ button. Skipped whenever it would
@@ -8590,6 +8675,7 @@
   }, ACTIVITY_POLL_MS);
 
   // Boot
+  initBackGuard_(); // guard against swipe/back-gesture exits from first paint — see the note above, near handleBackGuardPopState_
   if(API_URL){
     (async () => {
       await resolveInitialSheet_();

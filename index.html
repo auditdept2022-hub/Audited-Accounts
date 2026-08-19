@@ -2115,7 +2115,11 @@
   // retried automatically once back online rather than lost.
   async function pushActivityToServer_(entry){
     if(!API_URL){ return; }
-    if(!navigator.onLine){ queueActivityOutboxItem_({ kind: 'push', entry: entry, opId: entry.id }); return; }
+    // Always attempt the call directly rather than pre-checking
+    // navigator.onLine — see isConnectionError_'s note. If there's truly
+    // no connection the call fails fast and falls into the same queue
+    // below anyway, so nothing is lost; but a false "offline" reading no
+    // longer skips the attempt entirely.
     try{
       await apiCallJson_('pushActivity', { entry: entry, opId: entry.id });
     }catch(e){
@@ -2136,7 +2140,8 @@
   async function pushActivityUndoneToServer_(entryId){
     if(!API_URL){ return; }
     const opId = genId_();
-    if(!navigator.onLine){ queueActivityOutboxItem_({ kind: 'undone', id: entryId, opId: opId }); return; }
+    // Same reasoning as pushActivityToServer_ above — try first, queue
+    // only on an actual failure, never pre-empted by navigator.onLine.
     try{
       await apiCallJson_('setActivityUndone', { id: entryId, undone: true, opId: opId });
     }catch(e){
@@ -2152,7 +2157,11 @@
     if(activityOutbox_.some(i => i.opId === item.opId)) return;
     activityOutbox_.push(item);
     saveActivityOutbox_();
-    if(navigator.onLine) syncActivityOutbox_();
+    // Always kick off a sync attempt — syncActivityOutbox_ itself will
+    // simply fail fast and leave the item queued if there's genuinely no
+    // connection, rather than this never even trying because
+    // navigator.onLine happened to read false.
+    syncActivityOutbox_();
   }
 
   // Replays queued activity pushes/undone-flags in order, oldest first.
@@ -2164,7 +2173,7 @@
   // periodic interval below).
   let activityOutboxSyncing_ = false;
   async function syncActivityOutbox_(){
-    if(!API_URL || !navigator.onLine || activityOutboxSyncing_) return;
+    if(!API_URL || activityOutboxSyncing_) return;
     if(!activityOutbox_.length) return;
     activityOutboxSyncing_ = true;
     try{
@@ -5168,7 +5177,7 @@
     document.getElementById('syncOverlay').classList.add('open');
     lockBodyScroll();
     renderSyncList_();
-    if(navigator.onLine && outbox.length) syncOutbox();
+    if(outbox.length) syncOutbox();
   }
 
   function closeSyncModal(){
@@ -5237,9 +5246,7 @@
       progressRow.style.display = 'none';
     }
 
-    if(!navigator.onLine){
-      statusEl.textContent = 'Offline — will resume automatically once you\'re back online.';
-    } else if(outbox.some(o => o.status === 'conflict' || o.status === 'error')){
+    if(outbox.some(o => o.status === 'conflict' || o.status === 'error')){
       statusEl.textContent = 'Some changes need your attention — tap ⚠ Action needed in the header.';
     } else {
       statusEl.textContent = '';
@@ -5961,9 +5968,23 @@
   //   AbortError  = our own request-timeout fired (see FETCH_TIMEOUT_MS) —
   //                 the request never got a response in time, most often
   //                 an Apps Script cold start or a very large sheet
+  // Classified purely by what the error actually IS, never by the
+  // navigator.onLine flag. That flag is only a hint from the browser
+  // about whether SOME network interface is up — it does not confirm
+  // the server is actually reachable, and on plenty of real devices
+  // (PWAs, WebViews, flaky wifi, some Android/iOS builds) it can be
+  // flat-out wrong in either direction. Mixing it into this decision
+  // used to mean: any error at all, while navigator.onLine happened to
+  // read false, got bucketed as "just a connection blip" and silently
+  // requeued forever instead of being surfaced — which combined with
+  // the old hard onLine gates below is exactly what could make a queued
+  // item sit as "pending" without ever actually being retried or
+  // reported. A real connection failure always throws a TypeError
+  // (network unreachable) or an AbortError (our own timeout) on its
+  // own, with no help from navigator.onLine needed.
   function isConnectionError_(err){
     return err instanceof TypeError || err instanceof SyntaxError ||
-      (err && err.name === 'AbortError') || !navigator.onLine;
+      (err && err.name === 'AbortError');
   }
   function connectionErrorLabel_(err){
     if(err && err.name === 'AbortError'){
@@ -6201,9 +6222,21 @@
   async function syncOutbox(){
     if(isSyncing) return;
     if(!outbox.length) return;
-    if(!navigator.onLine) { updateSyncUI(); return; }
+    // No navigator.onLine gate here on purpose — see isConnectionError_'s
+    // comment above. This function is now the SAME code path regardless
+    // of whether the browser thinks it's online or offline: it always
+    // just tries. If there's genuinely no connection, the fetch below
+    // throws its own TypeError/AbortError within a few seconds (bounded
+    // by FETCH_TIMEOUT_MS) and that's handled below exactly like any
+    // other connection error, with the same automatic retry. That's
+    // strictly more reliable than trusting navigator.onLine to decide
+    // whether it's even worth trying — a wrong "offline" reading used to
+    // mean this function returned immediately every single time it was
+    // called (on the 20s interval, on the 'online' event, on demand),
+    // so nothing queued ever moved out of "pending" until the flag
+    // happened to flip back, which on some devices it never reliably did.
     isSyncing = true;
-    document.getElementById('connStatus').textContent = 'Syncing offline changes…';
+    document.getElementById('connStatus').textContent = 'Syncing changes…';
     renderSyncList_();
 
     // Fresh server truth to diff conflict snapshots against.
@@ -6227,7 +6260,7 @@
       // nothing is silent, and this path is only ever reached for the
       // read-only list fetch, never for a write, so nothing can be
       // double-submitted by retrying it.
-      if(listErr && listErr.name === 'AbortError' && navigator.onLine){
+      if(listErr && listErr.name === 'AbortError'){
         const delay = syncColdStartBackoff_(syncColdStartRetries);
         syncColdStartRetries++;
         document.getElementById('connStatus').textContent = 'Cold start — retrying sync automatically…';
@@ -6467,14 +6500,14 @@
     if(syncedAny && !outbox.length){
       toast('Changes synced.');
     } else if(outbox.some(o => o.status === 'conflict' || o.status === 'error')){
-      document.getElementById('connStatus').textContent = 'Some offline changes need your attention.';
+      document.getElementById('connStatus').textContent = 'Some changes need your attention.';
     } else if(hitConnectionError){
       // Same fast-retry treatment as the initial list fetch above: a
       // timeout mid-loop (one of the queued writes itself hit a cold
       // Apps Script instance) shouldn't sit and wait out the full 20s
       // auto-sync interval when the instance is very likely warm again
       // within a few hundred ms.
-      if(hitConnectionErrorIsTimeout && outbox.length && navigator.onLine){
+      if(hitConnectionErrorIsTimeout && outbox.length){
         const delay = syncColdStartBackoff_(syncColdStartRetries);
         syncColdStartRetries++;
         document.getElementById('connStatus').textContent = 'Cold start — retrying sync automatically…';
@@ -6627,8 +6660,12 @@
 
   window.addEventListener('online', () => { updateSyncUI(); syncOutbox(); syncActivityOutbox_(); });
   window.addEventListener('offline', updateSyncUI);
-  setInterval(() => { if(navigator.onLine && outbox.length) syncOutbox(); }, 20000);
-  setInterval(() => { if(navigator.onLine && activityOutbox_.length) syncActivityOutbox_(); }, 20000);
+  // No navigator.onLine gate on these ticks either — same reasoning as
+  // syncOutbox()/syncActivityOutbox_() above: this timer is what's meant
+  // to be the safety net that eventually gets a stuck queue moving again,
+  // so it can't be the thing that's disabled by an unreliable flag.
+  setInterval(() => { if(outbox.length) syncOutbox(); }, 20000);
+  setInterval(() => { if(activityOutbox_.length) syncActivityOutbox_(); }, 20000);
 
   let isLoading = false;
   // Set when loadData() is called while a request is already in flight.

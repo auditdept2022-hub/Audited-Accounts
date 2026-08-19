@@ -6273,7 +6273,57 @@
   // separate one-off live call, so there's always something for a sync
   // to actually do and its status/timing is visible the same way
   // regardless of connection.
+  // COALESCE FIX (color-marker triple-tap): a plain field-only update
+  // (no remark, no currentEdit/historyEdit — this is exactly what
+  // setMark_ sends) that targets a row which ALREADY has a still-pending
+  // (not yet sent) field-only update queued for that same row gets
+  // merged into that existing item instead of becoming its own outbox
+  // entry. Without this, tapping red → blue → green quickly queued THREE
+  // separate outbox items, and syncOutbox() sends outbox items one at a
+  // time (a full Apps Script round trip apiece, each paying for its own
+  // branch-lock wait + flush) — so three taps meant three sequential
+  // round trips even though only the FINAL color is ever seen or saved.
+  // Now they collapse into a single item/round trip, same as any other
+  // single-field edit. Only merges plain field edits (never a remark add
+  // or a remarks-box overwrite) so nothing meaningful is ever dropped —
+  // each of those still queues its own item, exactly as before.
+  function findMergeableUpdate_(item){
+    if(item.kind !== 'update') return null;
+    if(item.remark || item.currentEdit !== undefined || item.historyEdit !== undefined) return null;
+    return outbox.find(o =>
+      o.kind === 'update' && o.row === item.row && o.status === 'pending' &&
+      !o.remark && o.currentEdit === undefined && o.historyEdit === undefined
+    ) || null;
+  }
+
   async function queueOrSend_(item){
+    if(item.kind === 'update'){
+      const mergeable = findMergeableUpdate_(item);
+      if(mergeable){
+        Object.assign(mergeable.fields, item.fields);
+        mergeable.changedKeys = Array.from(new Set(
+          (mergeable.changedKeys || Object.keys(mergeable.fields))
+            .concat(item.changedKeys || Object.keys(item.fields))
+        ));
+        mergeable.customerName = item.customerName || mergeable.customerName;
+        // Keep the EARLIEST snapshot values (the true baseline before any
+        // of the coalesced taps) — only fill in keys this item introduces
+        // that the merge target wasn't already tracking, so drift
+        // detection at sync time still compares against reality.
+        if(item.snapshot){
+          mergeable.snapshot = mergeable.snapshot || {};
+          Object.keys(item.snapshot).forEach(k => {
+            if(!(k in mergeable.snapshot)) mergeable.snapshot[k] = item.snapshot[k];
+          });
+        }
+        applyOptimisticUpdate_(item);
+        render();
+        saveOutbox_();
+        updateSyncUI();
+        return { queued: true, merged: true };
+      }
+    }
+
     if(item.kind === 'create') applyOptimisticCreate_(item);
     else if(item.kind === 'update') applyOptimisticUpdate_(item);
     else if(item.kind === 'delete') applyOptimisticDelete_(item);
@@ -6369,6 +6419,37 @@
     return Math.min(300 * Math.pow(1.6, retryCount), 8000);
   }
 
+  // NOTIFICATION FIX: a "Sync paused — …" state (deployment/auth broken,
+  // server rejecting a write, etc.) used to ONLY update the small gray
+  // #connStatus text under the header — it never touched the ⚠ "Action
+  // needed" badge or the 🔔 activity badge, since those are driven
+  // entirely by logActivity_(). That meant a real, ongoing sync problem
+  // was invisible unless you happened to notice that one faint line of
+  // text (or reloaded the page, which runs its own boot-time checks that
+  // happen to surface it) — nothing ever "pinged" you about it. Every
+  // "Sync paused" state now also logs to the activity feed via this
+  // helper, which lights up the header badge immediately, the same way a
+  // per-item conflict/error already does.
+  //
+  // Deduping: `key` identifies the SPECIFIC failure (e.g. its message).
+  // As long as the exact same failure keeps recurring on each 20s retry,
+  // only ONE activity entry is logged (no spam) — but if the failure
+  // reason actually changes, or clears and then reoccurs, a fresh entry
+  // is logged so the badge count reflects something the person hasn't
+  // already been told about. lastSyncPausedKey_ is cleared back to null
+  // any time a sync pass completes without hitting a connection-level
+  // error (see the `if(!hitConnectionError)` reset further down) — that's
+  // what allows a NEW failure after a period of working sync to notify
+  // again instead of being silently deduped forever.
+  let lastSyncPausedKey_ = null;
+  function notifySyncPaused_(key, statusText, logDetail){
+    document.getElementById('connStatus').textContent = statusText;
+    if(lastSyncPausedKey_ !== key){
+      lastSyncPausedKey_ = key;
+      logActivity_('warning', 'Sync paused', logDetail || statusText, null, 'openSync');
+    }
+  }
+
   async function syncOutbox(){
     if(isSyncing) return;
     if(!outbox.length) return;
@@ -6454,9 +6535,12 @@
       }
       syncColdStartRetries = 0;
       updateSyncUI();
-      document.getElementById('connStatus').textContent = isConnectionError_(listErr)
-        ? 'Sync paused — ' + connectionErrorLabel_(listErr)
-        : 'Sync failed: ' + listErr.message;
+      if(isConnectionError_(listErr)){
+        const msg = connectionErrorLabel_(listErr);
+        notifySyncPaused_('list:' + msg, 'Sync paused — ' + msg, msg);
+      } else {
+        notifySyncPaused_('list-other:' + listErr.message, 'Sync failed: ' + listErr.message, listErr.message);
+      }
       return;
     }
     syncColdStartRetries = 0;
@@ -6709,6 +6793,14 @@
 
     updateSyncUI();
 
+    // The version/list fetch at the top of this pass succeeded (or this
+    // pass had nothing to fetch), and nothing in the write loop hit a
+    // connection-level error either — whatever "Sync paused" state may
+    // have been showing before is over, so let the NEXT distinct failure
+    // (if any) notify fresh instead of being silently deduped against an
+    // old one.
+    if(!hitConnectionError) lastSyncPausedKey_ = null;
+
     // Only pay for a full server round-trip (guaranteed slow — every
     // write we just made already cleared the backend's list cache, so
     // this would force a full uncached sheet read) when something
@@ -6764,7 +6856,7 @@
         return;
       }
       syncColdStartRetries = 0;
-      document.getElementById('connStatus').textContent = 'Sync paused — ' + connErrMsg;
+      notifySyncPaused_('write:' + connErrMsg, 'Sync paused — ' + connErrMsg, connErrMsg);
     } else if(syncedAny){
       toast('Changes synced.');
     }

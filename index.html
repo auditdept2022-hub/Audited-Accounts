@@ -6238,6 +6238,53 @@
   // against the sheet's CURRENT auditorRemarks, since your new remark is
   // additive (it becomes the new "current" remark and pushes whatever's
   // already there into history) rather than a plain field overwrite.
+  // BUG FIX: this used to be recomputed independently in two different
+  // places (the conflict picker's field rows, and the "N fields differ"
+  // badge above them) with two different, less accurate rules than the
+  // ACTUAL conflict check in syncOutbox that decided this item was a
+  // conflict in the first place:
+  //   - The badge counted every key in item.snapshot against
+  //     serverSnapshot, not just the keys this item actually writes
+  //     (writtenKeys below) — so it could count an unrelated field that
+  //     happened to drift for some other reason as part of "N fields
+  //     differ", inflating the count with things that have nothing to do
+  //     with this conflict.
+  //   - Both the badge and the picker compared with plain
+  //     String(a) !== String(b) instead of normForCompare_ (trim +
+  //     normalize line endings) — the exact same normalization the sync
+  //     check already uses specifically to avoid flagging a harmless
+  //     formatting difference as a real conflict. Without it here, a
+  //     field could show up in the picker (or count toward the badge)
+  //     even though the sync engine itself wouldn't have considered it
+  //     actually different.
+  // Centralizing this means the badge count and the picker rows always
+  // agree with each other AND with why this was flagged as a conflict.
+  function conflictDiffFields_(item){
+    const snap = item.serverSnapshot;
+    if(item.kind === 'delete' || snap === null || snap === undefined) return [];
+    const writtenKeys = new Set(item.changedKeys || Object.keys(item.fields || {}));
+    if(item.currentEdit !== undefined && item.currentEdit !== null){ writtenKeys.add('auditorRemarks'); writtenKeys.add('dateOfAudit'); }
+    if(item.historyEdit !== undefined && item.historyEdit !== null){ writtenKeys.add('previousRemarks'); }
+
+    const rows = [];
+    Object.keys(item.fields || {}).forEach(k => {
+      if(k === 'row' || !writtenKeys.has(k)) return;
+      if(normForCompare_(item.fields[k]) === normForCompare_(snap[k])) return; // unchanged — nothing to pick
+      rows.push({ key: k, label: fieldLabel_(k), mineVal: item.fields[k], theirsVal: snap[k] });
+    });
+    if(item.remark){
+      const mineRemark = item.remark + (item.auditor ? '  — ' + item.auditor : '');
+      rows.push({ key: '__remark', label: 'Auditor Remarks', mineVal: mineRemark, theirsVal: snap.auditorRemarks });
+    }
+    if(item.currentEdit !== undefined && item.currentEdit !== null && normForCompare_(item.currentEdit) !== normForCompare_(snap.auditorRemarks)){
+      rows.push({ key: '__currentEdit', label: 'Current Remark (direct edit)', mineVal: item.currentEdit, theirsVal: snap.auditorRemarks });
+    }
+    if(item.historyEdit !== undefined && item.historyEdit !== null && normForCompare_(item.historyEdit) !== normForCompare_(snap.previousRemarks)){
+      rows.push({ key: '__historyEdit', label: 'Previous Audit Remarks (direct edit)', mineVal: item.historyEdit, theirsVal: snap.previousRemarks });
+    }
+    return rows;
+  }
+
   function renderConflictPicker_(item){
     if(item.kind === 'delete'){
       return `<div class="ci-picker"><div class="ci-empty">This deletes the record — nothing to merge. Use the buttons below.</div></div>`;
@@ -6250,23 +6297,7 @@
       return `<div class="ci-picker"><div class="ci-empty">Current sheet values unavailable.</div></div>`;
     }
 
-    const rows = [];
-    Object.keys(item.fields || {}).forEach(k => {
-      if(k === 'row') return;
-      if(String(item.fields[k] ?? '') === String(snap[k] ?? '')) return; // unchanged — nothing to pick
-      rows.push({ key: k, label: fieldLabel_(k), mineVal: item.fields[k], theirsVal: snap[k] });
-    });
-    if(item.remark){
-      const mineRemark = item.remark + (item.auditor ? '  — ' + item.auditor : '');
-      rows.push({ key: '__remark', label: 'Auditor Remarks', mineVal: mineRemark, theirsVal: snap.auditorRemarks });
-    }
-    if(item.currentEdit !== undefined && item.currentEdit !== null && item.currentEdit !== snap.auditorRemarks){
-      rows.push({ key: '__currentEdit', label: 'Current Remark (direct edit)', mineVal: item.currentEdit, theirsVal: snap.auditorRemarks });
-    }
-    if(item.historyEdit !== undefined && item.historyEdit !== null && item.historyEdit !== snap.previousRemarks){
-      rows.push({ key: '__historyEdit', label: 'Previous Audit Remarks (direct edit)', mineVal: item.historyEdit, theirsVal: snap.previousRemarks });
-    }
-
+    const rows = conflictDiffFields_(item);
     if(!rows.length){
       return `<div class="ci-picker"><div class="ci-empty">Nothing differs from the sheet now — safe to save.</div></div>`;
     }
@@ -6353,7 +6384,7 @@
           const name = c.customerName || (c.fields && c.fields.customer) || (c.snapshot && c.snapshot.customer) || 'this customer';
           const isDelete = c.kind === 'delete';
           const detectedTime = c.conflictDetectedAt ? new Date(c.conflictDetectedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-          const diffCount = (!isDelete && c.serverSnapshot) ? Object.keys(c.snapshot || {}).filter(k => String(c.serverSnapshot[k] ?? '') !== String((c.snapshot || {})[k] ?? '')).length : 0;
+          const diffCount = isDelete ? 0 : conflictDiffFields_(c).length;
           const metaBits = [];
           if(detectedTime) metaBits.push(detectedTime);
           if(!isDelete) metaBits.push(diffCount + ' field' + (diffCount === 1 ? '' : 's') + ' differ' + (diffCount === 1 ? 's' : ''));

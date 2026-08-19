@@ -269,11 +269,26 @@
   .import-status-bar{line-height:1.3;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
   .import-status-bar .import-status:empty{display:none;}
   .import-status-bar .import-status{display:block;padding:2px 2px 0;white-space:normal;flex:0 1 auto;min-width:0;}
-  /* Cancel-import button: sits right beside the "Importing N / M…" text,
+  /* Cancel-import button: small, embedded/inline pill that sits directly
+     beside the "Importing N / M…" text and blends with the page
+     background instead of standing out as a loud red action button —
      only shown while an import is actually in flight (toggled in JS via
-     startImportRun_/endImportRun_). Deliberately small/inline so it
-     doesn't compete visually with the Import/Export toolbar below it. */
-  .import-cancel-btn{padding:3px 9px;font-size:11px;flex:0 0 auto;margin:1px 0 0;}
+     startImportRun_/endImportRun_). */
+  .import-cancel-btn{
+    padding:2px 8px;
+    font-size:10.5px;
+    font-weight:600;
+    flex:0 0 auto;
+    margin:0;
+    background:var(--paper);
+    color:var(--muted);
+    border:1px solid var(--line);
+    border-radius:999px;
+    box-shadow:none;
+    line-height:1.6;
+  }
+  .import-cancel-btn:hover{background:var(--del-soft);color:var(--del);border-color:#F0C3CE;}
+  .import-cancel-btn:active{transform:translateY(1px);}
   .import-cancel-btn:disabled{opacity:.6;cursor:default;}
 
   /* Embedded live date/time on the header's right edge, plus the
@@ -1696,7 +1711,7 @@
     </div>
 
     <div id="dashPanel" style="display:none;">
-      <div id="importStatusBar" class="import-status-bar"><span id="importStatus" class="import-status"></span><button type="button" class="btn danger import-cancel-btn" id="importCancelBtn" onclick="cancelImport_()" style="display:none;">✕ Cancel import</button></div>
+      <div id="importStatusBar" class="import-status-bar"><span id="importStatus" class="import-status"></span><button type="button" class="import-cancel-btn" id="importCancelBtn" onclick="cancelImport_()" style="display:none;">✕ Cancel</button></div>
       <div class="toolbar">
         <div class="toolbar-extra" id="toolbarExtra">
         <div class="left">
@@ -5090,7 +5105,7 @@
     const btn = document.getElementById('importCancelBtn');
     btn.style.display = '';
     btn.disabled = false;
-    btn.textContent = '✕ Cancel import';
+    btn.textContent = '✕ Cancel';
     setImportButtonsDisabled_(true);
     return importRun_;
   }

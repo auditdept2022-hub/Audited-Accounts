@@ -266,9 +266,15 @@
   /* Sits in the quiet strip between the header and the toolbar card,
      instead of crowding the Import buttons — empty (0-height) until
      an import is actually running. */
-  .import-status-bar{line-height:1.3;}
+  .import-status-bar{line-height:1.3;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
   .import-status-bar .import-status:empty{display:none;}
-  .import-status-bar .import-status{display:block;padding:2px 2px 0;white-space:normal;}
+  .import-status-bar .import-status{display:block;padding:2px 2px 0;white-space:normal;flex:1 1 auto;min-width:120px;}
+  /* Cancel-import button: sits right beside the "Importing N / M…" text,
+     only shown while an import is actually in flight (toggled in JS via
+     startImportRun_/endImportRun_). Deliberately small/inline so it
+     doesn't compete visually with the Import/Export toolbar below it. */
+  .import-cancel-btn{padding:3px 9px;font-size:11px;flex:0 0 auto;margin:1px 0 0;}
+  .import-cancel-btn:disabled{opacity:.6;cursor:default;}
 
   /* Embedded live date/time on the header's right edge, plus the
      activity-log bell tucked underneath it. */
@@ -1690,17 +1696,17 @@
     </div>
 
     <div id="dashPanel" style="display:none;">
-      <div id="importStatusBar" class="import-status-bar"><span id="importStatus" class="import-status"></span></div>
+      <div id="importStatusBar" class="import-status-bar"><span id="importStatus" class="import-status"></span><button type="button" class="btn danger import-cancel-btn" id="importCancelBtn" onclick="cancelImport_()" style="display:none;">✕ Cancel import</button></div>
       <div class="toolbar">
         <div class="toolbar-extra" id="toolbarExtra">
         <div class="left">
           <div class="toolbar-group-label">Import &amp; export</div>
           <div class="btn-cluster" title="Import / Export">
-          <button class="btn" onclick="document.getElementById('importAccountsInput').click()" title="Import a flat account list (.csv/.xls/.xlsx) with a header row like Acct Type/Status Customer, Release/ Rstr Date, Model, Engine No, Due Date, Term, MA, Beg Bal, Customer Status, etc. Reads only Customer, Model, Engine No, Release/Rstr Date, Due Date, Term, MA, Beg Bal &amp; Customer Status from each row. This PERMANENTLY CLEARS every existing record in the branch first, then adds every row from the file as a brand-new customer — it never matches/merges with what's already there. Due This Month / Payment (Adv) / Penalty Due are always set to 0 (use Import Balances afterward to fill them in); Unit status, Payment mode, Date of Audit, Auditor Remarks &amp; Previous Audit Remarks always start blank.">⇪ Import Accounts</button>
+          <button class="btn" id="importAccountsBtn" onclick="document.getElementById('importAccountsInput').click()" title="Import a flat account list (.csv/.xls/.xlsx) with a header row like Acct Type/Status Customer, Release/ Rstr Date, Model, Engine No, Due Date, Term, MA, Beg Bal, Customer Status, etc. Reads only Customer, Model, Engine No, Release/Rstr Date, Due Date, Term, MA, Beg Bal &amp; Customer Status from each row. This PERMANENTLY CLEARS every existing record in the branch first, then adds every row from the file as a brand-new customer — it never matches/merges with what's already there. Due This Month / Payment (Adv) / Penalty Due are always set to 0 (use Import Balances afterward to fill them in); Unit status, Payment mode, Date of Audit, Auditor Remarks &amp; Previous Audit Remarks always start blank.">⇪ Import Accounts</button>
           <input type="file" id="importAccountsInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
-          <button class="btn" onclick="document.getElementById('importBalancesInput').click()" title="Import CSV, Excel (.xls/.xlsx) or PDF files. Matches customers by name (and engine no. when the file has one, so same-name/different-unit customers are told apart) and updates ONLY Due This Month, Payment (Adv) &amp; Penalty Due. Accepts either a plain file with literal 'Due This Month' etc. headers, or the same STA-style ledger report Import Accounts reads (CU/OD/DEL/TTL/Adv columns). PDF support is best-effort (reconstructed from text position, not a real grid) — scanned/image-only PDFs aren't supported; use CSV/Excel if a PDF doesn't import cleanly. Any remarks/Auditor Remarks column in the file is ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Balances</button>
+          <button class="btn" id="importBalancesBtn" onclick="document.getElementById('importBalancesInput').click()" title="Import CSV, Excel (.xls/.xlsx) or PDF files. Matches customers by name (and engine no. when the file has one, so same-name/different-unit customers are told apart) and updates ONLY Due This Month, Payment (Adv) &amp; Penalty Due. Accepts either a plain file with literal 'Due This Month' etc. headers, or the same STA-style ledger report Import Accounts reads (CU/OD/DEL/TTL/Adv columns). PDF support is best-effort (reconstructed from text position, not a real grid) — scanned/image-only PDFs aren't supported; use CSV/Excel if a PDF doesn't import cleanly. Any remarks/Auditor Remarks column in the file is ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Balances</button>
           <input type="file" id="importBalancesInput" accept=".csv,.xls,.xlsx,.pdf" multiple style="display:none">
-          <button class="btn" onclick="document.getElementById('importRemarksInput').click()" title="Import CSV or Excel (.xls/.xlsx) files. Matches customers by name (and engine no. when the file has one). Takes ONLY the customer name and a Remarks/Auditor Remarks column and adds each one as a new line directly into Previous Audit Remarks (no date stamp). The current Auditor Remarks and Date of Audit are never touched. Any balance columns in the file are ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Remarks</button>
+          <button class="btn" id="importRemarksBtn" onclick="document.getElementById('importRemarksInput').click()" title="Import CSV or Excel (.xls/.xlsx) files. Matches customers by name (and engine no. when the file has one). Takes ONLY the customer name and a Remarks/Auditor Remarks column and adds each one as a new line directly into Previous Audit Remarks (no date stamp). The current Auditor Remarks and Date of Audit are never touched. Any balance columns in the file are ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Remarks</button>
           <input type="file" id="importRemarksInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
           <span class="btn-cluster-divider" aria-hidden="true"></span>
           <button class="btn" onclick="exportCSV()" title="Export all customers to an Excel (.xlsx) file, with columns sized to fit">⇩ Export</button>
@@ -4521,6 +4527,7 @@
   // Only ever reads/writes Due This Month, Payment (Adv), Penalty Due.
   // Any remarks column in the file is ignored completely.
   async function handleImportBalancesFiles(fileList){
+    if(importRun_){ toast('An import is already running — wait for it to finish (or cancel it) first.'); return; }
     const allRecords = await parseImportFiles_(fileList);
     if(!allRecords.length){ toast('No customer rows found to import.'); return; }
 
@@ -4546,27 +4553,40 @@
     if(!await appConfirm(msg, { title: 'Import balances?', confirmText: 'Import' })) return;
 
     const total = toUpdate.length;
+    const control = startImportRun_();
     document.getElementById('importStatus').textContent = `Importing 0 / ${total}…`;
     toast(`Importing ${total} record${total === 1 ? '' : 's'}…`);
 
-    // Bulk writes go through batchUpdateCustomer in ONE Apps Script
-    // execution per chunk instead of one HTTP round trip per row. No
-    // `remark`/`historyAppend` is ever sent here, so this flow can never
-    // touch Auditor Remarks / Previous Audit Remarks / Date of Audit.
-    const updateResult = await runBatched_(
-      toUpdate, 'batchUpdateCustomer', 'updates',
-      item => ({ row: item.row, fields: item.fields }),
-      'updateCustomer', item => ({ row: item.row, fields: item.fields }),
-      total, 0,
-      item => item.customer
-    );
+    let updateResult;
+    try{
+      // Bulk writes go through batchUpdateCustomer in ONE Apps Script
+      // execution per chunk instead of one HTTP round trip per row. No
+      // `remark`/`historyAppend` is ever sent here, so this flow can never
+      // touch Auditor Remarks / Previous Audit Remarks / Date of Audit.
+      // Each field here fully overwrites the previous value, so this
+      // import is naturally safe to simply run again in full if it's
+      // cancelled partway — no duplicate-value risk like remarks below.
+      updateResult = await runBatched_(
+        toUpdate, 'batchUpdateCustomer', 'updates',
+        item => ({ row: item.row, fields: item.fields }),
+        'updateCustomer', item => ({ row: item.row, fields: item.fields }),
+        total, 0,
+        item => item.customer,
+        control
+      );
+    } finally {
+      endImportRun_();
+    }
 
     const updated = updateResult.succeeded, failed = updateResult.failed;
-    toast(`Import complete: ${updated} updated${failed ? ', ' + failed + ' failed' : ''}${unmatched ? ', ' + unmatched + ' skipped (no match)' : ''}.`);
+    const cancelledNote = updateResult.cancelled
+      ? ` Cancelled — ${total - updateResult.done} record${(total - updateResult.done) === 1 ? '' : 's'} not yet reached; re-run Import Balances to pick them up (already-updated rows are simply overwritten again, so it's safe to run in full).`
+      : '';
+    toast(`Import ${updateResult.cancelled ? 'cancelled' : 'complete'}: ${updated} updated${failed ? ', ' + failed + ' failed' : ''}${unmatched ? ', ' + unmatched + ' skipped (no match)' : ''}.${cancelledNote}`);
     logActivity_(
-      failed ? 'warning' : (unmatched ? 'warning' : 'success'),
-      'Import balances complete',
-      `${updated} account${updated === 1 ? '' : 's'} updated${failed ? ', ' + failed + ' failed' : ''}${unmatched ? ', ' + unmatched + ' skipped (no match)' : ''}.`,
+      updateResult.cancelled ? 'warning' : (failed ? 'warning' : (unmatched ? 'warning' : 'success')),
+      updateResult.cancelled ? 'Import balances cancelled' : 'Import balances complete',
+      `${updated} account${updated === 1 ? '' : 's'} updated${failed ? ', ' + failed + ' failed' : ''}${unmatched ? ', ' + unmatched + ' skipped (no match)' : ''}.${cancelledNote}`,
       [
         { label: 'Not matched — no customer found on this branch', items: unmatchedNames },
         { label: 'Matched, but failed to save', items: updateResult.failedLabels }
@@ -4583,6 +4603,7 @@
   // new line, as-is (no date stamp) — current Auditor Remarks and Date of
   // Audit are never written by this flow.
   async function handleImportRemarksFiles(fileList){
+    if(importRun_){ toast('An import is already running — wait for it to finish (or cancel it) first.'); return; }
     const allRecords = await parseImportFiles_(fileList);
     if(!allRecords.length){ toast('No customer rows found to import.'); return; }
 
@@ -4607,28 +4628,43 @@
     if(!await appConfirm(msg, { title: 'Import remarks?', confirmText: 'Import' })) return;
 
     const total = toUpdate.length;
+    const control = startImportRun_();
     document.getElementById('importStatus').textContent = `Importing 0 / ${total}…`;
     toast(`Importing ${total} record${total === 1 ? '' : 's'}…`);
 
-    // Bulk writes go through batchUpdateCustomer in ONE Apps Script
-    // execution per chunk. No `fields`/`remark` is ever sent here, so this
-    // flow can never touch balances, current Auditor Remarks, or Date of
-    // Audit — only Previous Audit Remarks gets a new line, as-is (no date
-    // stamp).
-    const updateResult = await runBatched_(
-      toUpdate, 'batchUpdateCustomer', 'updates',
-      item => ({ row: item.row, historyAppend: item.historyAppend }),
-      'appendRemarkHistoryRow', item => ({ row: item.row, entry: item.historyAppend }),
-      total, 0,
-      item => item.customer
-    );
+    let updateResult;
+    try{
+      // Bulk writes go through batchUpdateCustomer in ONE Apps Script
+      // execution per chunk. No `fields`/`remark` is ever sent here, so this
+      // flow can never touch balances, current Auditor Remarks, or Date of
+      // Audit — only Previous Audit Remarks gets a new line, as-is (no date
+      // stamp).
+      updateResult = await runBatched_(
+        toUpdate, 'batchUpdateCustomer', 'updates',
+        item => ({ row: item.row, historyAppend: item.historyAppend }),
+        'appendRemarkHistoryRow', item => ({ row: item.row, entry: item.historyAppend }),
+        total, 0,
+        item => item.customer,
+        control
+      );
+    } finally {
+      endImportRun_();
+    }
 
     const updated = updateResult.succeeded, failed = updateResult.failed;
-    toast(`Import complete: ${updated} updated${failed ? ', ' + failed + ' failed' : ''}${unmatched ? ', ' + unmatched + ' skipped (no match)' : ''}.`);
+    // Unlike Import Balances, each row here APPENDS a new line rather than
+    // overwriting — so, unlike that flow, blindly re-running the whole
+    // file after a cancel would add a second, duplicate line for every
+    // row that already went through. Say so explicitly rather than
+    // implying it's just as safe to re-run in full.
+    const cancelledNote = updateResult.cancelled
+      ? ` Cancelled — ${total - updateResult.done} record${(total - updateResult.done) === 1 ? '' : 's'} not yet reached. This import APPENDS a line per row, so re-running the same file would duplicate the line for the ${updateResult.succeeded} that already went through — trim the file to just the remaining rows before re-importing.`
+      : '';
+    toast(`Import ${updateResult.cancelled ? 'cancelled' : 'complete'}: ${updated} updated${failed ? ', ' + failed + ' failed' : ''}${unmatched ? ', ' + unmatched + ' skipped (no match)' : ''}.${cancelledNote}`);
     logActivity_(
-      failed ? 'warning' : (unmatched ? 'warning' : 'success'),
-      'Import remarks complete',
-      `${updated} account${updated === 1 ? '' : 's'} updated${failed ? ', ' + failed + ' failed' : ''}${unmatched ? ', ' + unmatched + ' skipped (no match)' : ''}.`,
+      updateResult.cancelled ? 'warning' : (failed ? 'warning' : (unmatched ? 'warning' : 'success')),
+      updateResult.cancelled ? 'Import remarks cancelled' : 'Import remarks complete',
+      `${updated} account${updated === 1 ? '' : 's'} updated${failed ? ', ' + failed + ' failed' : ''}${unmatched ? ', ' + unmatched + ' skipped (no match)' : ''}.${cancelledNote}`,
       [
         { label: 'Not matched — no customer found on this branch', items: unmatchedNames },
         { label: 'Matched, but failed to save', items: updateResult.failedLabels }
@@ -4879,6 +4915,7 @@
   }
 
   async function handleImportAccountsFiles(fileList){
+    if(importRun_){ toast('An import is already running — wait for it to finish (or cancel it) first.'); return; }
     const allRecords = await parseAccountsFiles_(fileList);
     if(!allRecords.length){ toast('No account rows found to import.'); return; }
 
@@ -4896,6 +4933,7 @@
       + `This cannot be undone. Continue?`;
     if(!await appConfirm(msg, { danger: true, title: 'Replace all accounts?', confirmText: 'Clear & import' })) return;
 
+    const control = startImportRun_();
     document.getElementById('importStatus').textContent = 'Clearing existing records\u2026';
     toast(`Clearing "${branchName}" and importing ${toCreate.length} account${toCreate.length === 1 ? '' : 's'}\u2026`);
 
@@ -4903,28 +4941,60 @@
       await apiCallJson_('clearBranchData', { name: branchName });
       purgeBranchLocalState_(branchName);
     }catch(err){
+      // Distinguish a genuine "no connection at all" (TypeError) from a
+      // timeout/cold-start (AbortError) or a bad/HTML response
+      // (SyntaxError, e.g. the deployment needs redeploying) — the old
+      // blanket "You're offline" message was shown for all three, which
+      // is wrong (and confusing) for the latter two when the device is
+      // actually online. connectionErrorLabel_ picks the accurate wording
+      // for whichever one actually happened.
       const msg2 = isConnectionError_(err)
-        ? 'You\'re offline — importing accounts needs a connection.'
+        ? connOrOfflineLabel_(err, 'importing accounts')
         : 'Could not clear the branch before import: ' + err.message;
       toast(msg2);
       logActivity_('error', 'Import accounts failed', msg2);
       document.getElementById('importStatus').textContent = '';
+      endImportRun_();
       return;
     }
 
-    const createResult = await runBatched_(
-      toCreate, 'batchCreateCustomer', 'records',
-      fieldsToCompactRecord_,
-      'createCustomer', item => ({ fields: item }),
-      toCreate.length, 0,
-      item => item.customer
-    );
+    if(control.cancelled){
+      // Cancelled during the clear step itself, before any accounts were
+      // written — the branch is now empty. Say so plainly rather than
+      // silently leaving it that way.
+      toast(`Cancelled — "${branchName}" was already cleared but no accounts were added yet. Re-run Import Accounts to add them.`);
+      logActivity_('warning', 'Import accounts cancelled', `"${branchName}" was cleared but no accounts were added before cancelling.`);
+      document.getElementById('importStatus').textContent = '';
+      endImportRun_();
+      return;
+    }
 
-    toast(`Import complete: ${createResult.succeeded} added${createResult.failed ? ', ' + createResult.failed + ' failed' : ''}.`);
+    let createResult;
+    try{
+      createResult = await runBatched_(
+        toCreate, 'batchCreateCustomer', 'records',
+        fieldsToCompactRecord_,
+        'createCustomer', item => ({ fields: item }),
+        toCreate.length, 0,
+        item => item.customer,
+        control
+      );
+    } finally {
+      endImportRun_();
+    }
+
+    // Import Accounts always fully replaces the branch from the file, so
+    // — unlike Import Remarks — re-running it after a cancel is always
+    // safe: it clears again and recreates every row fresh, it just costs
+    // the time of redoing the ones already added.
+    const cancelledNote = createResult.cancelled
+      ? ` Cancelled — only ${createResult.succeeded} of ${toCreate.length} accounts were added. Re-run Import Accounts with the same file to add the rest (it clears and starts over, so this is safe).`
+      : '';
+    toast(`Import ${createResult.cancelled ? 'cancelled' : 'complete'}: ${createResult.succeeded} added${createResult.failed ? ', ' + createResult.failed + ' failed' : ''}.${cancelledNote}`);
     logActivity_(
-      createResult.failed ? 'warning' : 'success',
-      'Import accounts complete',
-      `${createResult.succeeded} account${createResult.succeeded === 1 ? '' : 's'} added to "${branchName}"${createResult.failed ? ', ' + createResult.failed + ' failed' : ''}.`,
+      createResult.cancelled ? 'warning' : (createResult.failed ? 'warning' : 'success'),
+      createResult.cancelled ? 'Import accounts cancelled' : 'Import accounts complete',
+      `${createResult.succeeded} account${createResult.succeeded === 1 ? '' : 's'} added to "${branchName}"${createResult.failed ? ', ' + createResult.failed + ' failed' : ''}.${cancelledNote}`,
       [ { label: 'Failed to add', items: createResult.failedLabels } ]
     );
     document.getElementById('importStatus').textContent = '';
@@ -4992,11 +5062,101 @@
     return chunks;
   }
 
+  // ---- Import run control (Cancel button + connection-loss pause) -------
+  //
+  // At most one import runs at a time (the Import buttons are disabled for
+  // the other flows while one is active — see startImportRun_/endImportRun_
+  // below), so a single module-level `importRun_` is enough to track it.
+  // The object is intentionally mutable and shared by reference into
+  // runBatched_: setting importRun_.cancelled = true from cancelImport_()
+  // is all it takes for the in-flight run to notice and stop.
+  let importRun_ = null;
+  let opCounter_ = 0;
+
+  // Stable id for one write. Reused on every retry of the SAME logical
+  // write (same chunk, or the same single-row fallback of one item within
+  // it) so the backend's withIdempotency_ can recognize a retried request
+  // as "already applied" instead of re-running it — this is what stops a
+  // request that actually saved but timed out on the way back to the
+  // browser from being written a second time (duplicate customers, or a
+  // remark/history line stacked twice) when it's retried after a
+  // connection blip.
+  function genOpId_(){
+    return 'imp_' + Date.now().toString(36) + '_' + (opCounter_++) + '_' + Math.random().toString(36).slice(2, 8);
+  }
+
+  function startImportRun_(){
+    importRun_ = { cancelled: false, paused: false };
+    const btn = document.getElementById('importCancelBtn');
+    btn.style.display = '';
+    btn.disabled = false;
+    btn.textContent = '✕ Cancel import';
+    setImportButtonsDisabled_(true);
+    return importRun_;
+  }
+
+  function endImportRun_(){
+    importRun_ = null;
+    document.getElementById('importCancelBtn').style.display = 'none';
+    setImportButtonsDisabled_(false);
+  }
+
+  function setImportButtonsDisabled_(disabled){
+    // Import flows share the branch's data end-to-end (Import Accounts in
+    // particular clears the whole branch first), so two imports running
+    // at once on the same branch could easily race and corrupt each
+    // other's writes. Disabling all three while any one is running keeps
+    // that from ever happening.
+    ['importAccountsBtn', 'importBalancesBtn', 'importRemarksBtn'].forEach(id => {
+      const el = document.getElementById(id);
+      if(el) el.disabled = disabled;
+    });
+  }
+
+  function cancelImport_(){
+    if(!importRun_ || importRun_.cancelled) return;
+    importRun_.cancelled = true;
+    const btn = document.getElementById('importCancelBtn');
+    btn.disabled = true;
+    btn.textContent = 'Cancelling…';
+    toast('Cancelling — finishing what\u2019s already in flight, nothing further will be sent.');
+  }
+
+  // Resolves once we appear to be back online, or immediately if the run
+  // was cancelled while waiting. Doesn't trust navigator.onLine alone (see
+  // the note on isConnectionError_ above — it can be wrong in both
+  // directions), so this races the browser's 'online' event against a
+  // periodic real ping to the server; whichever notices reconnection first
+  // wins.
+  function waitForReconnect_(control){
+    return new Promise(resolve => {
+      if(control.cancelled) return resolve();
+      let done = false;
+      const finish = () => {
+        if(done) return;
+        done = true;
+        window.removeEventListener('online', onOnline);
+        clearInterval(pollTimer);
+        resolve();
+      };
+      const onOnline = () => { checkNow(); };
+      async function checkNow(){
+        if(control.cancelled) return finish();
+        try{
+          await fetchJson_(apiUrl_('ping', {}), 8000);
+          finish();
+        }catch(err){ /* still down — keep waiting */ }
+      }
+      window.addEventListener('online', onOnline);
+      const pollTimer = setInterval(() => {
+        if(control.cancelled) return finish();
+        checkNow();
+      }, 4000);
+      checkNow();
+    });
+  }
+
   // Sends `items` to a fast batch action in chunks, a few chunks at a time.
-  // If a chunk's batch call errors for any reason, that chunk is retried
-  // one row at a time via the single-row action instead — so one bad row,
-  // a stale (not-yet-redeployed) backend, or a dropped request can't sink
-  // the rest of the import.
   //   batchAction / batchKey   - e.g. 'batchUpdateCustomer' / 'updates'
   //   toBatchItem(item)        - shapes one item for the batch payload array
   //   singleAction             - e.g. 'updateCustomer', used as fallback
@@ -5005,8 +5165,28 @@
   // getLabel (optional): item -> display string, used ONLY to build
   // `failedLabels` (which customers actually failed to save) for the
   // activity log — has no effect on the actual import/save behavior.
-  async function runBatched_(items, batchAction, batchKey, toBatchItem, singleAction, toSinglePayload, overallTotal, doneSoFar, getLabel){
-    if(!items.length) return { succeeded: 0, failed: 0, done: doneSoFar, failedLabels: [] };
+  // control (optional): the object returned by startImportRun_() — lets
+  // the Cancel button stop this run, and gates the connection-loss pause
+  // below. If omitted, behaves as a normal uncancellable batch (used by
+  // any future non-import caller).
+  //
+  // RESILIENCE (this is what makes Cancel/connection-loss safe rather than
+  // damaging): every batch chunk and every single-row fallback call now
+  // carries a stable opId (see genOpId_ above). A CONNECTION failure
+  // (offline, timeout, bad response — see isConnectionError_) never falls
+  // through to the "retry as separate single rows" path, because that
+  // path is for a request that reached the server and was rejected, not
+  // one that may or may not have arrived. Instead the whole run pauses
+  // (reported in the status text), waits for the connection to actually
+  // come back, and retries the EXACT SAME request with the EXACT SAME
+  // opId — so if the original attempt had in fact already saved
+  // server-side before the response was lost, the retry is a safe no-op
+  // (the backend returns the cached first result) instead of writing the
+  // same rows/remarks a second time. Only a real application error (a
+  // request that reached the server and failed for a row-specific reason)
+  // falls back to per-row retries.
+  async function runBatched_(items, batchAction, batchKey, toBatchItem, singleAction, toSinglePayload, overallTotal, doneSoFar, getLabel, control){
+    if(!items.length) return { succeeded: 0, failed: 0, done: doneSoFar, failedLabels: [], cancelled: false };
 
     // PERFORMANCE: more chunks in flight at once overlaps network round-trip
     // time (and any Apps Script cold start) across requests. This doesn't
@@ -5020,27 +5200,58 @@
     let succeeded = 0, failed = 0, done = doneSoFar;
     const failedLabels = [];
     const FAILED_LABELS_CAP = 300;
+    const statusEl = document.getElementById('importStatus');
+    let lastStatusText = null;
 
-    function reportProgress(){
-      document.getElementById('importStatus').textContent = `Importing ${done} / ${overallTotal}…`;
+    function reportProgress(paused){
+      const text = paused
+        ? `Waiting for connection\u2026 (${done} / ${overallTotal} saved so far — will resume automatically)`
+        : `Importing ${done} / ${overallTotal}\u2026`;
+      // Avoid a redundant reflow-triggering write when nothing changed —
+      // this runs on every chunk completion, and on a big import that's a
+      // lot of calls that were writing the exact same string repeatedly.
+      if(text !== lastStatusText){
+        statusEl.textContent = text;
+        lastStatusText = text;
+      }
     }
 
-    async function fallbackChunk(chunk){
-      for(const item of chunk){
-        try{
-          // apiCallJson_ (fetchJson_) gives this a timeout + safe JSON
-          // parsing, same as every other call — a stalled/HTML response
-          // during an import used to be able to hang the whole import
-          // indefinitely instead of failing this one row and moving on.
-          const data = await apiCallJson_(singleAction, toSinglePayload(item));
-          if(!data.ok) throw new Error('unexpected response');
-          succeeded++;
-        }catch(err){
-          failed++;
-          if(getLabel && failedLabels.length < FAILED_LABELS_CAP){
-            try{ failedLabels.push(getLabel(item) || 'row ' + item.row); }catch(e){ /* best-effort */ }
+    async function fallbackChunk(chunk, chunkOpId){
+      for(let i = 0; i < chunk.length; i++){
+        const item = chunk[i];
+        if(control && control.cancelled) return;
+        const itemOpId = chunkOpId + '_' + i;
+        let handled = false;
+        while(!handled){
+          try{
+            // apiCallJson_ (fetchJson_) gives this a timeout + safe JSON
+            // parsing, same as every other call — a stalled/HTML response
+            // during an import used to be able to hang the whole import
+            // indefinitely instead of failing this one row and moving on.
+            const payload = toSinglePayload(item);
+            payload.opId = itemOpId;
+            const data = await apiCallJson_(singleAction, payload);
+            if(!data.ok) throw new Error('unexpected response');
+            succeeded++;
+            handled = true;
+          }catch(err){
+            if(isConnectionError_(err) && (!control || !control.cancelled)){
+              // Same reasoning as processChunk below: pause and retry this
+              // exact row with the same opId once we're back, rather than
+              // risk a duplicate by moving on and having something else
+              // resubmit it later.
+              reportProgress(true);
+              await waitForReconnect_(control || { cancelled: false });
+              if(control && control.cancelled) return;
+              continue;
+            }
+            failed++;
+            handled = true;
+            if(getLabel && failedLabels.length < FAILED_LABELS_CAP){
+              try{ failedLabels.push(getLabel(item) || 'row ' + item.row); }catch(e){ /* best-effort */ }
+            }
+            console.error(`${singleAction} failed for row`, item, err);
           }
-          console.error(`${singleAction} failed for row`, item, err);
         }
         done++;
         reportProgress();
@@ -5048,29 +5259,52 @@
     }
 
     async function processChunk(chunk){
-      try{
-        const payload = {};
-        payload[batchKey] = chunk.map(toBatchItem);
-        await apiCallJson_(batchAction, payload);
-        succeeded += chunk.length;
-        done += chunk.length;
-        reportProgress();
-      }catch(err){
-        console.warn(`${batchAction} chunk of ${chunk.length} threw (likely a request-too-large, timeout, or network failure), retrying one row at a time:`, err);
-        await fallbackChunk(chunk);
+      if(control && control.cancelled) return;
+      const chunkOpId = genOpId_();
+      const payload = {};
+      payload[batchKey] = chunk.map(toBatchItem);
+      payload.opId = chunkOpId;
+      while(true){
+        if(control && control.cancelled) return;
+        try{
+          await apiCallJson_(batchAction, payload);
+          succeeded += chunk.length;
+          done += chunk.length;
+          reportProgress();
+          return;
+        }catch(err){
+          if(isConnectionError_(err)){
+            // Couldn't confirm this chunk reached the server at all (or
+            // its response never came back) — pause the whole run rather
+            // than guessing. Retrying the SAME opId once reconnected is
+            // safe even if the original attempt actually did save.
+            console.warn(`${batchAction} chunk of ${chunk.length} lost its connection, pausing until reconnected:`, err);
+            reportProgress(true);
+            await waitForReconnect_(control || { cancelled: false });
+            if(control && control.cancelled) return;
+            continue;
+          }
+          // A real application error (bad row, missing column, etc.) —
+          // retrying the identical batch would just fail again the same
+          // way, so fall back to isolating it one row at a time.
+          console.warn(`${batchAction} chunk of ${chunk.length} was rejected, retrying one row at a time:`, err);
+          await fallbackChunk(chunk, chunkOpId);
+          return;
+        }
       }
     }
 
     let idx = 0;
     async function worker(){
       while(idx < chunks.length){
+        if(control && control.cancelled) return;
         await processChunk(chunks[idx++]);
       }
     }
     const workerCount = Math.min(CONCURRENCY, chunks.length);
     await Promise.all(Array.from({ length: workerCount }, worker));
 
-    return { succeeded, failed, done, failedLabels };
+    return { succeeded, failed, done, failedLabels, cancelled: !!(control && control.cancelled) };
   }
 
   document.getElementById('importBalancesInput').addEventListener('change', (e)=>{
@@ -5585,7 +5819,7 @@
         // up here until back online).
         noteEl.style.display = 'flex';
         noteEl.textContent = isConnectionError_(err)
-          ? '⚠ Offline — showing the last known branch list. Switching branches still works; changes made elsewhere won\'t show up until you reconnect.'
+          ? '⚠ ' + connectionErrorLabel_(err) + ' Showing the last known branch list — switching branches still works; changes made elsewhere won\'t show up until you reconnect.'
           : '⚠ Could not refresh branch list: ' + err.message;
       } else {
         listEl.innerHTML = '<div class="profile-loading is-error">⚠ Could not load branch profiles: ' + escapeHtml(err.message) + '<span class="retry-link" onclick="loadProfiles_()">Retry</span></div>';
@@ -5719,7 +5953,7 @@
       renderProfileList_(profilesCache_);
     }catch(err){
       const msg = isConnectionError_(err)
-        ? 'You\'re offline — creating a branch needs a connection (it changes the spreadsheet itself). Try again once you\'re back online.'
+        ? connOrOfflineLabel_(err, 'creating a branch (it changes the spreadsheet itself)')
         : 'Could not create branch: ' + err.message;
       toast(msg);
       logActivity_('error', 'Branch create failed', msg);
@@ -5752,7 +5986,7 @@
         await loadProfiles_();
       }catch(err){
         const msg = isConnectionError_(err)
-          ? 'You\'re offline — renaming a branch needs a connection.'
+          ? connOrOfflineLabel_(err, 'renaming a branch')
           : 'Could not rename: ' + err.message;
         toast(msg);
         logActivity_('error', 'Branch rename failed', msg);
@@ -5787,7 +6021,7 @@
       await loadProfiles_();
     }catch(err){
       const msg = isConnectionError_(err)
-        ? 'You\'re offline — deleting a branch needs a connection.'
+        ? connOrOfflineLabel_(err, 'deleting a branch')
         : 'Could not delete: ' + err.message;
       toast(msg);
       logActivity_('error', 'Branch delete failed', msg);
@@ -5866,7 +6100,7 @@
       }
     }catch(err){
       const msg = isConnectionError_(err)
-        ? 'You\'re offline — clearing a branch needs a connection.'
+        ? connOrOfflineLabel_(err, 'clearing a branch')
         : 'Could not clear: ' + err.message;
       toast(msg);
       logActivity_('error', 'Clear branch data failed', msg);
@@ -6234,6 +6468,47 @@
     return err instanceof TypeError || err instanceof SyntaxError ||
       (err && err.name === 'AbortError');
   }
+  // REAL-WORLD MULTI-USER FIX: withLock_/withBranchLock_ in the Apps
+  // Script backend throw a plain, ordinary Error ("This branch is busy
+  // with another save right now — please try again in a few seconds.")
+  // when two people save at close to the same instant and the second
+  // save can't get the lock within LOCK_WAIT_MS. That's a completely
+  // normal, self-resolving race — the lock is held for a few seconds at
+  // most — but because it's a plain Error (not a TypeError/SyntaxError/
+  // AbortError), isConnectionError_() above didn't recognize it, so
+  // syncOutbox() treated it exactly like a genuine rejected write:
+  // permanently flagged the item 'error' and put up "Some changes need
+  // your attention," even though simply asking again a moment later
+  // would have succeeded on its own. This is very likely the biggest
+  // single cause of "two people editing at once makes the app unusable"
+  // — every close-together save from two different auditors on the SAME
+  // branch collided with this. The backend now tags this specific error
+  // with `retryable: true` in its JSON response (see doGet's catch in
+  // Code.gs), and fetchJson_ below copies that flag onto the thrown
+  // Error so callers here can tell "genuinely busy, try again" apart
+  // from "the server actually rejected this." Falls back to a message
+  // match for older deployments that haven't been redeployed with the
+  // `retryable` field yet.
+  function isRetryableBusyError_(err){
+    if(!err) return false;
+    if(err.retryable === true) return true;
+    return typeof err.message === 'string' && /busy with another (save|change)/i.test(err.message);
+  }
+  // Same idea as connectionErrorLabel_, but for the handful of call sites
+  // that used to hard-code "You're offline — X needs a connection" for
+  // EVERY isConnectionError_ case, including a timeout or a bad/HTML
+  // response — both of which can happen while genuinely online (a slow
+  // Apps Script cold start, or a misconfigured deployment) and were being
+  // misreported as "offline", which is what made the app look broken even
+  // with a working connection. Only a true TypeError (fetch couldn't even
+  // be attempted) gets the "you're offline" wording now; the other two
+  // get their own accurate message from connectionErrorLabel_.
+  function connOrOfflineLabel_(err, actionLabel){
+    if(err instanceof TypeError){
+      return `You're offline — ${actionLabel} needs a connection. Try again once you're back online.`;
+    }
+    return connectionErrorLabel_(err);
+  }
   function connectionErrorLabel_(err){
     if(err && err.name === 'AbortError'){
       return 'The request took too long and timed out. Apps Script can be slow on its first request after a while (cold start) — try again.';
@@ -6280,7 +6555,11 @@
           : ('Server response was not valid JSON: ' + parseErr.message)
       );
     }
-    if(data && data.error) throw new Error(data.error);
+    if(data && data.error){
+      const e = new Error(data.error);
+      if(data.retryable === true) e.retryable = true;
+      throw e;
+    }
     if(data && data.gz === true && typeof data.data === 'string'){
       try{
         return await gunzipBase64ToJson_(data.data);
@@ -6682,6 +6961,7 @@
     let needsFullReload = false; // set true only if an item can't be trusted to patch in locally (see below)
     let hitConnectionError = false;
     let hitConnectionErrorIsTimeout = false;
+    let hitBusyError = false;
     let connErrMsg = '';
 
     for(const item of outbox){
@@ -6875,7 +7155,19 @@
         syncedAny = true;
         syncedCount++;
       }catch(err){
-        if(isConnectionError_(err)){
+        if(isRetryableBusyError_(err)){
+          // Another device/tab is saving to this SAME branch right this
+          // instant — the lock is held for a few seconds at most (see
+          // BRANCH_LOCK_TTL_SECONDS in Code.gs), so this always clears
+          // itself. Requeue exactly like a connection hiccup — never a
+          // permanent per-item error — and let the fast backoff retry
+          // below take over instead of sitting until the next 20s tick.
+          item.status = undefined;
+          hitConnectionError = true;
+          hitBusyError = true;
+          connErrMsg = 'Another save is in progress on this branch';
+          remaining.push(item);
+        } else if(isConnectionError_(err)){
           // Can't reach the server at all right now — stop sending
           // further items this pass, but leave this one (and everything
           // behind it) queued to retry as-is. Clear the 'syncing' flag
@@ -6971,6 +7263,22 @@
     } else if(outbox.some(o => o.status === 'conflict' || o.status === 'error')){
       document.getElementById('connStatus').textContent = 'Some changes need your attention.';
     } else if(hitConnectionError){
+      // MULTI-USER FIX: a branch-lock collision (two people saving to the
+      // same branch within the same second or two) gets its own fast,
+      // quiet retry — a little jitter so two colliding devices don't just
+      // collide again on the next attempt, but no alarming "Sync paused"
+      // messaging, since this is expected and always resolves itself
+      // within a few seconds. Deliberately NOT routed through the shared
+      // syncColdStartRetries counter (that one backs off up to 8s and is
+      // meant for a genuinely slow/cold server) — a lock race clears fast,
+      // so this stays snappy every time rather than slowing down the more
+      // it happens.
+      if(hitBusyError && outbox.length){
+        const delay = 400 + Math.floor(Math.random() * 500);
+        document.getElementById('connStatus').textContent = 'Another save is in progress — retrying…';
+        setTimeout(() => { syncOutbox(); }, delay);
+        return;
+      }
       // Same fast-retry treatment as the initial list fetch above: a
       // timeout mid-loop (one of the queued writes itself hit a cold
       // Apps Script instance) shouldn't sit and wait out the full 20s
@@ -9293,13 +9601,20 @@
   // without the user having to hit the ⟳ button. Skipped whenever it would
   // be disruptive: a modal is open (don't yank data out from under an
   // in-progress edit), the tab isn't visible, or a load is already in
-  // flight. Every 5 minutes rather than more often — loadData() only ever
-  // gets called here, on the manual ⟳ button, and once after a sync now
-  // (single edits patch themselves in locally instead), so this is the
-  // only "get everything" call happening on a timer, and 5 minutes is
-  // plenty for another tab's edits to show up without adding to the
-  // Apps Script Web App's request volume.
-  const AUTO_REFRESH_MS = 5 * 60 * 1000;
+  // flight.
+  //
+  // MULTI-DEVICE FIX: this used to be 5 minutes, which is why "the other
+  // person's change doesn't show up" was such a common complaint — two
+  // auditors on two devices/branches genuinely could be looking at
+  // out-of-sync data for up to 5 minutes at a stretch. The interval below
+  // no longer costs what it used to: almost every tick below just asks
+  // the cheap per-branch version counter (a few bytes, no sheet read, no
+  // lock — see fetchListVersion_ / the 'listVersion' backend action) and
+  // only pays for a real list fetch when something has actually changed.
+  // On a quiet branch this is effectively free, so it's safe to check far
+  // more often — other devices' changes now show up within ~15s instead
+  // of up to 5 minutes.
+  const AUTO_REFRESH_MS = 15 * 1000;
   setInterval(async () => {
     if(!API_URL) return;
     if(isLoading) return;

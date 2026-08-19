@@ -6239,15 +6239,50 @@
     document.getElementById('connStatus').textContent = 'Syncing changes…';
     renderSyncList_();
 
-    // Fresh server truth to diff conflict snapshots against.
+    // PERFORMANCE + CORRECTNESS FIX: this used to unconditionally pull
+    // the ENTIRE customer list before sending anything, on EVERY sync
+    // pass — including the very first save right after opening the app,
+    // when nothing else could possibly have touched the sheet yet. That
+    // was both slow (a full-branch list fetch, even gzipped, is far more
+    // work than the one-row write actually being sent — this is far and
+    // away the main reason syncing felt sluggish on every single save)
+    // and it's what caused a spurious "needs review" popup on a
+    // genuinely first-ever edit: the per-field drift comparison below
+    // ran even when nothing had changed, comparing this fresh fetch's
+    // field-by-field formatting against the locally-cached snapshot —
+    // any incidental formatting difference between two independent reads
+    // of an untouched field (not an actual edit) was enough to look like
+    // "someone else changed this."
+    //
+    // Now: ask the CHEAP per-branch version counter first (a few bytes,
+    // no sheet read on the backend at all — see fetchListVersion_ /
+    // getListVersion_ in the Apps Script). If it still matches the
+    // version we already know is current (set the last time this branch
+    // was successfully loaded or synced), that's proof nothing on the
+    // sheet has moved since — there is nothing to conflict with, so
+    // every queued item is sent straight away with no drift-check and no
+    // full-list round trip at all. The full list is only ever pulled —
+    // and the field-by-field comparison only ever run — when the version
+    // has actually moved, i.e. a real change might exist to conflict
+    // with.
     let serverList = null;
+    let versionConfirmedCurrent = false;
     let listErr = null;
     try{
-      const data = await fetchCustomerList_(currentSheet);
-      serverList = data.customers || [];
+      if(lastKnownVersion_ !== null){
+        const v = await fetchListVersion_(currentSheet);
+        if(typeof v.version === 'number' && v.version === lastKnownVersion_){
+          versionConfirmedCurrent = true;
+        }
+      }
+      if(!versionConfirmedCurrent){
+        const data = await fetchCustomerList_(currentSheet);
+        serverList = data.customers || [];
+        if(typeof data.version === 'number') lastKnownVersion_ = data.version;
+      }
     }catch(e){ listErr = e; }
 
-    if(serverList === null){
+    if(!versionConfirmedCurrent && serverList === null){
       isSyncing = false;
       // PERFORMANCE FIX: a timed-out first request is almost always an
       // Apps Script cold start — by the time this catch runs, the
@@ -6257,8 +6292,8 @@
       // Mirroring loadData()'s cold-start handling, retry quickly
       // (300ms) instead of waiting out that full interval — same
       // reasoning: capped retry count, immediate status update so
-      // nothing is silent, and this path is only ever reached for the
-      // read-only list fetch, never for a write, so nothing can be
+      // nothing is silent, and this path is only ever reached for a
+      // read-only fetch, never for a write, so nothing can be
       // double-submitted by retrying it.
       if(listErr && listErr.name === 'AbortError'){
         const delay = syncColdStartBackoff_(syncColdStartRetries);
@@ -6276,10 +6311,12 @@
     }
     syncColdStartRetries = 0;
     const serverByRow = {};
-    serverList.forEach(c => { serverByRow[c.row] = c; });
+    if(serverList) serverList.forEach(c => { serverByRow[c.row] = c; });
+
 
     const remaining = [];
     let syncedAny = false;
+    let syncedCount = 0; // how many items actually completed this pass — see lastKnownVersion_ bump below
     let needsFullReload = false; // set true only if an item can't be trusted to patch in locally (see below)
     let hitConnectionError = false;
     let hitConnectionErrorIsTimeout = false;
@@ -6299,7 +6336,7 @@
       if(item.kind !== 'create' && isTempRow(item.row)){ remaining.push(item); continue; }
 
       try{
-        if(item.kind !== 'create' && item.snapshot){
+        if(item.kind !== 'create' && item.snapshot && !versionConfirmedCurrent){
           const serverRow = serverByRow[item.row];
           if(!serverRow){
             // Row is gone server-side. For a delete, that's already the
@@ -6362,7 +6399,25 @@
           // is different — that really can clobber someone else's edit to
           // the exact same box, so those stay protected and still surface
           // a conflict if the sheet moved since this device's baseline.
-          const writtenKeys = new Set(Object.keys(item.fields || {}));
+          // BUG FIX: this used to be `Object.keys(item.fields || {})` —
+          // but item.fields (from collectFieldValues()) always holds
+          // EVERY field in the edit grid, not just the one(s) the user
+          // actually changed, since the whole form is sent as a full
+          // overwrite. That meant "written" here really meant "present in
+          // the form", so untouched fields were treated as just-written
+          // too — and any harmless formatting difference on one of THOSE
+          // (a date read back in a slightly different shape, a peso
+          // amount with/without trailing zeros, etc.) between this
+          // client's last-seen snapshot and a fresh read of the sheet was
+          // enough to flag "someone else changed this row", even on a
+          // genuinely uncontested first-ever edit where only one field
+          // was actually touched. item.changedKeys (set at save time in
+          // saveModal(), see below) is the real list of fields the user
+          // edited — use that when it's available, and only fall back to
+          // the old "every field" behavior for outbox items queued by an
+          // older version of the app before this fix (already sitting in
+          // localStorage, so they won't have changedKeys).
+          const writtenKeys = new Set(item.changedKeys || Object.keys(item.fields || {}));
           if(item.currentEdit !== undefined){ writtenKeys.add('auditorRemarks'); writtenKeys.add('dateOfAudit'); }
           if(item.historyEdit !== undefined){ writtenKeys.add('previousRemarks'); }
 
@@ -6374,8 +6429,14 @@
             if(!writtenKeys.has(k) && k in serverRow) item.snapshot[k] = serverRow[k];
           });
 
+          // BUG FIX: compare through normForCompare_ (trims + normalizes
+          // line endings) instead of raw String(...) equality, for the
+          // same reason it's already used for the remark textareas below —
+          // two independent reads of the identical value can otherwise
+          // differ by nothing more than whitespace/line-ending shape and
+          // still get flagged as a real conflict.
           const driftKeys = Object.keys(item.snapshot).filter(k => writtenKeys.has(k));
-          const drifted = driftKeys.some(k => String(serverRow[k] ?? '') !== String(item.snapshot[k] ?? ''));
+          const drifted = driftKeys.some(k => normForCompare_(serverRow[k]) !== normForCompare_(item.snapshot[k]));
           if(drifted){
             item.status = 'conflict';
             // Freeze what the sheet actually holds right now, so the
@@ -6450,6 +6511,7 @@
           if(local && !item._needsFreshPull) serverByRow[targetRow] = Object.assign({}, local);
         }
         syncedAny = true;
+        syncedCount++;
       }catch(err){
         if(isConnectionError_(err)){
           // Can't reach the server at all right now — stop sending
@@ -6481,6 +6543,20 @@
     outbox = remaining;
     saveOutbox_();
     isSyncing = false;
+
+    // Keep the cheap version counter accurate after a fast-path pass
+    // (one that skipped the full list fetch because the version was
+    // already confirmed current). Every successful write on the backend
+    // bumps that counter by exactly 1 (see bumpListVersion_ in the Apps
+    // Script), so we can account for our OWN writes locally without an
+    // extra round trip — without this, the very next sync would see the
+    // server's real version has moved (because of the writes we just
+    // made) and wrongly conclude something ELSE changed, falling back to
+    // a full list pull it didn't actually need.
+    if(versionConfirmedCurrent && syncedCount && lastKnownVersion_ !== null){
+      lastKnownVersion_ += syncedCount;
+    }
+
     updateSyncUI();
 
     // Only pay for a full server round-trip (guaranteed slow — every
@@ -8449,6 +8525,20 @@
         const currentEdit = normForCompare_(currentEditVal) !== normForCompare_(editorOriginalCurrent) ? currentEditVal : undefined;
         const historyEdit = normForCompare_(historyEditVal) !== normForCompare_(editorOriginalHistory) ? historyEditVal : undefined;
 
+        // BUG FIX: `fields` (from collectFieldValues()) always holds every
+        // field in the edit grid, not just the one(s) actually edited —
+        // the whole form is sent as a full overwrite. changedKeys is the
+        // REAL subset that differs from what this row last showed, and is
+        // what syncOutbox() now uses to scope its conflict/drift check —
+        // see the matching comment there. Without this, every save
+        // compared ALL fields against a fresh read of the sheet, so an
+        // untouched field with a harmless formatting difference (a date,
+        // a peso amount, etc.) could pop a false "needs attention" even
+        // on a completely uncontested first edit.
+        const changedKeys = c ? Object.keys(fields).filter(
+          k => normForCompare_(fields[k]) !== normForCompare_(c[k])
+        ) : Object.keys(fields);
+
         const item = {
           id: genId_(),
           kind: 'update',
@@ -8458,6 +8548,7 @@
           auditor: auditor || null,
           currentEdit,
           historyEdit,
+          changedKeys,
           status: 'pending',
           customerName: (c ? c.customer : fields.customer) || null,
           // Snapshot of what THIS client last saw on the server for the

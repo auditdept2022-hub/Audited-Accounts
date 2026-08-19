@@ -2296,8 +2296,15 @@
   // customer list) — touches only PropertiesService on the backend, no
   // sheet read. Used by the light background poll below so a quiet log
   // doesn't re-pull the whole thing every cycle.
+  // MULTI-DEVICE FIX: guard against this overlapping itself the same way
+  // the customer-list version check does above — now that this polls
+  // every ~20s instead of 60s, a slow check (cold start, momentary
+  // congestion) is more likely to still be in flight when the next tick
+  // fires.
+  let activityVersionCheckInFlight_ = false;
   async function checkActivityVersion_(){
-    if(!API_URL) return;
+    if(!API_URL || activityVersionCheckInFlight_) return;
+    activityVersionCheckInFlight_ = true;
     try{
       const res = await apiCallJsonRead_('activityVersion', {});
       if(typeof res.version === 'number' && res.version !== lastKnownActivityVersion_){
@@ -2305,6 +2312,8 @@
       }
     }catch(e){
       // best-effort
+    }finally{
+      activityVersionCheckInFlight_ = false;
     }
   }
 
@@ -5229,10 +5238,19 @@
     const statusEl = document.getElementById('importStatus');
     let lastStatusText = null;
 
-    function reportProgress(paused){
-      const text = paused
-        ? `Waiting for connection\u2026 (${done} / ${overallTotal} saved so far — will resume automatically)`
-        : `Importing ${done} / ${overallTotal}\u2026`;
+    function reportProgress(paused, slowServer){
+      // BUG FIX: a request that merely timed out (server slow to respond)
+      // is not the same situation as an actually-dropped connection — see
+      // the notes on the AbortError handling above. Saying "Waiting for
+      // connection" for a case where the connection is fine and the
+      // server is just slow is what made this look permanently stuck to
+      // someone who was clearly online the whole time. This case gets its
+      // own accurate wording instead.
+      const text = slowServer
+        ? `Server is taking a while to respond, retrying\u2026 (${done} / ${overallTotal} saved so far)`
+        : paused
+          ? `Waiting for connection\u2026 (${done} / ${overallTotal} saved so far — will resume automatically)`
+          : `Importing ${done} / ${overallTotal}\u2026`;
       // Avoid a redundant reflow-triggering write when nothing changed —
       // this runs on every chunk completion, and on a big import that's a
       // lot of calls that were writing the exact same string repeatedly.
@@ -5248,6 +5266,7 @@
         if(control && control.cancelled) return;
         const itemOpId = chunkOpId + '_' + i;
         let handled = false;
+        let timeoutRetries = 0;
         while(!handled){
           try{
             // apiCallJson_ (fetchJson_) gives this a timeout + safe JSON
@@ -5261,14 +5280,44 @@
             succeeded++;
             handled = true;
           }catch(err){
+            // BUG FIX: a "branch busy" error (see isRetryableBusyError_) is
+            // a normal, self-clearing lock race, not a dropped connection —
+            // it wasn't recognized here before, so a row that lost a
+            // momentary lock race was permanently marked "failed" instead
+            // of simply being retried a moment later. Retry it quickly
+            // (no need to ping/"wait for reconnect" — the branch lock
+            // clears in a few seconds on its own).
+            if(isRetryableBusyError_(err) && (!control || !control.cancelled)){
+              await new Promise(r => setTimeout(r, 800 + Math.random() * 700));
+              continue;
+            }
             if(isConnectionError_(err) && (!control || !control.cancelled)){
-              // Same reasoning as processChunk below: pause and retry this
-              // exact row with the same opId once we're back, rather than
-              // risk a duplicate by moving on and having something else
-              // resubmit it later.
+              // BUG FIX: a timeout (AbortError) means OUR request never
+              // got a response in time — it does NOT necessarily mean the
+              // connection is down. waitForReconnect_ only confirms the
+              // trivial 'ping' endpoint is reachable, which can succeed
+              // instantly even while the real (heavier) action keeps
+              // timing out for an unrelated reason (server congestion,
+              // repeated lock contention, a slow cold start). Treating
+              // every timeout as "offline, wait to reconnect" used to
+              // retry the identical request forever, which is what
+              // "stuck on Waiting for connection" while genuinely online
+              // looked like. Only a true TypeError (fetch couldn't even
+              // be attempted) means the connection itself is actually
+              // down — that still goes through the full reconnect wait.
+              // A plain timeout gets a few quick direct retries first;
+              // only after several in a row does this fall back to the
+              // slower reconnect-wait, in case it really is connectivity.
+              if(err.name === 'AbortError' && timeoutRetries < 3){
+                timeoutRetries++;
+                reportProgress(true, true);
+                await new Promise(r => setTimeout(r, 1000 * timeoutRetries));
+                continue;
+              }
               reportProgress(true);
               await waitForReconnect_(control || { cancelled: false });
               if(control && control.cancelled) return;
+              timeoutRetries = 0;
               continue;
             }
             failed++;
@@ -5290,6 +5339,7 @@
       const payload = {};
       payload[batchKey] = chunk.map(toBatchItem);
       payload.opId = chunkOpId;
+      let timeoutRetries = 0;
       while(true){
         if(control && control.cancelled) return;
         try{
@@ -5299,15 +5349,35 @@
           reportProgress();
           return;
         }catch(err){
+          // BUG FIX: same branch-busy fix as fallbackChunk above — retry
+          // the identical (idempotent) chunk request shortly, don't treat
+          // it as a real error or a lost connection.
+          if(isRetryableBusyError_(err)){
+            console.warn(`${batchAction} chunk of ${chunk.length} hit a branch lock race, retrying shortly:`, err);
+            await new Promise(r => setTimeout(r, 800 + Math.random() * 700));
+            continue;
+          }
           if(isConnectionError_(err)){
-            // Couldn't confirm this chunk reached the server at all (or
-            // its response never came back) — pause the whole run rather
-            // than guessing. Retrying the SAME opId once reconnected is
-            // safe even if the original attempt actually did save.
+            // BUG FIX: see the matching note in fallbackChunk above — a
+            // timeout (AbortError) is not proof the connection is down,
+            // just that THIS request didn't get a response in time. Give
+            // it a few quick direct retries (same opId, safe to repeat)
+            // before assuming it's a real connectivity problem and paying
+            // for the slower ping-based reconnect wait. This is what
+            // actually ends a "stuck on Waiting for connection" run
+            // instead of looping the identical request forever whenever
+            // the server is just slow rather than unreachable.
+            if(err.name === 'AbortError' && timeoutRetries < 3){
+              timeoutRetries++;
+              reportProgress(true, true);
+              await new Promise(r => setTimeout(r, 1000 * timeoutRetries));
+              continue;
+            }
             console.warn(`${batchAction} chunk of ${chunk.length} lost its connection, pausing until reconnected:`, err);
             reportProgress(true);
             await waitForReconnect_(control || { cancelled: false });
             if(control && control.cancelled) return;
+            timeoutRetries = 0;
             continue;
           }
           // A real application error (bad row, missing column, etc.) —
@@ -9656,12 +9726,46 @@
   // On a quiet branch this is effectively free, so it's safe to check far
   // more often — other devices' changes now show up within ~15s instead
   // of up to 5 minutes.
-  const AUTO_REFRESH_MS = 15 * 1000;
-  setInterval(async () => {
+  // MULTI-DEVICE FIX: this interval had no reentrancy guard of its own.
+  // fetchListVersion_ below is normally near-instant, but if it's ever
+  // slow (a cold Apps Script instance, or — with several devices open on
+  // the same branch — genuine request queueing on Google's side) it could
+  // still be in flight when the NEXT tick fired 15s later, since
+  // setInterval doesn't wait for its callback to finish. That let two (or
+  // more) of these cheap checks stack up concurrently per device, and
+  // across several devices all doing that at once, it's extra load on
+  // exactly the shared resource already under pressure — this is one of
+  // the more likely reasons multi-device sync could feel sluggish rather
+  // than snappy. versionCheckInFlight_ makes each device skip a tick
+  // outright instead of piling requests on top of a slow one.
+  //
+  // Also switched from a fixed setInterval to a self-rescheduling
+  // setTimeout with a little random jitter added to the delay each time.
+  // Several devices that all opened the app around the same moment (e.g.
+  // right after a shared link was sent out) would otherwise have their
+  // setInterval ticks land in near lock-step forever, creating small
+  // synchronized bursts of simultaneous requests every 15s instead of
+  // spreading that same load out smoothly — jitter breaks that up so
+  // devices drift apart over time instead of staying bunched together.
+  //
+  // AUTO_REFRESH_MS itself is also shortened (15s → 10s): the version
+  // check this pays for is a few bytes with no sheet read and no lock, so
+  // checking more often is still effectively free on a quiet branch — the
+  // real cost only shows up when something actually changed, which is
+  // exactly when you want the full list pulled sooner rather than later.
+  const AUTO_REFRESH_MS = 10 * 1000;
+  const AUTO_REFRESH_JITTER_MS = 3 * 1000;
+  let versionCheckInFlight_ = false;
+  function scheduleAutoRefresh_(){
+    setTimeout(autoRefreshTick_, AUTO_REFRESH_MS + Math.round(Math.random() * AUTO_REFRESH_JITTER_MS));
+  }
+  async function autoRefreshTick_(){
+    scheduleAutoRefresh_(); // always queue the next tick first, regardless of outcome below
     if(!API_URL) return;
     if(isLoading) return;
     if(document.hidden) return;
     if(document.getElementById('overlay').classList.contains('open')) return;
+    if(versionCheckInFlight_) return; // previous check is still out there — don't stack another on top of it
 
     // PERFORMANCE: check the cheap version counter first (a few bytes,
     // no sheet read, no lock on the backend — see fetchListVersion_ /
@@ -9675,6 +9779,7 @@
     // doesn't know this action yet) just falls through to the exact
     // same full loadData() this always did.
     if(lastKnownVersion_ !== null){
+      versionCheckInFlight_ = true;
       try{
         const v = await fetchListVersion_(currentSheet);
         if(typeof v.version === 'number' && v.version === lastKnownVersion_){
@@ -9683,10 +9788,13 @@
         }
       }catch(e){
         // version check itself failed — fall through to a normal full load
+      }finally{
+        versionCheckInFlight_ = false;
       }
     }
     loadData();
-  }, AUTO_REFRESH_MS);
+  }
+  scheduleAutoRefresh_();
 
   // PERFORMANCE FIX: keep-warm ping. Apps Script spins an idle Web App
   // deployment down after a period of inactivity — the NEXT request
@@ -9746,11 +9854,24 @@
   // conditions as the customer-list auto-refresh above (tab hidden/
   // offline), so it never fights with an in-progress edit or wastes a
   // request nobody will see.
-  const ACTIVITY_POLL_MS = 60 * 1000;
-  setInterval(() => {
+  // MULTI-DEVICE FIX: shortened from 60s → 20s (checkActivityVersion_ is
+  // the same kind of cheap version-only check as the customer-list one
+  // above, so polling it more often costs effectively nothing on a quiet
+  // log) so an action taken on one device shows up in another device's
+  // bell icon within ~20s instead of up to a minute. A little jitter is
+  // added for the same reason as the customer-list poll above — several
+  // devices shouldn't all be asking at the exact same moment.
+  const ACTIVITY_POLL_MS = 20 * 1000;
+  const ACTIVITY_POLL_JITTER_MS = 4 * 1000;
+  function scheduleActivityPoll_(){
+    setTimeout(activityPollTick_, ACTIVITY_POLL_MS + Math.round(Math.random() * ACTIVITY_POLL_JITTER_MS));
+  }
+  function activityPollTick_(){
+    scheduleActivityPoll_();
     if(!API_URL || document.hidden || !navigator.onLine) return;
     checkActivityVersion_();
-  }, ACTIVITY_POLL_MS);
+  }
+  scheduleActivityPoll_();
 
   // Reveals the next chunk of a large filtered list (see renderLimit_ /
   // the "Progressive row rendering" comment on render() above) just

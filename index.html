@@ -1159,7 +1159,7 @@
   .profile-refresh-btn:disabled{opacity:.6;cursor:default;}
   @keyframes profile-refresh-spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
 
-  .profile-list{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;max-height:52vh;overflow-y:auto;padding:2px 2px 2px 0;}
+  .profile-list{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;max-height:52vh;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:2px 2px 2px 0;}
   .profile-loading{color:var(--muted);font-size:12.5px;padding:14px 2px;display:flex;align-items:center;gap:8px;}
   .profile-loading.is-error{color:var(--del);}
   .profile-loading .retry-link{color:var(--accent);font-weight:600;cursor:pointer;text-decoration:underline;margin-left:auto;flex-shrink:0;}
@@ -5057,13 +5057,45 @@
     // another instead of just one clean open.
     const overlay = document.getElementById('profileOverlay');
     if(overlay.classList.contains('open')) return;
+
+    console.time && console.time('hamburger-open');
+
     overlay.classList.add('open');
     lockBodyScroll();
     const btn = document.getElementById('hamburgerBtn');
     if(btn){ btn.classList.add('is-open'); btn.setAttribute('aria-expanded','true'); }
     const searchInput = document.getElementById('profileSearch');
     if(searchInput) searchInput.value = '';
-    loadProfiles_();
+
+    // IMPORTANT — this is what actually makes the tap feel instant on
+    // mobile: loadProfiles_() does real synchronous work before its first
+    // network call (localStorage.getItem + JSON.parse of the cached
+    // branch list, then a full innerHTML rebuild of the branch rows via
+    // renderProfileList_). Because JS runs to completion before the
+    // browser paints the next frame, calling loadProfiles_() directly
+    // here means the CSS open transition above (overlay.classList.add
+    // ('open')) doesn't get a chance to actually start painting until
+    // ALL of that synchronous work finishes — so the drawer visually
+    // "hangs" for however long that takes before it even begins
+    // sliding/fading in, which is exactly a "slow to open" feeling and
+    // happens on every single tap (not just cold-network ones), since
+    // this cost has nothing to do with the network.
+    //
+    // requestAnimationFrame here pushes loadProfiles_() to run right
+    // after the browser has committed the style change above and had a
+    // chance to paint — so the open animation begins immediately on tap,
+    // and the (still very fast, but non-zero) cache-read + render work
+    // happens a frame later, invisibly, while the drawer is already
+    // animating open. A nested rAF is used instead of a single one
+    // because a single rAF can still land in the SAME frame the style
+    // change was committed in on some mobile browsers; the second rAF
+    // guarantees at least one real paint has already happened first.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        loadProfiles_();
+        console.timeEnd && console.timeEnd('hamburger-open');
+      });
+    });
   }
 
   function closeProfileMenu(){

@@ -176,6 +176,23 @@
   .sync-progress-text{font-size:12.5px;color:var(--ink);font-weight:600;}
   .sync-item-list{display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow-y:auto;}
   .sync-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;}
+  /* ---- Clickable sync items ("View sync" popup) -----------------------
+     Only conflict/error rows get this — those are the only statuses with
+     something to actually DO (pending/syncing just resolve on their own).
+     Tapping one closes this read-only popup, opens the "Action Needed"
+     modal (where the actual fix-it controls — field pickers, retry,
+     discard — live), and scrolls straight to that specific item's card
+     there instead of dumping the person at the top of a list they'd have
+     to hunt through. See openSyncItemAction_() below. */
+  .sync-item.si-clickable{cursor:pointer;transition:background-color .12s ease;}
+  .sync-item.si-clickable:hover, .sync-item.si-clickable:active{background:var(--accent-soft);}
+  .sync-item .si-goto{font-size:11px;font-weight:600;color:var(--accent);flex-shrink:0;white-space:nowrap;}
+  @keyframes conflict-item-jump-pulse{
+    0%{box-shadow:0 0 0 0 rgba(213,166,52,.45);}
+    70%{box-shadow:0 0 0 8px rgba(213,166,52,0);}
+    100%{box-shadow:0 0 0 0 rgba(213,166,52,0);}
+  }
+  .conflict-item.jump-highlight{animation:conflict-item-jump-pulse 1s ease-out 1;}
   .sync-item .si-icon{font-size:15px;width:20px;text-align:center;flex-shrink:0;}
   .sync-item .si-body{flex:1;min-width:0;}
   .sync-item .si-title{font-size:12.5px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -193,6 +210,25 @@
   .sub-row-sync .hdr-status{font-size:9.5px;}
   #pendingWrap{font-size:10.5px;color:#B7C0E8;white-space:nowrap;}
   #pendingWrap button{background:none;border:none;color:#DCE3FA;font-size:10.5px;font-weight:600;cursor:pointer;padding:0;text-decoration:underline;}
+
+  /* ---- Stale-data banner ------------------------------------------------
+     Shown whenever the list on screen was painted instantly from a local
+     cache (see paintedFromCache in loadData()) and the real fetch is still
+     in flight underneath it. This was previously only a small, easy-to-miss
+     line of header text ("showing cached data from ... — syncing…") — on
+     a slow connection (most noticeably the Android/PWA-Builder-packaged
+     app, which pays a fresh connection-setup cost every time it's reopened,
+     unlike a desktop tab left running) that wait can stretch to 10-30+
+     seconds, and without a clear "this is old, hang on" cue the person
+     reasonably reads what's on screen as wrong/out of sync rather than
+     just old. This banner sits right above the account list — impossible
+     to scroll past without seeing it — and is cleared the moment the real
+     fetch lands (see loadData()'s finally-equivalent cleanup), whether it
+     succeeds or fails. */
+  .stale-data-banner{display:flex;align-items:center;gap:10px;padding:10px 14px;margin:0 0 12px;background:var(--accent-soft);border:1px solid var(--line);border-radius:10px;}
+  .stale-data-banner .sdb-spinner{width:16px;height:16px;border-radius:50%;border:2px solid #C7CEEE;border-top-color:var(--accent);animation:hdr-sync-spin .8s linear infinite;flex-shrink:0;}
+  .stale-data-banner .sdb-text{font-size:12.5px;color:var(--ink);font-weight:600;line-height:1.35;}
+  .stale-data-banner .sdb-sub{font-size:11px;color:var(--muted);font-weight:500;margin-top:1px;}
   #pendingWrap button:hover{color:#fff;}
   #pendingWrap .count{background:var(--gold);color:#2A2005;border-radius:10px;padding:1px 6px;font-weight:700;font-size:10px;}
 
@@ -1753,6 +1789,14 @@
         <div class="toolbar-search">
           <input class="input" id="searchBox" placeholder="Search customer, model, engine no...">
           <button type="button" class="toolbar-toggle" id="toolbarToggleBtn" onclick="toggleToolbarExtra_()" title="Show import/export &amp; filters" aria-expanded="false" aria-controls="toolbarExtra">▾</button>
+        </div>
+      </div>
+
+      <div class="stale-data-banner" id="staleDataBanner" style="display:none;">
+        <div class="sdb-spinner"></div>
+        <div>
+          <div class="sdb-text">Showing your last saved data — fetching the latest…</div>
+          <div class="sdb-sub" id="staleDataBannerSub"></div>
         </div>
       </div>
 
@@ -5255,15 +5299,50 @@
     list.innerHTML = outbox.map(item => {
       const { icon, title, sub } = describeOutboxItem_(item);
       const meta = syncItemStatusMeta_(item);
-      return `<div class="sync-item">
+      // Only conflict/error rows are actionable — tapping a pending or
+      // syncing row wouldn't take you anywhere useful, since there's
+      // nothing to fix yet (it'll resolve itself once the sync pass
+      // reaches it). See openSyncItemAction_() and the .si-clickable CSS.
+      const isActionable = item.status === 'conflict' || item.status === 'error';
+      return `<div class="sync-item${isActionable ? ' si-clickable' : ''}"${isActionable ? ` onclick="openSyncItemAction_('${escapeHtml(item.id)}')" role="button" tabindex="0"` : ''}>
         <span class="si-icon">${icon}</span>
         <div class="si-body">
           <div class="si-title">${escapeHtml(title)}</div>
           <div class="si-sub">${escapeHtml(sub)}</div>
         </div>
         <span class="si-status ${meta.cls}">${meta.spinner ? '<span class="si-spinner"></span>' : ''}${meta.label}</span>
+        ${isActionable ? '<span class="si-goto">Fix ›</span>' : ''}
       </div>`;
     }).join('');
+  }
+
+  // Jumps from a conflict/error row in the read-only "View sync" popup
+  // straight to that item's actual fix-it card in the "Action Needed"
+  // modal (field pickers / retry / discard live there — see
+  // updateSyncUI()'s #conflictBanner rendering). Mirrors
+  // openActivityLogAction_() above, but targets one specific item's card
+  // (via the conflict-item-<id> element id, see updateSyncUI()) instead
+  // of just the top of the banner, so a person with several conflicts
+  // queued lands on the exact one they tapped, not a list they have to
+  // scroll through again.
+  function openSyncItemAction_(id){
+    const item = outbox.find(o => o.id === id);
+    if(!item || (item.status !== 'conflict' && item.status !== 'error')) return;
+    closeSyncModal();
+    if(!actionModalOpen_) openActionLog();
+    // Give the Action Needed modal's own open/render a tick to finish
+    // painting #conflictBanner before we try to find and scroll to this
+    // specific card inside it.
+    setTimeout(() => {
+      const card = document.getElementById('conflict-item-' + id);
+      if(!card) return;
+      card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      card.classList.remove('jump-highlight');
+      // Force a reflow so re-adding the class restarts the animation
+      // even if this same card was just highlighted a moment ago.
+      void card.offsetWidth;
+      card.classList.add('jump-highlight');
+    }, 60);
   }
 
 
@@ -5773,7 +5852,7 @@
           const metaBits = [];
           if(detectedTime) metaBits.push(detectedTime);
           if(!isDelete) metaBits.push(diffCount + ' field' + (diffCount === 1 ? '' : 's') + ' differ' + (diffCount === 1 ? 's' : ''));
-          return `<div class="conflict-item">
+          return `<div class="conflict-item" id="conflict-item-${escapeHtml(c.id)}">
             <div class="ci-name">${escapeHtml(name)}</div>
             <div class="ci-detail">${isDelete ? "Queued for deletion, but also edited elsewhere. Delete it or keep it as-is." : "Pick which side to keep for each changed field below, then save."}</div>
             ${metaBits.length ? `<div class="ci-meta">${escapeHtml(metaBits.join(' · '))}</div>` : ''}
@@ -5806,7 +5885,7 @@
         <div class="cf-panel-items">` +
         errored.map(c=>{
           const name = c.customerName || (c.fields && c.fields.customer) || (c.snapshot && c.snapshot.customer) || 'this customer';
-          return `<div class="conflict-item">
+          return `<div class="conflict-item" id="conflict-item-${escapeHtml(c.id)}">
             <div class="ci-name">${escapeHtml(name)}</div>
             <div class="ci-detail">Server said: ${escapeHtml(c.error || 'unknown error')}</div>
             ${renderMineVersion_(c)}
@@ -6863,6 +6942,19 @@
   // loadData() with no arguments, so this is always 0/undefined for a
   // user/timer-initiated load and only increments for the automatic
   // follow-up attempts.
+  function showStaleDataBanner_(ts){
+    const el = document.getElementById('staleDataBanner');
+    if(!el) return;
+    el.style.display = 'flex';
+    const sub = document.getElementById('staleDataBannerSub');
+    if(sub) sub.textContent = 'Last saved ' + new Date(ts).toLocaleTimeString() + ' — this can take a little while on a slow connection.';
+  }
+
+  function hideStaleDataBanner_(){
+    const el = document.getElementById('staleDataBanner');
+    if(el) el.style.display = 'none';
+  }
+
   async function loadData(isColdStartRetryCount){
     isColdStartRetryCount = isColdStartRetryCount || 0;
     if(!API_URL){
@@ -6913,6 +7005,15 @@
         render();
         document.getElementById('connStatus').textContent =
           'showing cached data from ' + new Date(cached.ts).toLocaleTimeString() + ' — syncing…';
+        // Hard-to-miss version of the same message, sitting right above
+        // the account list (see the .stale-data-banner comment near its
+        // CSS) — the small header text above is easy to miss, especially
+        // on a slow connection where this can sit visible for 10-30+
+        // seconds (most common on the Android/PWA-Builder-packaged app,
+        // which pays a fresh connection-setup cost on every reopen).
+        // Cleared by hideStaleDataBanner_() the moment the real fetch
+        // below actually lands, succeeds or fails.
+        showStaleDataBanner_(cached.ts);
       }
     }
     if(!paintedFromCache){
@@ -6939,6 +7040,7 @@
       // user is looking at now.
       if(sheetAtStart !== currentSheet || myGen !== loadGeneration){
         saveLocalCache_(fresh, sheetAtStart);
+        hideStaleDataBanner_(); // this fetch is for a branch that's no longer on screen — whatever's showing now (a newer load, or nothing) owns the banner instead
         return;
       }
 
@@ -6965,9 +7067,11 @@
       }
       document.getElementById('connStatus').textContent = 'synced ' + new Date().toLocaleTimeString();
       updateSyncUI();
+      hideStaleDataBanner_(); // real data landed — the cached snapshot it was covering for is gone
     }catch(err){
       if(sheetAtStart !== currentSheet || myGen !== loadGeneration){
-        return; // stale — the visible branch/request has already moved on, don't show its error
+        hideStaleDataBanner_(); // stale — the visible branch/request has already moved on, don't show its error
+        return;
       }
       // A timeout (AbortError) almost always means Apps Script was cold
       // and the FIRST request after idle paid that cost — by the time
@@ -7020,6 +7124,13 @@
       // switching branches clears `customers` immediately, so a non-empty
       // list here can only mean data for THIS sheet is genuinely visible.
       const hasDataOnScreen = customers.length > 0;
+      // Both branches below are TERMINAL for this call (no further retry
+      // queued), so the stale-data banner comes down either way — leaving
+      // it up here would mean it just sits there forever since nothing
+      // else is going to clear it. The cold-start-retry branch above
+      // returns before reaching here on purpose, so the banner stays up
+      // while a retry is actually still in flight.
+      hideStaleDataBanner_();
       if(hasDataOnScreen){
         document.getElementById('connStatus').textContent =
           'Sync failed — showing cached data. (' + friendly + ')';

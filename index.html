@@ -225,10 +225,6 @@
      to scroll past without seeing it — and is cleared the moment the real
      fetch lands (see loadData()'s finally-equivalent cleanup), whether it
      succeeds or fails. */
-  .stale-data-banner{display:flex;align-items:center;gap:10px;padding:10px 14px;margin:0 0 12px;background:var(--accent-soft);border:1px solid var(--line);border-radius:10px;}
-  .stale-data-banner .sdb-spinner{width:16px;height:16px;border-radius:50%;border:2px solid #C7CEEE;border-top-color:var(--accent);animation:hdr-sync-spin .8s linear infinite;flex-shrink:0;}
-  .stale-data-banner .sdb-text{font-size:12.5px;color:var(--ink);font-weight:600;line-height:1.35;}
-  .stale-data-banner .sdb-sub{font-size:11px;color:var(--muted);font-weight:500;margin-top:1px;}
   #pendingWrap button:hover{color:#fff;}
   #pendingWrap .count{background:var(--gold);color:#2A2005;border-radius:10px;padding:1px 6px;font-weight:700;font-size:10px;}
 
@@ -696,6 +692,12 @@
   .empty-state{padding:60px 20px;text-align:center;color:var(--muted);}
   .skel-line{height:10px;border-radius:4px;background:linear-gradient(90deg,#EBEDF7 25%,#F5F6FB 37%,#EBEDF7 63%);background-size:400% 100%;animation:skel-shine 1.4s ease infinite;}
   @keyframes skel-shine{0%{background-position:100% 0;}100%{background-position:0 0;}}
+  /* Sentinel for progressive row rendering (see renderLimit_ /
+     revealMoreRows_ in the script) — invisible until there are more
+     filtered rows than are currently painted, at which point it's the
+     IntersectionObserver target that reveals the next chunk just before
+     it's scrolled into view. */
+  .load-more-sentinel{padding:16px 0;display:none;align-items:center;justify-content:center;}
   .empty-state .btn{margin-top:12px;}
   .row-actions{display:flex;gap:6px;opacity:0;transition:opacity var(--dur-2) var(--ease-out);}
   .rec:hover .row-actions{opacity:1;}
@@ -1792,14 +1794,6 @@
         </div>
       </div>
 
-      <div class="stale-data-banner" id="staleDataBanner" style="display:none;">
-        <div class="sdb-spinner"></div>
-        <div>
-          <div class="sdb-text">Showing your last saved data — fetching the latest…</div>
-          <div class="sdb-sub" id="staleDataBannerSub"></div>
-        </div>
-      </div>
-
       <div class="card">
         <div class="bulk-bar" id="bulkBar">
           <label class="bulk-select-all">
@@ -1814,6 +1808,9 @@
         </div>
         <div class="table-wrap" id="tableWrap">
           <div class="rec-list" id="tableBody"></div>
+          <div class="load-more-sentinel" id="loadMoreSentinel" style="display:none;">
+            <div class="skel-line" style="width:120px;margin:0 auto;"></div>
+          </div>
           <div class="mark-popover" id="markPopover">
             <button class="mark-option" data-color="green" data-act="mark-set"><span class="mark-swatch" data-color="green"></span><span>Green</span><span class="check">✓</span></button>
             <button class="mark-option" data-color="yellow" data-act="mark-set"><span class="mark-swatch" data-color="yellow"></span><span>Yellow</span><span class="check">✓</span></button>
@@ -2139,7 +2136,7 @@
   function activityOutboxKey_(){ return 'aa_activity_outbox_v1:' + API_URL; }
 
   function saveActivityOutbox_(){
-    try{ localStorage.setItem(activityOutboxKey_(), JSON.stringify(activityOutbox_)); }catch(e){ /* best-effort */ }
+    setStorageCritical_(activityOutboxKey_(), JSON.stringify(activityOutbox_), 'your activity log entry');
   }
 
   function loadActivityOutbox_(){
@@ -3247,8 +3244,81 @@
 
   function outboxKey_(){ return 'aa_outbox_v1:' + API_URL + ':' + currentSheet; }
 
+  // ---- Storage resilience -------------------------------------------------
+  // localStorage has a hard quota (typically 5-10MB per origin). Every write
+  // to it in this file used to be a bare try/catch that silently did nothing
+  // on failure — fine for a pure cache (the network is always the fallback),
+  // but NOT fine for the outbox: it's the ONLY copy of a queued edit that
+  // hasn't reached the sheet yet. On a phone that's been carrying this app
+  // for weeks — dozens of branches' worth of cached lists, a few hundred
+  // activity-log entries, leftover remark drafts — it's entirely realistic
+  // to actually hit that quota. Silently dropping the outbox write at that
+  // point means a real edit an auditor made in the field just vanishes, with
+  // no error and nothing to retry. That's the single worst failure mode an
+  // offline-first app can have, so it gets handled explicitly instead of
+  // falling through a bare catch like everything else here:
+  //   1. On a quota error, first free up the safest, biggest thing this app
+  //      keeps in localStorage — cached customer lists for OTHER branches
+  //      (this branch's own cache, and the outbox itself, are never touched)
+  //      — and retry once. Those are pure caches, always rebuildable from
+  //      the network, so dropping them costs nothing but a slower reopen of
+  //      a branch nobody's currently looking at.
+  //   2. If it still fails after that, this is a genuine "device is out of
+  //      storage" situation, not something this app can fix on its own.
+  //      Surface it loudly — a toast AND a permanent activity-log entry
+  //      (which is itself queued/synced separately, so the warning survives
+  //      a refresh and is visible from every other device on this
+  //      spreadsheet too) — instead of the previous silent no-op.
+  function isQuotaError_(e){
+    return !!e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014);
+  }
+
+  function freeUpCacheSpace_(){
+    let freedAny = false;
+    try{
+      const keep = new Set([localCacheKey_(currentSheet)]);
+      const removable = [];
+      for(let i = 0; i < localStorage.length; i++){
+        const k = localStorage.key(i);
+        if(!k) continue;
+        if((k.indexOf('aa_cache_v1:') === 0 || k.indexOf('aa_sheets_cache_v1:') === 0) && !keep.has(k)){
+          removable.push(k);
+        }
+      }
+      removable.forEach(k => { try{ localStorage.removeItem(k); freedAny = true; }catch(e){ /* noop */ } });
+    }catch(e){ /* localStorage itself unavailable — nothing more to try */ }
+    return freedAny;
+  }
+
+  let criticalStorageWarned_ = false;
+  function warnCriticalStorageFailure_(what){
+    toast('Storage is full — ' + what + ' may NOT be saved. Free up device storage and stay on this page until it says "synced."');
+    if(!criticalStorageWarned_){
+      criticalStorageWarned_ = true; // once per session is enough noise — the toast above still fires every time
+      logActivity_('error', 'Device storage is full', (what.charAt(0).toUpperCase() + what.slice(1)) + ' could not be saved locally because this device is out of storage. Free up space (clear other apps\u2019 data, browser storage, etc.) as soon as possible — until then, any offline edits are at risk of being lost if the app or tab closes.');
+    }
+  }
+
+  // Shared by every "this MUST persist" write (outbox, activity outbox).
+  // Returns true if the value ended up in localStorage one way or another,
+  // false only in the genuine out-of-space case after the cleanup+retry
+  // above has already been tried.
+  function setStorageCritical_(key, value, whatLabel){
+    try{
+      localStorage.setItem(key, value);
+      return true;
+    }catch(e){
+      if(!isQuotaError_(e)) return false; // some other storage failure (private browsing, disabled) — cleanup won't help
+      if(freeUpCacheSpace_()){
+        try{ localStorage.setItem(key, value); return true; }catch(e2){ /* still full even after freeing caches */ }
+      }
+      warnCriticalStorageFailure_(whatLabel);
+      return false;
+    }
+  }
+
   function saveOutbox_(){
-    try{ localStorage.setItem(outboxKey_(), JSON.stringify(outbox)); }catch(e){ /* storage full/unavailable — nothing else to do */ }
+    setStorageCritical_(outboxKey_(), JSON.stringify(outbox), 'your latest change');
   }
 
   function loadOutbox_(){
@@ -5513,6 +5583,7 @@
     // data) — a branch switch is the same case, just triggered from a
     // different place, so it needs the same clear.
     rowHtmlCache.clear();
+    resetRenderLimit_(); // fresh branch = start painting its list from the top
     document.getElementById('tableBody').innerHTML = '';
     loadOutbox_();
     updateSyncUI();
@@ -6646,6 +6717,29 @@
     // local re-render is enough — no network call needed at all.
     if(needsFullReload){
       await loadData(); // pulls fresh server state and re-renders
+    } else if(serverList){
+      // REAL-WORLD MULTI-DEVICE FIX: whenever the version check above
+      // found the branch had moved, this pass already paid for a full
+      // list fetch (serverList) — but it was previously used ONLY to
+      // diff this device's own queued items against, then discarded.
+      // That meant a change made by a DIFFERENT auditor/device — one
+      // that didn't happen to touch any row this device also has queued
+      // — never made it to the screen here at all; it just sat unseen
+      // until the next 5-minute auto-refresh timer happened to fire.
+      // serverByRow already holds exactly the right merged state at this
+      // point: every row fresh from the server, EXCEPT rows this pass
+      // itself just wrote, which were overwritten in place with this
+      // device's own confirmed local copy a few lines up (so a row this
+      // device just saved is never regressed back to its pre-write
+      // value), and rows this pass just deleted, which were removed
+      // entirely. Row numbers are numeric object keys, so Object.values
+      // naturally comes back in ascending row order — the same order the
+      // sheet (and the plain "list" action) is always in.
+      customers = Object.values(serverByRow);
+      reapplyOutbox_(); // re-layer anything still queued (conflict/error/pending) on top of the fresh merge
+      saveLocalCache_(customers);
+      render();
+      document.getElementById('connStatus').textContent = 'synced ' + new Date().toLocaleTimeString();
     } else if(syncedAny){
       saveLocalCache_(customers);
       render();
@@ -6861,11 +6955,20 @@
   // safely cache a late/stale response under the branch it actually
   // belongs to without touching the branch currently on screen.
   function saveLocalCache_(list, sheet){
+    const key = localCacheKey_(sheet);
+    const value = JSON.stringify({ customers: list, ts: Date.now() });
     try{
-      localStorage.setItem(localCacheKey_(sheet), JSON.stringify({ customers: list, ts: Date.now() }));
+      localStorage.setItem(key, value);
     }catch(e){
-      // storage full/unavailable (private browsing, quota, etc.) — fine,
-      // this is purely a speed optimization, not a source of truth
+      // Purely a speed optimization, not a source of truth, so this never
+      // warns the user — but still worth one cleanup+retry attempt (see
+      // freeUpCacheSpace_ above) so a pile-up of OTHER branches' cached
+      // lists doesn't leave the branch actually on screen with no cache at
+      // all, which would otherwise turn every reopen into a full network
+      // wait instead of an instant paint.
+      if(isQuotaError_(e) && freeUpCacheSpace_()){
+        try{ localStorage.setItem(key, value); }catch(e2){ /* still full — fine, falls back to network */ }
+      }
     }
   }
 
@@ -7465,6 +7568,7 @@
     pendingStatuses_.forEach(v => selectedStatuses_.add(v));
     updateStatusFilterBtn_();
     closeStatusMenu_();
+    resetRenderLimit_();
     render();
   }
 
@@ -7589,6 +7693,7 @@
     pendingRemarks_.forEach(v => selectedRemarks_.add(v));
     updateRemarkFilterBtn_();
     closeRemarkMenu_();
+    resetRenderLimit_();
     render();
   }
 
@@ -7749,6 +7854,7 @@
     // Instant optimistic re-sort so the list reorders right away, while
     // the actual sheet reorder happens in the background below.
     customers = clientSort_(customers, sortBy, dir);
+    resetRenderLimit_(); // order just changed completely — paint the new top of the list, not wherever the old order happened to be scrolled to
     render();
 
     isLoading = true;
@@ -7979,6 +8085,33 @@
     existing.forEach(el => el.remove());
   }
 
+  // ---- Progressive row rendering (large-branch performance) -------------
+  // On a branch with several hundred to 1000+ customers, building AND
+  // diffing every single filtered row into the DOM on every render() call
+  // — first paint, every search keystroke, every background sync — is
+  // real, felt work: each row is a full multi-field fact-grid card, not a
+  // single <tr>. renderLimit_ caps how many of the CURRENT filtered
+  // result actually get built/painted; the rest reveal a chunk at a time
+  // as the person scrolls near the bottom (see the IntersectionObserver
+  // wired to #loadMoreSentinel near the end of this file). This is
+  // purely a DOM-painting throttle — search, sort, filters, and bulk
+  // actions all still operate over getFilteredCustomers()/customers in
+  // full, never over just what happens to be rendered right now (see
+  // getSelectableFiltered_ / toggleSelectAll_ / updateStatusCounts_,
+  // none of which were touched by this change).
+  //
+  // renderLimit_ deliberately persists across incidental re-renders (a
+  // save landing, a sync, another device's edit coming in) so those
+  // never yank the person back to the top of a list they've scrolled
+  // through — it's only reset to the top via resetRenderLimit_() at the
+  // handful of points where "start from the top" is actually the right
+  // call: a new search/filter being applied, a branch switch, or a
+  // re-sort (see each call site).
+  const INITIAL_RENDER_COUNT = 80;
+  const RENDER_CHUNK = 80;
+  let renderLimit_ = INITIAL_RENDER_COUNT;
+  function resetRenderLimit_(){ renderLimit_ = INITIAL_RENDER_COUNT; }
+
   function render(){
     populateStatusFilter_();
     const conflictRows = new Set(outbox.filter(o => o.status === 'conflict' || o.status === 'error').map(o => o.row));
@@ -8002,11 +8135,15 @@
       }
     }
 
-    const parts = new Array(filtered.length);
-    const sigs = new Array(filtered.length); // parallel to parts — one signature per row, used by patchTableBody_ below to skip untouched DOM nodes entirely
+    const toRender = filtered.slice(0, renderLimit_);
+    const sentinel = document.getElementById('loadMoreSentinel');
+    if(sentinel) sentinel.style.display = (filtered.length > toRender.length) ? 'flex' : 'none';
 
-    for(let i = 0; i < filtered.length; i++){
-      const c = filtered[i];
+    const parts = new Array(toRender.length);
+    const sigs = new Array(toRender.length); // parallel to parts — one signature per row, used by patchTableBody_ below to skip untouched DOM nodes entirely
+
+    for(let i = 0; i < toRender.length; i++){
+      const c = toRender[i];
       const isConflict = conflictRows.has(c.row);
       const mark = c.marker || '';
       const sig = rowSignature_(c, isConflict, mark);
@@ -8104,7 +8241,7 @@
     // signature changed, reorders nodes that moved (e.g. after a sort),
     // removes rows that are gone, and leaves everything else — its exact
     // DOM node, scroll position, any CSS transition mid-flight — untouched.
-    patchTableBody_(document.getElementById('tableBody'), filtered, parts, sigs);
+    patchTableBody_(document.getElementById('tableBody'), toRender, parts, sigs);
 
     // Checkbox "checked" state is intentionally NOT part of rowSignature_/
     // the per-row HTML cache above (selecting/deselecting shouldn't force
@@ -8812,6 +8949,7 @@
   let searchDebounce;
   document.getElementById('searchBox').addEventListener('input', ()=>{
     clearTimeout(searchDebounce);
+    resetRenderLimit_(); // new search text = a genuinely different result set — start painting from the top again
     searchDebounce = setTimeout(render, 150);
   });
   // NOTE: the edit/add customer modal (#overlay) intentionally does NOT
@@ -8981,6 +9119,38 @@
   }
   setInterval(keepWarmPing_, KEEP_WARM_MS);
 
+  // PERFORMANCE FIX: reopening the app after it's been backgrounded
+  // (switching apps, screen off, PWA relaunch) used to do nothing at all
+  // until the next AUTO_REFRESH_MS tick — up to 5 minutes later — because
+  // the auto-refresh and keep-warm timers above both bail out early via
+  // `document.hidden` while the tab isn't visible, and neither one fires
+  // the instant it becomes visible again either. That's very likely a big
+  // part of "sync feels slow": the person reopens the app, is looking
+  // straight at old cached data, and nothing visibly happens for minutes.
+  // Fix: the moment the tab becomes visible again after having been
+  // hidden for more than VISIBILITY_STALE_MS, immediately fire a
+  // keep-warm ping (starts waking a cold Apps Script instance right away
+  // instead of waiting for it to be needed) and kick off a real
+  // loadData()/syncOutbox() pass — subject to the exact same guards
+  // (isLoading, no modal open) everything else here already respects, so
+  // this can never yank data out from under an in-progress edit.
+  let hiddenAt_ = null;
+  const VISIBILITY_STALE_MS = 60 * 1000;
+  document.addEventListener('visibilitychange', () => {
+    if(document.hidden){
+      hiddenAt_ = Date.now();
+      return;
+    }
+    const wasHiddenFor = hiddenAt_ ? (Date.now() - hiddenAt_) : 0;
+    hiddenAt_ = null;
+    if(!API_URL || wasHiddenFor < VISIBILITY_STALE_MS) return;
+    keepWarmPing_();
+    if(!isLoading && !document.getElementById('overlay').classList.contains('open')){
+      loadData();
+    }
+    if(outbox.length) syncOutbox();
+  });
+
   // Light background poll for the shared activity log, so a change made
   // on ONE device (a save, an undo, someone clearing the log) shows up on
   // another device within about a minute without needing to open the bell
@@ -8994,6 +9164,27 @@
     if(!API_URL || document.hidden || !navigator.onLine) return;
     checkActivityVersion_();
   }, ACTIVITY_POLL_MS);
+
+  // Reveals the next chunk of a large filtered list (see renderLimit_ /
+  // the "Progressive row rendering" comment on render() above) just
+  // before the person actually scrolls to the bottom of what's currently
+  // painted. rootMargin gives it a 600px head start so the next chunk is
+  // already in the DOM by the time it'd otherwise come into view — no
+  // network involved at all, this is purely revealing more of the data
+  // that's already in memory, so it's effectively instant. Safe to set up
+  // unconditionally at boot: the sentinel is display:none (and therefore
+  // never intersecting) whenever there's nothing more to reveal, which
+  // render() itself keeps up to date on every call.
+  if('IntersectionObserver' in window){
+    const loadMoreObserver_ = new IntersectionObserver((entries) => {
+      if(!entries.some(e => e.isIntersecting)) return;
+      if(renderLimit_ >= getFilteredCustomers().length) return;
+      renderLimit_ += RENDER_CHUNK;
+      render();
+    }, { root: null, rootMargin: '600px 0px', threshold: 0 });
+    const sentinelEl_ = document.getElementById('loadMoreSentinel');
+    if(sentinelEl_) loadMoreObserver_.observe(sentinelEl_);
+  }
 
   // Boot
   initBackGuard_(); // guard against swipe/back-gesture exits from first paint — see the note above, near handleBackGuardPopState_

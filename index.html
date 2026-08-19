@@ -1914,7 +1914,8 @@
         <span class="hdr-status" id="syncModalStatus"></span>
       </div>
       <div class="right">
-        <button class="btn" id="syncRetryBtn" onclick="syncOutbox()">Retry now</button>
+        <button class="btn danger" id="syncCancelBtn" onclick="cancelSyncQueue_()">Cancel sync</button>
+        <button class="btn" id="syncRetryBtn" onclick="manualRetrySync_()">Retry now</button>
         <button class="btn primary" onclick="closeSyncModal()">Close</button>
       </div>
     </div>
@@ -3241,6 +3242,14 @@
   // status:'pending'|'conflict'|'error', error }
   let outbox = [];
   let isSyncing = false;
+  // Timestamp of the most recent syncOutbox() start — used only as a
+  // watchdog (see the top of syncOutbox()) so a manual "Retry now" tap
+  // can never be permanently ignored even in some future edge case that
+  // leaves isSyncing stuck true. Every write already carries an opId the
+  // backend dedupes (withIdempotency_ in Code.gs), so it's always safe
+  // to let a fresh attempt through even if a previous one is (or looks)
+  // still in flight.
+  let syncStartedAt_ = 0;
 
   function outboxKey_(){ return 'aa_outbox_v1:' + API_URL + ':' + currentSheet; }
 
@@ -4844,6 +4853,31 @@
     });
   }
 
+  // PERFORMANCE: Import Accounts sends far more fields per record (9-12)
+  // than Import Balances/Remarks (2-3), which is what made it by far the
+  // slowest import — every write here goes out as a GET with the whole
+  // chunk JSON-encoded into the URL (see the note above
+  // MAX_CHUNK_ENCODED_CHARS: a redirected POST loses its body, so GET is
+  // the only option Apps Script Web Apps leave us, and that caps how
+  // much can go in one request). A keyed object spends more encoded
+  // bytes repeating field NAMES ("customer", "releaseDate",
+  // "customerStatus", ...) than on the actual values. Encoding each
+  // record as a plain positional array instead — matching
+  // IMPORT_ACCOUNTS_FIELD_ORDER, and expanded back into the usual fields
+  // object server-side by expandCompactRecord_ in the Apps Script
+  // backend — cuts each record's encoded size by roughly half, so
+  // roughly twice as many rows fit in each MAX_CHUNK_ENCODED_CHARS
+  // chunk, which roughly halves the number of round trips an Import
+  // Accounts run needs. MUST stay in sync with the same-named constant
+  // in the Apps Script backend.
+  const IMPORT_ACCOUNTS_FIELD_ORDER = ['customer', 'model', 'engineNo', 'releaseDate', 'dueDate', 'term', 'ma', 'begBal', 'dueThisMonth', 'paymentAdv', 'penaltyDue', 'customerStatus'];
+
+  function fieldsToCompactRecord_(fields){
+    const arr = IMPORT_ACCOUNTS_FIELD_ORDER.map(k => (fields[k] !== undefined && fields[k] !== '') ? fields[k] : null);
+    while(arr.length && arr[arr.length - 1] === null) arr.pop(); // trailing blanks cost nothing once dropped
+    return arr;
+  }
+
   async function handleImportAccountsFiles(fileList){
     const allRecords = await parseAccountsFiles_(fileList);
     if(!allRecords.length){ toast('No account rows found to import.'); return; }
@@ -4880,7 +4914,7 @@
 
     const createResult = await runBatched_(
       toCreate, 'batchCreateCustomer', 'records',
-      item => item,
+      fieldsToCompactRecord_,
       'createCustomer', item => ({ fields: item }),
       toCreate.length, 0,
       item => item.customer
@@ -4927,10 +4961,18 @@
   //
   // Fix: pack chunks by *encoded* byte length instead of a fixed count,
   // so chunk size automatically shrinks for wide records and grows for
-  // narrow ones. MAX_CHUNK_ENCODED_CHARS is kept well under the ~8KB
-  // ceiling to leave room for the action/sheet/timestamp prefix and for
-  // multi-byte characters (₱, etc.) to encode larger than 1 char each.
-  const MAX_CHUNK_ENCODED_CHARS = 5500;
+  // narrow ones. Multi-byte characters (₱, etc.) are already accounted
+  // for exactly, per item, by encodeURIComponent(...).length inside
+  // chunkByEncodedSize_ below — so the only thing this ceiling needs
+  // margin for is the fixed action/sheet/timestamp URL prefix (well
+  // under 200 chars in practice). MAX_CHUNK_ENCODED_CHARS is kept well
+  // under the ~8KB ceiling Apps Script Web Apps enforce, but with
+  // meaningfully more headroom than before — combined with the compact
+  // positional-array encoding used for Import Accounts (see
+  // fieldsToCompactRecord_ above), this roughly doubles how many rows
+  // fit in a single request compared to the original object-keyed,
+  // tighter-budget version.
+  const MAX_CHUNK_ENCODED_CHARS = 7200;
 
   function chunkByEncodedSize_(items, toBatchItem, maxEncodedChars){
     const chunks = [];
@@ -4966,7 +5008,14 @@
   async function runBatched_(items, batchAction, batchKey, toBatchItem, singleAction, toSinglePayload, overallTotal, doneSoFar, getLabel){
     if(!items.length) return { succeeded: 0, failed: 0, done: doneSoFar, failedLabels: [] };
 
-    const CONCURRENCY = 3;
+    // PERFORMANCE: more chunks in flight at once overlaps network round-trip
+    // time (and any Apps Script cold start) across requests. This doesn't
+    // make the backend do the writes any faster — batchCreateCustomer/
+    // batchUpdateCustomer still serialize per branch via withBranchLock_ in
+    // the Apps Script backend — but it means the NEXT chunk's request is
+    // already on the wire while the server works through the current one,
+    // instead of the browser sitting idle between requests.
+    const CONCURRENCY = 6;
     const chunks = chunkByEncodedSize_(items, toBatchItem, MAX_CHUNK_ENCODED_CHARS);
     let succeeded = 0, failed = 0, done = doneSoFar;
     const failedLabels = [];
@@ -5300,6 +5349,52 @@
     unlockBodyScroll();
   }
 
+  // Wraps syncOutbox() for the "Retry now" button specifically. Two
+  // things a bare onclick="syncOutbox()" didn't give the person tapping
+  // it: (1) any visible feedback that the tap registered at all — with a
+  // fast pass (or a pass that hits the same failure again in well under
+  // a second) the button could look like it did nothing — and (2) a
+  // manual tap is a clear "let me try again NOW" signal, so it resets
+  // the automatic cold-start backoff instead of inheriting whatever
+  // delay the last automatic attempt had built up.
+  function manualRetrySync_(){
+    const btn = document.getElementById('syncRetryBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Retrying…'; }
+    syncColdStartRetries = 0;
+    Promise.resolve(syncOutbox()).finally(() => {
+      if(btn){ btn.disabled = false; btn.textContent = 'Retry now'; }
+    });
+  }
+
+  // Lets the person give up on whatever's currently queued instead of
+  // waiting it out — e.g. they made a change by mistake, or they're
+  // stuck offline somewhere and don't want it hanging around. This is
+  // destructive (anything not yet saved to the sheet is gone for good),
+  // so it always confirms first via the same Yes/No pattern used
+  // everywhere else in the app (appConfirm), and it never touches items
+  // that HAVE already synced — only what's still sitting in the queue.
+  async function cancelSyncQueue_(){
+    if(!outbox.length) return;
+    const count = outbox.length;
+    const ok = await appConfirm(
+      'Cancel syncing ' + count + ' unsynced change' + (count > 1 ? 's' : '') +
+      '? ' + (count > 1 ? 'These have' : 'This has') + ' NOT been saved to the sheet yet, and will be permanently discarded. ' +
+      'The screen will then reload to show what\'s actually saved.',
+      { danger: true, title: 'Cancel sync?', confirmText: 'Discard changes' }
+    );
+    if(!ok) return;
+
+    outbox = [];
+    saveOutbox_();
+    isSyncing = false;
+    lastSyncPausedKey_ = null;
+    syncColdStartRetries = 0;
+    renderSyncList_();
+    updateSyncUI();
+    toast('Unsynced changes discarded.');
+    await loadData(); // reload from the server so the screen matches what's actually saved
+  }
+
   // Short, human-readable summary of what one queued item will do —
   // shown as a row in the sync popup so it's obvious WHO/WHAT is about
   // to sync, not just a bare count.
@@ -5341,16 +5436,19 @@
     const progressText = document.getElementById('syncProgressText');
     const statusEl = document.getElementById('syncModalStatus');
     const retryBtn = document.getElementById('syncRetryBtn');
+    const cancelBtn = document.getElementById('syncCancelBtn');
 
     if(!outbox.length){
       list.innerHTML = '<div class="sync-empty">Nothing to sync — everything\'s saved. ✓</div>';
       progressRow.style.display = 'none';
       statusEl.textContent = '';
       retryBtn.style.display = 'none';
+      if(cancelBtn) cancelBtn.style.display = 'none';
       return;
     }
 
     retryBtn.style.display = '';
+    if(cancelBtn) cancelBtn.style.display = '';
     const syncingCount = outbox.filter(o => o.status === 'syncing').length;
     if(isSyncing || syncingCount){
       progressRow.style.display = 'flex';
@@ -6451,7 +6549,18 @@
   }
 
   async function syncOutbox(){
-    if(isSyncing) return;
+    // WATCHDOG: isSyncing already resets in a try/finally below no matter
+    // how this function exits, so this should never actually trigger —
+    // but "Retry now" doing visibly nothing is exactly what a stuck flag
+    // would look like from the outside, so treat isSyncing staying true
+    // for longer than any real pass could take as stuck, and let a fresh
+    // attempt through instead of silently no-oping forever. Safe to do:
+    // every write carries an opId the backend dedupes (withIdempotency_),
+    // so an overlapping attempt can never double-submit.
+    if(isSyncing){
+      if(Date.now() - syncStartedAt_ < 45000) return;
+      console.warn('syncOutbox: isSyncing was stuck — forcing a fresh attempt.');
+    }
     if(!outbox.length) return;
     // No navigator.onLine gate here on purpose — see isConnectionError_'s
     // comment above. This function is now the SAME code path regardless
@@ -6467,6 +6576,7 @@
     // so nothing queued ever moved out of "pending" until the flag
     // happened to flip back, which on some devices it never reliably did.
     isSyncing = true;
+    syncStartedAt_ = Date.now();
     // BUG FIX: everything below used to run with NOTHING guaranteeing
     // `isSyncing` gets reset back to false. Every early-return path here
     // was hand-written to reset it before returning, which is fragile —

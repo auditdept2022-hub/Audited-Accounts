@@ -268,7 +268,7 @@
      an import is actually running. */
   .import-status-bar{line-height:1.3;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
   .import-status-bar .import-status:empty{display:none;}
-  .import-status-bar .import-status{display:block;padding:2px 2px 0;white-space:normal;flex:1 1 auto;min-width:120px;}
+  .import-status-bar .import-status{display:block;padding:2px 2px 0;white-space:normal;flex:0 1 auto;min-width:0;}
   /* Cancel-import button: sits right beside the "Importing N / M…" text,
      only shown while an import is actually in flight (toggled in JS via
      startImportRun_/endImportRun_). Deliberately small/inline so it
@@ -5195,7 +5195,18 @@
     // the Apps Script backend — but it means the NEXT chunk's request is
     // already on the wire while the server works through the current one,
     // instead of the browser sitting idle between requests.
-    const CONCURRENCY = 6;
+    // BUG FIX: this was 6, but the Apps Script backend (see its top-of-file
+    // comment under "PERFORMANCE FIX (branch-lock polling)") was written
+    // assuming this had already been reduced to 2 with a stagger between
+    // workers — that reduction never actually landed here. With 6, a big
+    // import throws up to 6 simultaneous requests at the SAME branch's
+    // lock, and only one can hold it at a time; the rest sit polling
+    // acquireBranchLock_ and frequently time out as "branch busy", which is
+    // exactly what produces slow/failed imports and the contention that
+    // then spills into normal sync. Reduced to 2, with each worker's start
+    // staggered a little below, to match what the backend already expects.
+    const CONCURRENCY = 2;
+    const WORKER_STAGGER_MS = 200;
     const chunks = chunkByEncodedSize_(items, toBatchItem, MAX_CHUNK_ENCODED_CHARS);
     let succeeded = 0, failed = 0, done = doneSoFar;
     const failedLabels = [];
@@ -5295,14 +5306,20 @@
     }
 
     let idx = 0;
-    async function worker(){
+    async function worker(startDelayMs){
+      if(startDelayMs){
+        await new Promise(r => setTimeout(r, startDelayMs));
+        if(control && control.cancelled) return;
+      }
       while(idx < chunks.length){
         if(control && control.cancelled) return;
         await processChunk(chunks[idx++]);
       }
     }
     const workerCount = Math.min(CONCURRENCY, chunks.length);
-    await Promise.all(Array.from({ length: workerCount }, worker));
+    // Stagger each worker's very first request so they don't all hit the
+    // branch lock in the same instant — see the CONCURRENCY note above.
+    await Promise.all(Array.from({ length: workerCount }, (_, i) => worker(i * WORKER_STAGGER_MS)));
 
     return { succeeded, failed, done, failedLabels, cancelled: !!(control && control.cancelled) };
   }
@@ -7153,7 +7170,17 @@
           if(local && !item._needsFreshPull) serverByRow[targetRow] = Object.assign({}, local);
         }
         syncedAny = true;
-        syncedCount++;
+        // BUG FIX: only count this toward the local version bump below if
+        // the backend actually performed a write. A deduped replay
+        // (result.deduped — see withIdempotency_ in Code.gs) returns the
+        // cached result from an EARLIER successful run without touching
+        // the sheet again, so it never calls clearListCache/bumpListVersion_
+        // a second time. Counting it here anyway made lastKnownVersion_
+        // drift ahead of the server's real counter (one extra count per
+        // deduped retry), so the next cheap version check could never
+        // match again and every future sync/auto-refresh silently fell
+        // back to a full list pull instead of the fast path.
+        if(!result || !result.deduped) syncedCount++;
       }catch(err){
         if(isRetryableBusyError_(err)){
           // Another device/tab is saving to this SAME branch right this

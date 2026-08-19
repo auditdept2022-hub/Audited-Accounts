@@ -6467,6 +6467,24 @@
     // so nothing queued ever moved out of "pending" until the flag
     // happened to flip back, which on some devices it never reliably did.
     isSyncing = true;
+    // BUG FIX: everything below used to run with NOTHING guaranteeing
+    // `isSyncing` gets reset back to false. Every early-return path here
+    // was hand-written to reset it before returning, which is fragile —
+    // and critically, any exception that wasn't one of the specifically
+    // anticipated network/parse errors (a null DOM lookup, a rendering
+    // bug, anything genuinely unexpected) would reject this whole async
+    // function WITHOUT ever reaching those resets. Once that happened,
+    // `isSyncing` stayed stuck at true forever: every later call —
+    // the 20s auto-sync timer, tapping "Retry now", coming back online,
+    // reopening the tab — would hit the `if(isSyncing) return;` guard at
+    // the top and silently no-op, with no error shown anywhere. The ONLY
+    // way out was a full page reload, which is exactly what "I have to
+    // refresh the whole site to get anything to sync" looks like from
+    // the outside. try/finally guarantees isSyncing is always cleared no
+    // matter how this function exits — a normal return, an early return,
+    // or a genuinely unexpected exception — and the catch below at least
+    // surfaces that something unusual happened instead of failing silently.
+    try{
     document.getElementById('connStatus').textContent = 'Syncing changes…';
     renderSyncList_();
 
@@ -6859,6 +6877,16 @@
       notifySyncPaused_('write:' + connErrMsg, 'Sync paused — ' + connErrMsg, connErrMsg);
     } else if(syncedAny){
       toast('Changes synced.');
+    }
+    }catch(err){
+      // Something outside the modeled network/server failure paths above
+      // went wrong. Surface it (so it's visible via the ⚠ badge instead
+      // of vanishing) rather than letting it silently wedge every future
+      // sync attempt — see the comment on `try{` above.
+      console.error('Unexpected error in syncOutbox:', err);
+      notifySyncPaused_('unexpected:' + err.message, 'Sync paused — unexpected error: ' + err.message, err.message);
+    }finally{
+      isSyncing = false;
     }
   }
 

@@ -158,9 +158,31 @@
      state and the refresh action all read as one glance-able line. */
   .sub-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap;row-gap:4px;}
   .hdr-sep{color:#4D5788;font-size:10px;}
-  .hdr-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;background:#5CC58A;box-shadow:0 0 0 3px rgba(92,197,138,.16);}
-  .hdr-dot.offline{background:#D97757;box-shadow:0 0 0 3px rgba(217,119,87,.16);}
   .hdr-status{font-size:10.5px;color:#B7C0E8;white-space:nowrap;}
+
+  /* Manual online/offline toggle — a small pill switch sitting right next
+     to the dot/label, so the auto-detected state (dot+text) and the
+     manual override (this switch) read as one control instead of two
+     unrelated things competing for the same spot. Green thumb-right =
+     Online, orange thumb-left = Offline; the whole thing is a <button>
+     so it's reachable/operable via keyboard too. */
+  .net-toggle{
+    appearance:none;border:none;cursor:pointer;flex-shrink:0;
+    display:inline-flex;align-items:center;
+    width:26px;height:14px;padding:2px;border-radius:999px;
+    background:rgba(92,197,138,.30);
+    transition:background var(--dur-2) var(--ease-in-out);
+  }
+  .net-toggle:focus-visible{outline:2px solid #fff;outline-offset:2px;}
+  .net-toggle-thumb{
+    width:10px;height:10px;border-radius:50%;background:#5CC58A;
+    box-shadow:0 1px 3px rgba(4,8,32,.4);
+    transform:translateX(0);
+    transition:transform var(--dur-2) var(--ease-out), background var(--dur-2) var(--ease-in-out);
+  }
+  .net-toggle.is-offline{background:rgba(217,119,87,.30);}
+  .net-toggle.is-offline .net-toggle-thumb{background:#D97757;transform:translateX(12px);}
+  .net-toggle.is-manual{box-shadow:0 0 0 1px rgba(255,255,255,.55);}
   @keyframes hdr-sync-spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
 
   /* ---- Sync progress popup ------------------------------------------
@@ -1659,8 +1681,10 @@
         <div class="sub-row" id="syncPill" title="Branch &amp; sync status">
           <span class="sub" id="activeProfileLabel">Subsidiary Ledger</span>
           <span class="hdr-sep">·</span>
-          <span class="hdr-dot" id="netDot"></span>
           <span class="hdr-status" id="netLabel">Online</span>
+          <button type="button" class="net-toggle" id="netToggle" onclick="toggleManualOffline_()" aria-label="Manually switch Online/Offline" aria-pressed="false">
+            <span class="net-toggle-thumb"></span>
+          </button>
         </div>
         <div class="sub-row sub-row-sync">
           <span class="hdr-status" id="connStatus">Not connected yet.</span>
@@ -2648,7 +2672,7 @@
       toast('Switch to branch "' + u.branch + '" to undo this.');
       return;
     }
-    if((u.kind === 'recreate' || u.kind === 'recreateMany') && !navigator.onLine){
+    if((u.kind === 'recreate' || u.kind === 'recreateMany') && !isOnline_()){
       toast('Restoring needs an internet connection — try again once you\'re back online.');
       return;
     }
@@ -3046,7 +3070,7 @@
     btn.disabled = true;
     document.getElementById('bulkClearBtn').disabled = true;
 
-    if(navigator.onLine && rows.length > 1){
+    if(isOnline_() && rows.length > 1){
       btn.textContent = 'Deleting ' + rows.length + '…';
       rows.forEach(row => applyOptimisticDelete_({ row: row }));
       render();
@@ -3271,6 +3295,39 @@
   // values as last known when queued, for conflict detection),
   // status:'pending'|'conflict'|'error', error }
   let outbox = [];
+
+  // ---- Manual online/offline override ---------------------------------
+  // The header dot/label used to be a pure reflection of navigator.onLine
+  // (the browser's own read on connectivity). This adds a second, manual
+  // layer on top: tapping the toggle lets the person deliberately force
+  // the app into "Offline" mode — e.g. to pause syncing on purpose —
+  // regardless of what the browser thinks the connection is doing.
+  // Persisted so the choice survives a reload. isOnline_() is the single
+  // source of truth every sync/poll gate should check instead of reading
+  // navigator.onLine directly: real online state AND no manual override.
+  let manualOfflineMode_ = false;
+  try{ manualOfflineMode_ = localStorage.getItem('aa_manualOffline_v1') === '1'; }catch(e){}
+  function isOnline_(){ return navigator.onLine && !manualOfflineMode_; }
+  function toggleManualOffline_(){
+    manualOfflineMode_ = !manualOfflineMode_;
+    try{ localStorage.setItem('aa_manualOffline_v1', manualOfflineMode_ ? '1' : '0'); }catch(e){}
+    updateSyncUI();
+    if(!manualOfflineMode_){
+      // Switching back to Online manually — treat it like the tab just
+      // came back from being hidden/offline: wake a cold backend and
+      // kick off a real sync pass, guarded the same way everywhere else
+      // in the app guards it (don't yank data out from under an open
+      // modal or an already-running load).
+      keepWarmPing_();
+      if(!isLoading && !document.getElementById('overlay').classList.contains('open')){
+        loadData();
+      }
+      if(outbox.length) syncOutbox();
+      toast('Back Online — syncing…');
+    } else {
+      toast('Switched to Offline — sync paused until you switch back.');
+    }
+  }
   let isSyncing = false;
   // Timestamp of the most recent syncOutbox() start — used only as a
   // watchdog (see the top of syncOutbox()) so a manual "Retry now" tap
@@ -6351,9 +6408,17 @@
   }
 
   function updateSyncUI(){
-    const online = navigator.onLine;
-    document.getElementById('netDot').classList.toggle('offline', !online);
+    const online = isOnline_();
     document.getElementById('netLabel').textContent = online ? 'Online' : 'Offline';
+    const toggleEl = document.getElementById('netToggle');
+    if(toggleEl){
+      toggleEl.classList.toggle('is-offline', !online);
+      toggleEl.classList.toggle('is-manual', manualOfflineMode_);
+      toggleEl.setAttribute('aria-pressed', manualOfflineMode_ ? 'true' : 'false');
+      toggleEl.title = manualOfflineMode_
+        ? 'Manually set to Offline — tap to go back Online'
+        : (navigator.onLine ? 'Tap to manually switch to Offline' : 'Tap to manually force Online (device itself is offline)');
+    }
     const pending = outbox.length;
     const wrap = document.getElementById('pendingWrap');
     wrap.style.display = pending ? 'inline' : 'none';
@@ -9840,7 +9905,7 @@
   // never something that should surface an error or retry.
   const KEEP_WARM_MS = 6 * 60 * 1000;
   function keepWarmPing_(){
-    if(!API_URL || document.hidden || !navigator.onLine) return;
+    if(!API_URL || document.hidden || !isOnline_()) return;
     fetch(API_URL + '?action=ping&_=' + Date.now(), { cache: 'no-store' }).catch(() => {});
   }
   setInterval(keepWarmPing_, KEEP_WARM_MS);
@@ -9899,7 +9964,7 @@
   }
   function activityPollTick_(){
     scheduleActivityPoll_();
-    if(!API_URL || document.hidden || !navigator.onLine) return;
+    if(!API_URL || document.hidden || !isOnline_()) return;
     checkActivityVersion_();
   }
   scheduleActivityPoll_();

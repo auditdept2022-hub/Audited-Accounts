@@ -2202,6 +2202,19 @@
   // retried automatically once back online rather than lost.
   async function pushActivityToServer_(entry){
     if(!API_URL){ return; }
+    // MANUAL-OFFLINE FIX: navigator.onLine is deliberately NOT trusted
+    // elsewhere in this file (it's an unreliable browser hint — see
+    // isConnectionError_'s note), but manualOfflineMode_ is different:
+    // it's a deliberate choice the person just made by tapping the
+    // header toggle, not a guess about the connection. Skipping straight
+    // to the queue when it's on is what makes that toggle actually mean
+    // "don't talk to the network right now" instead of merely changing a
+    // label while every write silently goes out anyway whenever the
+    // device happens to have real connectivity underneath.
+    if(manualOfflineMode_){
+      queueActivityOutboxItem_({ kind: 'push', entry: entry, opId: entry.id }, true);
+      return;
+    }
     // Always attempt the call directly rather than pre-checking
     // navigator.onLine — see isConnectionError_'s note. If there's truly
     // no connection the call fails fast and falls into the same queue
@@ -2227,8 +2240,15 @@
   async function pushActivityUndoneToServer_(entryId){
     if(!API_URL){ return; }
     const opId = genId_();
-    // Same reasoning as pushActivityToServer_ above — try first, queue
-    // only on an actual failure, never pre-empted by navigator.onLine.
+    // MANUAL-OFFLINE FIX: same reasoning as pushActivityToServer_ above —
+    // manualOfflineMode_ (unlike navigator.onLine) is honored directly
+    // instead of trying the network first.
+    if(manualOfflineMode_){
+      queueActivityOutboxItem_({ kind: 'undone', id: entryId, opId: opId }, true);
+      return;
+    }
+    // Try first, queue only on an actual failure, never pre-empted by
+    // navigator.onLine.
     try{
       await apiCallJson_('setActivityUndone', { id: entryId, undone: true, opId: opId });
     }catch(e){
@@ -2240,14 +2260,22 @@
   // queued shouldn't add a second copy of itself), persists immediately,
   // and — if we're actually online right now — kicks off a sync attempt
   // right away rather than waiting for the next interval tick.
-  function queueActivityOutboxItem_(item){
+  function queueActivityOutboxItem_(item, skipSyncAttempt){
     if(activityOutbox_.some(i => i.opId === item.opId)) return;
     activityOutbox_.push(item);
     saveActivityOutbox_();
-    // Always kick off a sync attempt — syncActivityOutbox_ itself will
-    // simply fail fast and leave the item queued if there's genuinely no
-    // connection, rather than this never even trying because
-    // navigator.onLine happened to read false.
+    // MANUAL-OFFLINE FIX: skipSyncAttempt is passed as true when this
+    // item was queued specifically because manualOfflineMode_ is on
+    // (see pushActivityToServer_/pushActivityUndoneToServer_ above) — in
+    // that case, don't even try; leave it queued exactly as if the
+    // device were genuinely offline, until the person switches back to
+    // Online (toggleManualOffline_ kicks off a real sync then) or the
+    // 20s interval finds manualOfflineMode_ off again.
+    if(skipSyncAttempt) return;
+    // Otherwise, always kick off a sync attempt — syncActivityOutbox_
+    // itself will simply fail fast and leave the item queued if there's
+    // genuinely no connection, rather than this never even trying
+    // because navigator.onLine happened to read false.
     syncActivityOutbox_();
   }
 
@@ -2262,6 +2290,12 @@
   async function syncActivityOutbox_(){
     if(!API_URL || activityOutboxSyncing_) return;
     if(!activityOutbox_.length) return;
+    // MANUAL-OFFLINE FIX: respect the deliberate toggle the same way the
+    // queueing side now does — don't let the 20s interval (or an 'online'
+    // event that only means the BROWSER reconnected, not that the person
+    // switched the app back to Online) quietly sync out everything that
+    // was queued specifically because Offline was switched on.
+    if(manualOfflineMode_) return;
     activityOutboxSyncing_ = true;
     try{
       while(activityOutbox_.length){
@@ -7039,6 +7073,26 @@
       console.warn('syncOutbox: isSyncing was stuck — forcing a fresh attempt.');
     }
     if(!outbox.length) return;
+    // MANUAL-OFFLINE FIX: this function deliberately does NOT gate on
+    // navigator.onLine (see the big comment a few lines below) because
+    // that flag is an unreliable hint that used to make the outbox get
+    // stuck "pending" on devices where it misreported offline. But
+    // manualOfflineMode_ is a different thing entirely — it's the
+    // person explicitly tapping the header toggle to say "don't sync
+    // right now", regardless of what the device's real connection is
+    // doing. Every queued item (online or offline) still gets pushed
+    // through queueOrSend_ → this function, so without this check the
+    // toggle only ever changed a label while every save kept going out
+    // over the network the instant it was made — which is exactly the
+    // "switching to Offline doesn't actually stop syncing" bug. This is
+    // the one and only navigator.onLine-style gate in this function, and
+    // it's intentional: honor the deliberate choice, ignore the
+    // unreliable guess.
+    if(manualOfflineMode_){
+      document.getElementById('connStatus').textContent = outbox.length + ' change' + (outbox.length === 1 ? '' : 's') + ' waiting — Offline';
+      updateSyncUI();
+      return;
+    }
     // No navigator.onLine gate here on purpose — see isConnectionError_'s
     // comment above. This function is now the SAME code path regardless
     // of whether the browser thinks it's online or offline: it always
@@ -9861,6 +9915,17 @@
     if(isLoading) return;
     if(document.hidden) return;
     if(document.getElementById('overlay').classList.contains('open')) return;
+    // MANUAL-OFFLINE FIX: this tick used to have no offline gate of any
+    // kind — it kept quietly polling the version-check endpoint (and,
+    // once something changed, doing a full loadData()) even while
+    // manualOfflineMode_ was on, which is part of why switching to
+    // Offline didn't visibly stop network activity. isOnline_() folds in
+    // both navigator.onLine and the manual override, so this now pauses
+    // for either reason and simply resumes on its own next tick once
+    // back online (no separate wiring needed — toggleManualOffline_
+    // already kicks a fresh loadData()/syncOutbox() the moment Offline
+    // is switched back off).
+    if(!isOnline_()) return;
     if(versionCheckInFlight_) return; // previous check is still out there — don't stack another on top of it
 
     // PERFORMANCE: check the cheap version counter first (a few bytes,
@@ -9935,6 +10000,11 @@
     const wasHiddenFor = hiddenAt_ ? (Date.now() - hiddenAt_) : 0;
     hiddenAt_ = null;
     if(!API_URL || wasHiddenFor < VISIBILITY_STALE_MS) return;
+    // MANUAL-OFFLINE FIX: don't wake the connection up on the person's
+    // behalf while they've deliberately switched to Offline — reopening
+    // the tab/app shouldn't quietly start talking to the network again
+    // just because it was backgrounded for a while.
+    if(!isOnline_()) return;
     keepWarmPing_();
     if(!isLoading && !document.getElementById('overlay').classList.contains('open')){
       loadData();

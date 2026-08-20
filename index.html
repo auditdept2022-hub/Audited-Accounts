@@ -2330,22 +2330,18 @@
   // chunk after a timeout is deduped by the backend instead of being
   // stored twice — see withIdempotency_ in the Apps Script backend.
   //
-  // STORAGE CAP: MAX_UNDO_CHUNKS_PER_ENTRY bounds how many rows this
-  // upload can ever write into the backend's hidden `_ActivityUndoData`
-  // sheet for ONE entry (see the matching constant of the same name in
-  // Code.gs). Without a cap, a delete of thousands of customers with long
-  // remark histories could spray thousands of rows into that sheet and
-  // never shrink again. If the snapshot list doesn't fit in
-  // MAX_UNDO_CHUNKS_PER_ENTRY chunks at UNDO_CHUNK_RAW_CHARS each, whole
-  // records are dropped off the END of the list (never a record cut in
-  // half — that would produce unparseable JSON) until what's left fits,
-  // and the dropped count is uploaded alongside the data so a device that
-  // later reassembles it can tell the person "N of M restored" instead of
-  // a restore that just looks incomplete with no explanation. This ONLY
-  // affects the copy pushed to the SHARED cross-device log — this
-  // device's own local copy (activityLog_, saved before this ever runs)
-  // always keeps every snapshot regardless, so Undo on THIS device is
-  // never affected by the cap.
+  // STORAGE CAP (removed — see BULK_DELETE_SKIP_UNDO_THRESHOLD below):
+  // this used to drop whole records off the end of the snapshot list once
+  // it didn't fit in MAX_UNDO_CHUNKS_PER_ENTRY chunks, so a big enough
+  // delete could silently lose some records from the SHARED copy (and
+  // surface a "N of M restored" notice on other devices). That cap is no
+  // longer needed: deleteSelected_ now only ever attaches undo snapshots
+  // for batches at or under BULK_DELETE_SKIP_UNDO_THRESHOLD rows, so the
+  // payload this function ever sees is already small and bounded — every
+  // record is uploaded, split into as many chunks as it actually takes,
+  // and nothing is dropped. Anything larger than that threshold skips
+  // undo tracking entirely (see deleteSelected_) instead of relying on
+  // this function to silently truncate it.
   //
   // RETRY ON FAILURE: previously a chunk upload that failed partway
   // (flaky connection, cold start, momentary lock contention) was simply
@@ -2358,28 +2354,10 @@
   // so it's retried automatically once the connection/backend recovers,
   // exactly like a queued push or undone-flag already was.
   const UNDO_CHUNK_RAW_CHARS = 2200;
-  const MAX_UNDO_CHUNKS_PER_ENTRY = 50;
   async function pushUndoSnapshotsChunked_(entryId, snapshots){
     if(!API_URL || manualOfflineMode_) return;
     try{
-      let list = snapshots;
-      let json = JSON.stringify(list);
-      const budgetChars = UNDO_CHUNK_RAW_CHARS * MAX_UNDO_CHUNKS_PER_ENTRY;
-      let truncatedCount = 0;
-      if(json.length > budgetChars){
-        // Keep whole records only, in original order, up to the budget —
-        // see the STORAGE CAP note above.
-        const kept = [];
-        let size = 2; // account for the wrapping [ ]
-        for(let i = 0; i < list.length; i++){
-          const piece = (kept.length ? ',' : '') + JSON.stringify(list[i]);
-          if(size + piece.length > budgetChars) break;
-          kept.push(list[i]);
-          size += piece.length;
-        }
-        truncatedCount = list.length - kept.length;
-        json = JSON.stringify(kept);
-      }
+      const json = JSON.stringify(snapshots);
       const chunks = [];
       for(let i = 0; i < json.length; i += UNDO_CHUNK_RAW_CHARS){
         chunks.push(json.slice(i, i + UNDO_CHUNK_RAW_CHARS));
@@ -2389,7 +2367,7 @@
         try{
           await apiCallJson_('pushActivityUndoChunk', {
             entryId: entryId, chunkIndex: i, chunkCount: chunks.length, data: chunks[i],
-            truncatedCount: truncatedCount, opId: opId
+            opId: opId
           });
         }catch(err){
           // RETRY ON FAILURE — see note above. Queue this chunk (and every
@@ -2399,7 +2377,7 @@
           for(let j = i; j < chunks.length; j++){
             queueActivityOutboxItem_({
               kind: 'undoChunk', entryId: entryId, chunkIndex: j, chunkCount: chunks.length,
-              data: chunks[j], truncatedCount: truncatedCount, opId: entryId + '_undochunk_' + j
+              data: chunks[j], opId: entryId + '_undochunk_' + j
             }, true);
           }
           syncActivityOutbox_();
@@ -3070,12 +3048,13 @@
         const res = await apiCallJsonRead_('getActivityUndoData', { entryId: entry.id });
         if(res && res.data){
           u.snapshots = JSON.parse(res.data);
-          // STORAGE CAP note (see pushUndoSnapshotsChunked_ in the Apps
-          // Script backend / index.html): the shared copy only keeps up to
-          // MAX_UNDO_CHUNKS_PER_ENTRY chunks' worth of records, so on a
-          // very large bulk delete this may be fewer records than were
-          // actually deleted. Say so up front rather than letting the
-          // restore just look incomplete afterward with no explanation.
+          // No truncation happens anymore (see pushUndoSnapshotsChunked_):
+          // undo snapshots are only ever attached to a delete at or under
+          // BULK_DELETE_SKIP_UNDO_THRESHOLD rows, so the shared copy
+          // always has every record. res.truncatedCount is kept only for
+          // backward compatibility with any old chunk rows already sitting
+          // in the backend's _ActivityUndoData sheet from before this
+          // change — this branch just won't fire for anything new.
           if(res.truncatedCount){
             toast(u.snapshots.length + ' of ' + (u.snapshots.length + res.truncatedCount) + ' can be restored from this device — the rest were only kept on the device that made the change.');
           }
@@ -3594,6 +3573,17 @@
     if(!selectModeOn_) clearSelection_();
   }
 
+  // Deletes with MORE rows selected than this are treated as a deliberate
+  // bulk wipe rather than a normal handful-of-mistakes delete: no undo
+  // snapshot is captured for them at all, so nothing is uploaded to the
+  // backend's hidden `_ActivityUndoData` sheet and there's no "N of M
+  // restored" truncation notice to ever show, since nothing was ever
+  // truncated in the first place — there's simply no Undo button on that
+  // entry. Deletes at or under this count still get full, un-truncated,
+  // cross-device undo (see pushUndoSnapshotsChunked_ above, which no
+  // longer caps/drops records — a batch this size never needs to).
+  const BULK_DELETE_SKIP_UNDO_THRESHOLD = 50;
+
   // Online: everything selected goes out as ONE batchDeleteCustomer
   // request (Code.gs groups the rows into a handful of range deletes
   // under a single lock/flush server-side), instead of one full
@@ -3611,18 +3601,26 @@
     );
     if(!rows.length) return;
 
+    const skipUndo = rows.length > BULK_DELETE_SKIP_UNDO_THRESHOLD;
+
     const names = rows.map(r=>{
       const c = customers.find(x => x.row === r);
       return c ? c.customer : ('row ' + r);
     });
     const preview = names.slice(0, 5).join(', ') + (names.length > 5 ? ', +' + (names.length - 5) + ' more' : '');
     const label = rows.length === 1 ? 'this customer' : ('these ' + rows.length + ' customers');
-    if(!await appConfirm('Delete ' + label + '?\n\n(' + preview + ')\n\nThis removes each customer, its balances, and all its remarks. You can undo this from the Activity Log afterward (while online).', { danger: true, title: 'Delete customers?', confirmText: 'Delete' })) return;
+    const undoNote = skipUndo
+      ? ('This is a large delete (' + rows.length + ' customers) — it will NOT be undoable from the Activity Log, on this or any device.')
+      : 'You can undo this from the Activity Log afterward (while online).';
+    if(!await appConfirm('Delete ' + label + '?\n\n(' + preview + ')\n\nThis removes each customer, its balances, and all its remarks. ' + undoNote, { danger: true, title: 'Delete customers?', confirmText: 'Delete' })) return;
 
     // Captured before anything is actually deleted — this is what a
     // later "Undo" click restores. Only rows still present with real
-    // data are worth snapshotting.
-    const undoSnapshots = rows.map(r => customers.find(x => x.row === r)).filter(Boolean).map(c => Object.assign({}, c));
+    // data are worth snapshotting. Skipped entirely for a large,
+    // deliberate bulk delete (see BULK_DELETE_SKIP_UNDO_THRESHOLD above)
+    // — no point building a snapshot list that will never be attached to
+    // the activity entry or uploaded anywhere.
+    const undoSnapshots = skipUndo ? [] : rows.map(r => customers.find(x => x.row === r)).filter(Boolean).map(c => Object.assign({}, c));
 
     const btn = document.getElementById('bulkDeleteBtn');
     const originalLabel = btn.textContent;

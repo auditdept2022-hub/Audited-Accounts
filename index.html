@@ -3116,7 +3116,19 @@
         btn.textContent = originalLabel;
         render();
         toast(rows.length + ' customers deleted.');
-        logActivity_('success', rows.length + ' customer' + (rows.length > 1 ? 's' : '') + ' deleted', 'Bulk delete completed.', null, undefined, undoSnapshots.length ? {
+        // DETAIL FIX: this used to log a bare "Bulk delete completed."
+        // with no names anywhere — every OTHER action type (a remark, a
+        // field update) shows exactly what changed via the `groups`
+        // list, but a bulk delete gave no way to tell WHO was removed
+        // without already remembering the confirm dialog's preview.
+        // `names` (built above, before the confirm) is the full list —
+        // pass it as a real expandable group, same pattern as "New
+        // remark added" elsewhere, so the log entry alone answers "who
+        // got deleted" without needing to undo just to check.
+        logActivity_('success', rows.length + ' customer' + (rows.length > 1 ? 's' : '') + ' deleted',
+          'Removed from "' + currentSheet + '": ' + preview + '.',
+          [{ label: 'Customers removed', items: names }],
+          undefined, undoSnapshots.length ? {
           kind: 'recreateMany',
           branch: currentSheet,
           snapshots: undoSnapshots,
@@ -3146,6 +3158,7 @@
 
     let done = 0, failed = 0;
     const doneSnapshots = [];
+    const failedNames = [];
     for(const row of rows){
       btn.textContent = 'Deleting ' + (done + failed + 1) + '/' + rows.length + '…';
       try{
@@ -3156,6 +3169,8 @@
         if(snap) doneSnapshots.push(snap);
         done++;
       }catch(err){
+        const snap = undoSnapshots.find(s => s.row === row);
+        failedNames.push(snap ? snap.customer : ('row ' + row));
         failed++;
       }
     }
@@ -3166,7 +3181,18 @@
       ? (done + ' deleted, ' + failed + ' failed — check your connection and try again.')
       : (done + ' customer' + (done > 1 ? 's' : '') + ' deleted.'));
     if(done || failed){
-      logActivity_(failed ? 'warning' : 'success', done + ' deleted' + (failed ? ', ' + failed + ' failed' : ''), failed ? 'Some deletes failed — check your connection and try again.' : 'Bulk delete queued/completed.', null, undefined, doneSnapshots.length ? {
+      // DETAIL FIX: same as the online batch path above — list WHO was
+      // actually removed (and, separately, who failed) as expandable
+      // groups instead of a bare "Bulk delete queued/completed." with
+      // no names.
+      const doneNames = doneSnapshots.map(s => s.customer || 'row ' + s.row);
+      const groups = [];
+      if(doneNames.length) groups.push({ label: 'Customers removed', items: doneNames });
+      if(failedNames.length) groups.push({ label: 'Failed to remove', items: failedNames });
+      logActivity_(failed ? 'warning' : 'success', done + ' deleted' + (failed ? ', ' + failed + ' failed' : ''),
+        (failed ? 'Some deletes failed — check your connection and try again.' : 'Removed from "' + currentSheet + '".') +
+        (doneNames.length ? ' (' + doneNames.slice(0, 5).join(', ') + (doneNames.length > 5 ? ', +' + (doneNames.length - 5) + ' more' : '') + ')' : ''),
+        groups.length ? groups : null, undefined, doneSnapshots.length ? {
         kind: 'recreateMany',
         branch: currentSheet,
         snapshots: doneSnapshots,
@@ -7285,18 +7311,56 @@
       if(item.kind !== 'create' && isTempRow(item.row)){ remaining.push(item); continue; }
 
       try{
-        if(item.kind !== 'create' && item.snapshot && !versionConfirmedCurrent){
+        // ---- MULTI-DEVICE SAFETY NET: delete identity check -------------
+        //
+        // BUG FIX: rows are addressed by row NUMBER, and Code.gs actually
+        // removes rows on delete (deleteRows), not just blanks them, once
+        // there's more than a couple left (see clearOrDeleteRows_) — so
+        // every row below a deleted one shifts up by one. With several
+        // devices open on the SAME branch, it's entirely realistic for
+        // Device B to delete some customers while Device A still has an
+        // older row number queued for a delete of its own. Without this
+        // check, that queued delete would go straight to sendOne_ with
+        // only { row: 15 } and blindly delete whatever customer NOW
+        // happens to occupy row 15 — which after a shift can be a
+        // completely different customer than the one Device A meant to
+        // remove. This used to be "handled" by a comment inside the
+        // update-only block below, but delete items never carry
+        // `item.snapshot` (nothing to overwrite), so that branch was
+        // actually unreachable for real delete items — this is a
+        // dedicated check, keyed off item.customerName (captured when
+        // the delete was queued), that runs whether or not a snapshot
+        // exists.
+        if(item.kind === 'delete' && !versionConfirmedCurrent){
           const serverRow = serverByRow[item.row];
           if(!serverRow){
-            // Row is gone server-side. For a delete, that's already the
-            // desired end state — just drop the queued item. For an
-            // update, there's nothing left to update — flag it so the
-            // user notices rather than silently losing the edit.
-            if(item.kind === 'delete'){
-              applyConfirmedDelete_(item);
-              syncedAny = true;
-              continue;
+            // Already gone server-side — that's the desired end state
+            // either way, nothing left to protect against.
+            applyConfirmedDelete_(item);
+            syncedAny = true;
+            continue;
+          }
+          if(item.customerName && normForCompare_(serverRow.customer) !== normForCompare_(item.customerName)){
+            item.status = 'conflict';
+            item.serverSnapshot = Object.assign({}, serverRow);
+            item.conflictDetectedAt = Date.now();
+            remaining.push(item);
+            if(!item._loggedConflict){
+              item._loggedConflict = true;
+              logActivity_('warning', 'Sync conflict', 'This row no longer matches "' + item.customerName + '" — another device\'s change shifted the rows first. The delete was held back so it can\'t remove the wrong customer; review it in the sync panel.', null, 'openSync');
             }
+            continue;
+          }
+          // Row still holds the expected customer (or this item predates
+          // customerName being tracked, so there's nothing to check
+          // against) — safe to proceed to sendOne_ below.
+        } else if(item.kind !== 'create' && item.snapshot && !versionConfirmedCurrent){
+          const serverRow = serverByRow[item.row];
+          if(!serverRow){
+            // Row is gone server-side and there's nothing left to
+            // update — flag it so the user notices rather than silently
+            // losing the edit. (Deletes are handled above, before this
+            // branch, and never reach here.)
             item.status = 'conflict';
             item.serverSnapshot = null; // signals "row no longer exists"
             remaining.push(item);
@@ -7369,6 +7433,17 @@
           const writtenKeys = new Set(item.changedKeys || Object.keys(item.fields || {}));
           if(item.currentEdit !== undefined){ writtenKeys.add('auditorRemarks'); writtenKeys.add('dateOfAudit'); }
           if(item.historyEdit !== undefined){ writtenKeys.add('previousRemarks'); }
+          // MULTI-DEVICE SAFETY NET: always verify row identity, even
+          // when the customer name itself isn't one of the fields being
+          // edited. Without this, an update that only touches (say) Beg
+          // Bal is checked ONLY on Beg Bal — if another device's delete
+          // shifted this row to now hold a different customer, and that
+          // different customer's Beg Bal happens to equal this item's
+          // stale snapshot, the drift check below would see no
+          // difference and silently write the wrong customer's balance.
+          // Comparing `customer` unconditionally makes a shifted row
+          // always surface as a conflict instead.
+          writtenKeys.add('customer');
 
           // Keys this item isn't writing don't need a stale snapshot
           // hanging around — keep them in sync with the sheet so a later
@@ -9372,6 +9447,7 @@
       if(input) input.value = usOption.dataset.usOption;
       refreshUnitStatusActive_();
       closeAllDropdowns_();
+      queueDraftSave_(); // set via JS, not typing — 'input' event above never fires for this
       return;
     }
     // Payment Mode (or any other generic preset field): preset option pick
@@ -9386,6 +9462,7 @@
         });
       }
       closeAllDropdowns_();
+      queueDraftSave_(); // set via JS, not typing — 'input' event above never fires for this
       return;
     }
     // Tapping the input or the chevron toggles that field's own dropdown
@@ -9404,16 +9481,20 @@
   document.getElementById('fieldGrid').addEventListener('input', (e)=>{
     if(e.target.classList.contains('us-input')){
       refreshUnitStatusActive_();
-      return;
-    }
-    if(e.target.classList.contains('preset-input')){
+    } else if(e.target.classList.contains('preset-input')){
       const combo = e.target.closest('.preset-combo');
-      if(!combo) return;
-      const val = e.target.value.trim().toLowerCase();
-      combo.querySelectorAll('.preset-option').forEach(opt=>{
-        opt.classList.toggle('active', opt.dataset.presetOption.toLowerCase() === val);
-      });
+      if(combo){
+        const val = e.target.value.trim().toLowerCase();
+        combo.querySelectorAll('.preset-option').forEach(opt=>{
+          opt.classList.toggle('active', opt.dataset.presetOption.toLowerCase() === val);
+        });
+      }
     }
+    // Any edited field (plain input or one of the combos above) queues a
+    // whole-form draft save — see queueDraftSave_ / saveDraft_ near the
+    // remark-draft code, which now snapshots the entire grid, not just
+    // the remark box.
+    if(e.target.matches('[data-key]')) queueDraftSave_();
   });
   // Closes any open dropdown (Unit Status or a preset combo) on a click
   // outside it, and on Escape — otherwise it would stay open over the
@@ -9449,15 +9530,48 @@
   // it. The draft is restored automatically next time that same
   // customer's modal is opened, and cleared once the remark is actually
   // saved to the sheet (or the user explicitly discards it).
+  //
+  // WHOLE-FORM DRAFT (widened from remark-only): this used to persist
+  // ONLY the "new remark" textarea — every other field in the edit grid
+  // (balances, dates, status dropdowns, the color marker, etc.) lived
+  // purely in the DOM with zero persistence until Save was tapped. That
+  // meant the single worst case this app claims to protect against —
+  // app crash / accidental close / OS kills the tab — was still a real
+  // way to lose a half-finished edit, as long as the user hadn't typed
+  // anything into the remark box yet. The draft object now also carries
+  // `fields` (same shape as collectFieldValues()) and `marker`, saved on
+  // every field/marker change the same way the remark already was, and
+  // reapplied on top of the freshly-built field grid when the modal is
+  // reopened (see openEditModal / openCreateModal below). Discarding a
+  // draft resets the grid back to the real record (or blank, for a new
+  // customer) instead of just clearing the remark box.
   function draftKey_(row){
     return 'aa_remark_draft_v1:' + API_URL + ':' + currentSheet + ':' + (row == null ? 'new' : row);
   }
 
-  function saveDraft_(row, text){
+  function draftHasContent_(snap){
+    if(!snap) return false;
+    if(snap.text && snap.text.trim()) return true;
+    if(snap.marker) return true;
+    if(snap.fields) return Object.keys(snap.fields).some(k => snap.fields[k] !== undefined && snap.fields[k] !== '');
+    return false;
+  }
+
+  // Reads whatever's currently painted into the open modal (remark text,
+  // every editable field, the marker picker) and persists it as one
+  // snapshot. Safe to call often (debounced by callers) — a no-op write
+  // if the modal ended up back at "nothing entered yet".
+  function saveDraft_(row){
     try{
       const key = draftKey_(row);
-      if(text && text.trim()){
-        localStorage.setItem(key, JSON.stringify({ text, savedAt: Date.now() }));
+      const snap = {
+        text: document.getElementById('mNewRemark') ? document.getElementById('mNewRemark').value : '',
+        fields: document.getElementById('fieldGrid') ? collectFieldValues() : {},
+        marker: modalMarkerColor_ || '',
+        savedAt: Date.now()
+      };
+      if(draftHasContent_(snap)){
+        localStorage.setItem(key, JSON.stringify(snap));
       } else {
         localStorage.removeItem(key);
       }
@@ -9476,10 +9590,25 @@
     try{ localStorage.removeItem(draftKey_(row)); }catch(err){ /* noop */ }
   }
 
+  // Overlays a draft's saved field values on top of the just-built field
+  // grid (buildFieldGrid already painted the real record/blank values).
+  // Locked/read-only fields on an edit render without a data-key, so
+  // querySelector simply finds nothing for those keys — a draft can
+  // never resurrect a value into a locked field.
+  function applyDraftFieldsToGrid_(fields){
+    if(!fields) return;
+    Object.keys(fields).forEach(key=>{
+      if(fields[key] === undefined || fields[key] === '') return;
+      const el = document.querySelector('#fieldGrid [data-key="' + key + '"]');
+      if(el && !el.disabled) el.value = fields[key];
+    });
+    refreshUnitStatusActive_();
+  }
+
   function updateDraftStatus_(){
     const el = document.getElementById('draftStatus');
     const draft = loadDraft_(activeRow);
-    if(draft && draft.text && draft.text.trim()){
+    if(draftHasContent_(draft)){
       el.style.display = 'flex';
       el.innerHTML = '📝 Unsaved draft restored <button type="button" onclick="discardDraft()">Discard</button>';
     } else {
@@ -9493,20 +9622,39 @@
     const ta = document.getElementById('mNewRemark');
     ta.value = '';
     autoFitTextarea_(ta);
+    // Reset the field grid + marker back to the real record (edit) or
+    // blank (create) — a discarded draft should leave no trace, not just
+    // clear the remark box while stray field edits stay on screen.
+    if(modalMode === 'edit'){
+      const c = customers.find(x => x.row === activeRow);
+      buildFieldGrid(c || {});
+      setModalMarkerPickerColor_(c ? (c.marker || '') : '');
+    } else {
+      buildFieldGrid({});
+      setModalMarkerPickerColor_('');
+    }
     updateDraftStatus_();
   }
 
   let draftSaveDebounce;
+  function queueDraftSave_(){
+    clearTimeout(draftSaveDebounce);
+    draftSaveDebounce = setTimeout(()=>{
+      saveDraft_(activeRow);
+      updateDraftStatus_();
+    }, 400);
+  }
   document.getElementById('mNewRemark').addEventListener('input', function(){
     // Auto-grow the box to fit whatever's been typed so far — see
     // autoFitTextarea_ / the #mNewRemark CSS rule above.
     autoFitTextarea_(this);
-    clearTimeout(draftSaveDebounce);
-    draftSaveDebounce = setTimeout(()=>{
-      saveDraft_(activeRow, document.getElementById('mNewRemark').value);
-      updateDraftStatus_();
-    }, 400);
+    queueDraftSave_();
   });
+  // Any edit to a field in the grid (plain input, Unit Status combo, or
+  // a preset field like Payment Mode) also queues a draft save, same
+  // debounce as the remark box above — see the delegated #fieldGrid
+  // 'input' listener further down, which calls queueDraftSave_() after
+  // its own combo/preset bookkeeping.
 
   // ---- Modal highlight picker — mirrors setMark_'s four colors, but
   // doesn't save on click; it just tracks modalMarkerColor_, which
@@ -9523,6 +9671,7 @@
     const btn = e.target.closest('.mini-mark-swatch');
     if(!btn) return;
     setModalMarkerPickerColor_(btn.dataset.color);
+    queueDraftSave_();
   });
 
   function openEditModal(row){
@@ -9572,8 +9721,12 @@
     const mNewRemarkEl = document.getElementById('mNewRemark');
     mNewRemarkEl.value = draft ? draft.text : '';
     autoFitTextarea_(mNewRemarkEl);
+    // Overlay any unsaved field/marker edits from a prior crash/close on
+    // top of the real record buildFieldGrid(c) just painted above — see
+    // the WHOLE-FORM DRAFT note near draftKey_.
+    if(draft && draft.fields) applyDraftFieldsToGrid_(draft.fields);
+    setModalMarkerPickerColor_((draft && draft.marker) ? draft.marker : (c.marker || ''));
     updateDraftStatus_();
-    setModalMarkerPickerColor_(c.marker || '');
     document.getElementById('overlay').classList.add('open');
     lockBodyScroll();
   }
@@ -9605,8 +9758,12 @@
     const mNewRemarkEl2 = document.getElementById('mNewRemark');
     mNewRemarkEl2.value = draft ? draft.text : '';
     autoFitTextarea_(mNewRemarkEl2);
+    // Overlay any unsaved fields/marker from a half-finished "new
+    // customer" entry that never got tapped Save — see the WHOLE-FORM
+    // DRAFT note near draftKey_.
+    if(draft && draft.fields) applyDraftFieldsToGrid_(draft.fields);
+    setModalMarkerPickerColor_(draft && draft.marker ? draft.marker : '');
     updateDraftStatus_();
-    setModalMarkerPickerColor_('');
     document.getElementById('overlay').classList.add('open');
     lockBodyScroll();
   }

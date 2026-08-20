@@ -1142,6 +1142,7 @@
   .cf-panel.is-error .conflict-item{border-color:#F3CBD5;}
   .conflict-item:last-child{margin-bottom:0;}
   .conflict-item .ci-name{font-weight:700;margin-bottom:4px;font-size:13px;}
+  .conflict-item .ci-subid{color:var(--muted);font-size:11px;margin:-2px 0 6px;font-weight:600;}
   .conflict-item .ci-detail{color:var(--muted);font-size:11.5px;margin-bottom:8px;line-height:1.5;}
   .conflict-item .ci-meta{display:inline-flex;align-items:center;gap:6px;color:var(--rstr);background:var(--gold-soft);border:1px solid #EFE0B4;border-radius:20px;padding:3px 10px 3px 8px;margin-bottom:10px;font-size:10px;font-weight:600;letter-spacing:.1px;}
   .conflict-item .ci-actions.ci-bulk{display:flex;gap:6px;margin-bottom:10px;}
@@ -1927,9 +1928,6 @@
 
     </div>
     <div class="modal-foot">
-      <div class="left" id="deleteBtnWrap" style="display:none;">
-        <button class="btn danger" id="deleteBtn" onclick="deleteRecordFromModal_()">🗑 Delete</button>
-      </div>
       <div class="right">
         <button class="btn" onclick="closeModal()">Cancel</button>
         <button class="btn primary" id="saveBtn" onclick="saveModal()">Save changes</button>
@@ -3329,6 +3327,23 @@
   // values as last known when queued, for conflict detection),
   // status:'pending'|'conflict'|'error', error }
   let outbox = [];
+
+  // FEATURE: batch-level sync progress (e.g. "12/20") and a clear
+  // completion notice, instead of an indefinite "Syncing…" spinner that
+  // just silently vanishes once done. syncBatchTotal_ is the size of the
+  // current run of offline/queued changes; syncBatchDone_ counts how many
+  // of THOSE have finished (success, or ended up needing attention) so
+  // far. Both reset to 0 once the outbox fully empties out, so the next
+  // unrelated batch (e.g. after being offline again later) starts its own
+  // fresh count instead of carrying over a stale total.
+  let syncBatchTotal_ = 0;
+  let syncBatchDone_ = 0;
+  // Only re-notify about conflicts/errors when the COUNT actually grows
+  // (a new one appeared) — otherwise the same "N need your attention"
+  // toast would repeat on every 20s auto-retry pass for as long as they
+  // sit unresolved, which is just noise once the person has already seen
+  // it once.
+  let syncBatchLastNotifiedIssueCount_ = 0;
 
   // ---- Manual online/offline override ---------------------------------
   // The header dot/label used to be a pure reflection of navigator.onLine
@@ -5879,8 +5894,14 @@
     const syncingCount = outbox.filter(o => o.status === 'syncing').length;
     if(isSyncing || syncingCount){
       progressRow.style.display = 'flex';
-      const done = outbox.length - outbox.filter(o => !o.status || o.status === 'syncing' || o.status === 'pending').length;
-      progressText.textContent = 'Syncing ' + (done + 1) + ' of ' + outbox.length + '…';
+      // Use the stable whole-batch total/done counters (see syncOutbox)
+      // instead of outbox.length, which shrinks every time an item
+      // finishes — that made a big catch-up sync look like it was
+      // perpetually "almost done" (e.g. always "1 of 3…") instead of
+      // showing real progress against the original count.
+      const total = syncBatchTotal_ > 1 ? syncBatchTotal_ : outbox.length;
+      const done = syncBatchTotal_ > 1 ? syncBatchDone_ : (outbox.length - outbox.filter(o => !o.status || o.status === 'syncing' || o.status === 'pending').length);
+      progressText.textContent = 'Syncing ' + Math.min(done + 1, total) + ' of ' + total + '…';
     } else {
       progressRow.style.display = 'none';
     }
@@ -6483,13 +6504,27 @@
           const name = c.customerName || (c.fields && c.fields.customer) || (c.snapshot && c.snapshot.customer) || 'this customer';
           const isDelete = c.kind === 'delete';
           const detectedTime = c.conflictDetectedAt ? new Date(c.conflictDetectedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-          const diffCount = isDelete ? 0 : conflictDiffFields_(c).length;
+          const diffRows = isDelete ? [] : conflictDiffFields_(c);
+          const diffCount = diffRows.length;
+          // DETAIL FIX: identify exactly which customer this is (model +
+          // engine no, not just the name — useful when two customers
+          // share a similar/duplicate name) and name the SPECIFIC fields
+          // that differ instead of just a bare count, so it's clear what
+          // to fix without having to scroll through the picker first.
+          const model = (c.snapshot && c.snapshot.model) || (c.fields && c.fields.model) || '';
+          const engineNo = (c.snapshot && c.snapshot.engineNo) || (c.fields && c.fields.engineNo) || '';
+          const idBits = [model, engineNo ? 'Engine ' + engineNo : ''].filter(Boolean);
+          const fieldNames = diffRows.map(r => r.label);
           const metaBits = [];
-          if(detectedTime) metaBits.push(detectedTime);
-          if(!isDelete) metaBits.push(diffCount + ' field' + (diffCount === 1 ? '' : 's') + ' differ' + (diffCount === 1 ? 's' : ''));
+          if(detectedTime) metaBits.push('Changed on the sheet ' + detectedTime);
           return `<div class="conflict-item" id="conflict-item-${escapeHtml(c.id)}">
             <div class="ci-name">${escapeHtml(name)}</div>
-            <div class="ci-detail">${isDelete ? "Queued for deletion, but also edited elsewhere. Delete it or keep it as-is." : "Pick which side to keep for each changed field below, then save."}</div>
+            ${idBits.length ? `<div class="ci-subid">${escapeHtml(idBits.join(' · '))}</div>` : ''}
+            <div class="ci-detail">${isDelete
+              ? "You queued this record for deletion, but someone changed it on the sheet before your delete synced. Choose Delete anyway to proceed with the delete, or Keep record to cancel it and keep the sheet's current version."
+              : (fieldNames.length
+                  ? `Someone else changed ${fieldNames.length === 1 ? 'the' : 'these'} <b>${escapeHtml(fieldNames.join(', '))}</b> field${fieldNames.length===1?'':'s'} on the sheet while your edit was queued offline. For each field below, pick "Your version" or "Currently on the sheet", then tap Save selection.`
+                  : "Pick which side to keep for each changed field below, then save.")}</div>
             ${metaBits.length ? `<div class="ci-meta">${escapeHtml(metaBits.join(' · '))}</div>` : ''}
             ${(!isDelete && diffCount > 1) ? `<div class="ci-actions ci-bulk">
               <button type="button" onclick="ciPickAll_('${c.id}','mine')">✓ Keep all mine</button>
@@ -6520,9 +6555,13 @@
         <div class="cf-panel-items">` +
         errored.map(c=>{
           const name = c.customerName || (c.fields && c.fields.customer) || (c.snapshot && c.snapshot.customer) || 'this customer';
+          const model = (c.snapshot && c.snapshot.model) || (c.fields && c.fields.model) || '';
+          const engineNo = (c.snapshot && c.snapshot.engineNo) || (c.fields && c.fields.engineNo) || '';
+          const idBits = [model, engineNo ? 'Engine ' + engineNo : ''].filter(Boolean);
           return `<div class="conflict-item" id="conflict-item-${escapeHtml(c.id)}">
             <div class="ci-name">${escapeHtml(name)}</div>
-            <div class="ci-detail">Server said: ${escapeHtml(c.error || 'unknown error')}</div>
+            ${idBits.length ? `<div class="ci-subid">${escapeHtml(idBits.join(' · '))}</div>` : ''}
+            <div class="ci-detail">The sheet rejected this change: <b>${escapeHtml(c.error || 'unknown error')}</b>. Tap Retry to try again as-is, or Discard mine to drop this change and keep whatever's currently on the sheet.</div>
             ${renderMineVersion_(c)}
             <div class="ci-actions">
               <button class="keep" onclick="resolveConflict('${c.id}','retry')">Retry</button>
@@ -7108,6 +7147,15 @@
     // happened to flip back, which on some devices it never reliably did.
     isSyncing = true;
     syncStartedAt_ = Date.now();
+    // Grow the batch total to cover any items not already counted (a
+    // brand-new batch starts this at outbox.length; an item added mid-
+    // batch — e.g. another edit made while a big offline queue is still
+    // catching up — just extends the same running total instead of
+    // starting a separate count).
+    if(outbox.length > syncBatchTotal_ + syncBatchDone_){
+      if(syncBatchTotal_ === 0 && syncBatchDone_ === 0) syncBatchLastNotifiedIssueCount_ = 0; // genuinely new batch
+      syncBatchTotal_ = outbox.length - syncBatchDone_;
+    }
     // BUG FIX: everything below used to run with NOTHING guaranteeing
     // `isSyncing` gets reset back to false. Every early-return path here
     // was hand-written to reset it before returning, which is fragile —
@@ -7126,7 +7174,14 @@
     // or a genuinely unexpected exception — and the catch below at least
     // surfaces that something unusual happened instead of failing silently.
     try{
-    document.getElementById('connStatus').textContent = 'Syncing changes…';
+    // FEATURE: show "Syncing D/T…" for a batch of more than one queued
+    // change, instead of a plain "Syncing changes…" with no sense of
+    // how much is left — this is what makes a big catch-up sync (e.g.
+    // after being offline for a while) feel like it's actually making
+    // visible progress instead of just spinning.
+    document.getElementById('connStatus').textContent = syncBatchTotal_ > 1
+      ? `Syncing ${Math.min(syncBatchDone_ + 1, syncBatchTotal_)}/${syncBatchTotal_}\u2026`
+      : 'Syncing changes\u2026';
     renderSyncList_();
 
     // PERFORMANCE + CORRECTNESS FIX: this used to unconditionally pull
@@ -7460,6 +7515,16 @@
     saveOutbox_();
     isSyncing = false;
 
+    // FEATURE: batch progress ("12/20") + a clear, explicit completion
+    // notice instead of the indicator just silently disappearing once
+    // everything's synced. "Done" here means either fully synced and
+    // gone from the queue, or it stopped auto-retrying because it now
+    // needs the person's attention (conflict/error) — either way, this
+    // pass is no longer silently working on it.
+    const stillPending = outbox.filter(o => o.status !== 'conflict' && o.status !== 'error').length;
+    syncBatchDone_ = Math.max(0, syncBatchTotal_ - stillPending);
+    const batchIssues = outbox.filter(o => o.status === 'conflict' || o.status === 'error').length;
+
     // Keep the cheap version counter accurate after a fast-path pass
     // (one that skipped the full list fetch because the version was
     // already confirmed current). Every successful write on the backend
@@ -7521,9 +7586,28 @@
     }
 
     if(syncedAny && !outbox.length){
-      toast('Changes synced.');
+      // FEATURE: an explicit, countable "done" instead of a generic
+      // "Changes synced." — on a big catch-up batch (many offline edits
+      // at once) this is what actually confirms every single one made it,
+      // rather than leaving it to guesswork once the spinner just stops.
+      toast(syncBatchTotal_ > 1
+        ? `✓ Synced ${syncBatchTotal_} of ${syncBatchTotal_} changes — all done.`
+        : '✓ Changes synced.');
+      syncBatchTotal_ = 0;
+      syncBatchDone_ = 0;
+      syncBatchLastNotifiedIssueCount_ = 0;
     } else if(outbox.some(o => o.status === 'conflict' || o.status === 'error')){
       document.getElementById('connStatus').textContent = 'Some changes need your attention.';
+      // FEATURE: surface exactly how many succeeded vs. how many need a
+      // decision, with counts, the moment a new one shows up — this is
+      // the "if there's an error show me" ask: don't just quietly stop
+      // retrying that one item and leave the person to notice on their
+      // own.
+      if(batchIssues > syncBatchLastNotifiedIssueCount_){
+        syncBatchLastNotifiedIssueCount_ = batchIssues;
+        const succeeded = Math.max(0, syncBatchDone_ - batchIssues);
+        toast(`⚠ ${succeeded} of ${syncBatchTotal_} synced — ${batchIssues} need${batchIssues===1?'s':''} your attention. Tap ⚠ Action needed to review.`);
+      }
     } else if(hitConnectionError){
       // MULTI-USER FIX: a branch-lock collision (two people saving to the
       // same branch within the same second or two) gets its own fast,
@@ -7556,7 +7640,12 @@
       syncColdStartRetries = 0;
       notifySyncPaused_('write:' + connErrMsg, 'Sync paused — ' + connErrMsg, connErrMsg);
     } else if(syncedAny){
-      toast('Changes synced.');
+      toast(syncBatchTotal_ > 1
+        ? `✓ Synced ${syncBatchTotal_} of ${syncBatchTotal_} changes — all done.`
+        : '✓ Changes synced.');
+      syncBatchTotal_ = 0;
+      syncBatchDone_ = 0;
+      syncBatchLastNotifiedIssueCount_ = 0;
     }
     }catch(err){
       // Something outside the modeled network/server failure paths above
@@ -9440,7 +9529,6 @@
     document.getElementById('historySection').style.display = 'block';
     document.getElementById('newRemarkLabel').textContent = 'Add new remark';
     document.getElementById('saveBtn').textContent = 'Save changes';
-    document.getElementById('deleteBtnWrap').style.display = 'flex';
 
     // Header stays a generic, static label — the customer's name, model,
     // and engine no. already live in the Customer & Unit cards right
@@ -9494,7 +9582,6 @@
     document.getElementById('historySection').style.display = 'none';
     document.getElementById('newRemarkLabel').textContent = 'Initial remark (optional)';
     document.getElementById('saveBtn').textContent = 'Create customer';
-    document.getElementById('deleteBtnWrap').style.display = 'none';
 
     document.getElementById('mTitle').textContent = 'New customer';
 

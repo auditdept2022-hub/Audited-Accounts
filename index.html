@@ -2792,35 +2792,115 @@
   // Same idea as undoRecreateEntry_ but for many rows at once (a bulk
   // delete, or a "Clear branch data" wipe) — one batchCreateCustomer
   // call for the field data, then one updateCustomerFull per restored
-  // row that actually had remark text (sequential, best-effort: if one
-  // row's remark-restore call fails, the rest still proceed — the
-  // customer and its balances are already back either way).
+  // row that actually had remark text.
+  //
+  // BUG FIX (this used to just assume success): batchCreateCustomer
+  // silently SKIPS any record with a blank customer name instead of
+  // throwing (Code.gs: "!fields.customer ... failed++; return" — never
+  // an error, just a lower `created` count) — and this function never
+  // checked `result.created` against how many snapshots it actually
+  // sent. Two real consequences of that:
+  //   1. A restore could quietly come back partial (fewer customers
+  //      actually recreated than were deleted), but the toast/log still
+  //      said "N customers restored" — a false "it worked" with no
+  //      indication anything was missing, which is exactly what made
+  //      this look like "undo isn't working and no notification shows."
+  //   2. Worse: `startRow + i` assumed record i in the array landed at
+  //      row `startRow + i` on the sheet. If ANY record before it got
+  //      skipped, every row after that skip is off by one — so the
+  //      remark-restore loop below would silently write remarks onto
+  //      the WRONG customer's row instead of just failing loudly.
+  // Fixed by filtering out any snapshot with no usable customer name
+  // BEFORE sending (so the backend can never skip one — the index
+  // alignment between `records[i]` and `startRow + i` is then always
+  // guaranteed to hold), and by verifying `result.created` actually
+  // matches what was sent before trusting that alignment for the
+  // remark-restore step at all.
   async function undoRecreateManyEntry_(u){
     const snapshots = u.snapshots || [];
     if(!snapshots.length) return;
     const keys = writableFieldKeys_();
-    const records = snapshots.map(snap => {
+
+    const restorable = [];
+    const unrestorable = []; // snapshots with no usable customer name — can never be recreated
+    snapshots.forEach(snap => {
+      if(snap && snap.customer && String(snap.customer).trim()) restorable.push(snap);
+      else unrestorable.push(snap);
+    });
+
+    if(!restorable.length){
+      logActivity_('error', 'Undo failed', 'None of the ' + snapshots.length + ' deleted record(s) could be restored — they had no customer name to recreate from.');
+      throw new Error('deleted record(s) had no customer name to recreate — nothing to restore');
+    }
+
+    const records = restorable.map(snap => {
       const fields = {};
       keys.forEach(k => { if(snap[k] !== undefined && snap[k] !== '') fields[k] = snap[k]; });
       return fields;
     });
+
     const result = await apiCallJson_('batchCreateCustomer', { records });
     const startRow = result.startRow;
+    const createdCount = typeof result.created === 'number' ? result.created : records.length;
+    // Index alignment (startRow + i) is only trustworthy if EVERY record
+    // sent was actually created — see the note above. This should
+    // always hold now that blank-name snapshots are filtered out
+    // up-front, but this is the safety net if it somehow doesn't.
+    const alignmentTrustworthy = (createdCount === records.length);
+
     let anyRemarks = false;
-    for(let i = 0; i < snapshots.length; i++){
-      const snap = snapshots[i];
-      const hasRemarks = (snap.auditorRemarks && !isBlankRemark_(snap.auditorRemarks)) || (snap.previousRemarks && String(snap.previousRemarks).trim());
-      if(!hasRemarks) continue;
-      anyRemarks = true;
-      try{
-        await apiCallJson_('updateCustomerFull', {
-          row: startRow + i, fields: {},
-          currentEdit: snap.auditorRemarks || '', historyEdit: snap.previousRemarks || '',
-          remark: '', auditor: '', opId: genId_()
-        });
-      }catch(err){ /* best-effort per row — the record itself is still restored */ }
+    const remarkFailedNames = [];
+    if(alignmentTrustworthy){
+      for(let i = 0; i < restorable.length; i++){
+        const snap = restorable[i];
+        const hasRemarks = (snap.auditorRemarks && !isBlankRemark_(snap.auditorRemarks)) || (snap.previousRemarks && String(snap.previousRemarks).trim());
+        if(!hasRemarks) continue;
+        anyRemarks = true;
+        try{
+          await apiCallJson_('updateCustomerFull', {
+            row: startRow + i, fields: {},
+            currentEdit: snap.auditorRemarks || '', historyEdit: snap.previousRemarks || '',
+            remark: '', auditor: '', opId: genId_()
+          });
+        }catch(err){
+          // Best-effort per row — the customer record itself is still
+          // restored (fields/balances), just missing its remark text.
+          // BUG FIX: this used to swallow the error completely with no
+          // trace anywhere — now it's tracked and surfaced below instead
+          // of pretending every restore was 100% complete.
+          remarkFailedNames.push(snap.customer || ('row ' + (startRow + i)));
+        }
+      }
     }
+
     await loadData();
+
+    const restoredCount = createdCount;
+    const missingCount = snapshots.length - restoredCount;
+    const groups = [];
+    if(restoredCount) groups.push({ label: 'Restored', items: restorable.slice(0, restoredCount).map(s => s.customer) });
+    if(unrestorable.length) groups.push({ label: 'Could not be restored (no customer name)', items: unrestorable.map(s => (s && s.customer) ? s.customer : 'unnamed record') });
+    if(!alignmentTrustworthy) groups.push({ label: 'Restore count mismatch — please verify manually', items: restorable.map(s => s.customer) });
+    if(remarkFailedNames.length) groups.push({ label: 'Restored, but remarks failed to reattach', items: remarkFailedNames });
+
+    if(missingCount > 0 || !alignmentTrustworthy || remarkFailedNames.length){
+      toast(restoredCount + ' of ' + snapshots.length + ' restored' + (missingCount > 0 ? ' — ' + missingCount + ' could not be recreated' : '') + '. Check the Activity Log for details.');
+      logActivity_('warning', 'Undo partially completed',
+        restoredCount + ' of ' + snapshots.length + ' customer' + (snapshots.length === 1 ? '' : 's') + ' restored to "' + currentSheet + '".' +
+        (missingCount > 0 ? ' ' + missingCount + ' could not be recreated.' : '') +
+        (remarkFailedNames.length ? ' ' + remarkFailedNames.length + ' restored without their remarks — see below.' : '') +
+        (!alignmentTrustworthy ? ' Row alignment could not be confirmed — please double-check the restored records.' : ''),
+        groups.length ? groups : null);
+      // Deliberately return (not throw) here: whatever DID get restored
+      // is now really on the sheet, so performUndo_'s caller marking
+      // this entry `undone = true` is correct — retrying the same undo
+      // again would resend every snapshot (including the ones that
+      // already succeeded) and create DUPLICATES of those, which is
+      // worse than a partial restore the person can now see and fix by
+      // hand using the details just logged above.
+      return;
+    }
+
     toast(snapshots.length + ' customer' + (snapshots.length === 1 ? '' : 's') + ' restored.');
     logActivity_('info', 'Undo applied', 'Restored ' + snapshots.length + ' customer' + (snapshots.length === 1 ? '' : 's') + ' to "' + currentSheet + '".' +
       (anyRemarks ? ' Note: audit dates on restored remarks may not exactly match the originals.' : ''));

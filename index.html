@@ -404,6 +404,33 @@
   .hdr-action-btn.has-error .hdr-action-badge{background:#E4544A;}
   .hdr-action-btn.ring svg{animation:hdr-bell-ring .55s ease;transform-origin:50% 15%;}
 
+  /* Deleted/Undo-data button — separate from the bell and the action
+     button. Filtered to just the entries that deleted a customer (single
+     or bulk) and still carry undo data, so a person can see everything
+     that's currently restorable, and clear that undo/snapshot data out
+     (freeing storage, both this browser's localStorage and the backend's
+     hidden `_ActivityUndoData` sheet) without having to wipe the whole
+     Activity Log to do it. Visually identical to the bell/action
+     buttons; its badge counts how many deleted-record entries currently
+     hold undo data. */
+  .hdr-deleted-btn{
+    position:relative;display:flex;align-items:center;justify-content:center;
+    width:32px;height:32px;border-radius:9px;flex-shrink:0;
+    background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);
+    color:#B7C0E8;cursor:pointer;padding:0;touch-action:manipulation;
+    transition:background var(--dur-2) var(--ease-out),border-color var(--dur-2) var(--ease-out),color var(--dur-2) var(--ease-out),transform var(--dur-1) var(--ease-out);
+  }
+  .hdr-deleted-btn:hover{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.26);color:#fff;}
+  .hdr-deleted-btn:active{transform:scale(.92);}
+  .hdr-deleted-btn svg{width:16px;height:16px;display:block;}
+  .hdr-deleted-btn-badge{
+    position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;padding:0 4px;
+    display:none;align-items:center;justify-content:center;
+    background:var(--accent-dark);color:#fff;border:2px solid var(--panel);
+    border-radius:9px;font-size:9.5px;font-weight:800;line-height:1;
+    font-family:'JetBrains Mono',monospace;
+  }
+
   /* ---- Activity log modal — reuses the .sync-item look/feel but with
      a type-colored icon chip (success/error/warning/info) per entry. ---- */
   .activity-list{display:flex;flex-direction:column;gap:8px;max-height:56vh;overflow-y:auto;}
@@ -1417,7 +1444,7 @@
     }
     .hdr-clock-time{font-size:17px;}
     .hdr-clock-date{font-size:10px;margin-top:0;}
-    .hdr-bell, .hdr-sync-btn{width:28px;height:28px;}
+    .hdr-bell, .hdr-sync-btn, .hdr-deleted-btn{width:28px;height:28px;}
 
     /* Header status-counts row: the chips are already full-width and
        self-wrapping (see base rule), so mobile just needs a touch
@@ -1624,7 +1651,7 @@
     .hdr-clock-wrap{margin-top:0;padding-top:4px;gap:6px;}
     .hdr-clock-time{font-size:15px;}
     .hdr-clock-date{font-size:9px;}
-    .hdr-bell, .hdr-sync-btn{width:26px;height:26px;}
+    .hdr-bell, .hdr-sync-btn, .hdr-deleted-btn{width:26px;height:26px;}
 
     .toolbar{padding:5px 6px;margin-bottom:4px;}
   }
@@ -1634,7 +1661,7 @@
   @media(max-width:480px){
     .hdr-clock-time{font-size:17px;}
     .hdr-clock-date{font-size:11px;}
-    .hdr-bell, .hdr-sync-btn{width:28px;height:28px;}
+    .hdr-bell, .hdr-sync-btn, .hdr-deleted-btn{width:28px;height:28px;}
     .hdr-bell svg, .hdr-sync-btn svg{width:14px;height:14px;}
   }
 
@@ -1720,6 +1747,15 @@
             <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
           </svg>
           <span class="hdr-bell-badge" id="hdrBellBadge">0</span>
+        </button>
+        <button class="hdr-deleted-btn" id="hdrDeletedBtn" onclick="openDeletedLog()" title="Deleted records / undo data">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            <line x1="10" y1="11" x2="10" y2="17"></line>
+            <line x1="14" y1="11" x2="14" y2="17"></line>
+          </svg>
+          <span class="hdr-deleted-btn-badge" id="hdrDeletedBadge">0</span>
         </button>
       </div>
     </div>
@@ -2052,6 +2088,29 @@
   </div>
 </div>
 
+<div class="overlay" id="deletedOverlay">
+  <div class="modal activity-modal">
+    <div class="modal-head">
+      <div>
+        <h2>Deleted Records</h2>
+        <div class="activity-modal-meta">Every single or bulk customer delete that still has undo data, newest first. Restore one from here, or clear the undo data to free up storage.</div>
+      </div>
+      <button class="modal-close" onclick="closeDeletedLog()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="deletedList" class="activity-list"></div>
+    </div>
+    <div class="modal-foot">
+      <div class="left">
+        <button class="activity-clear-btn" id="deletedClearBtn" onclick="clearUndoData_()">Clear undo data</button>
+      </div>
+      <div class="right">
+        <button class="btn primary" onclick="closeDeletedLog()">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="confirmOverlay">
   <div class="modal confirm-modal" id="confirmModalEl">
     <div class="modal-body">
@@ -2116,6 +2175,12 @@
   // independently of each other.
   let actionUnread_ = 0;
   let actionModalOpen_ = false;
+  // "Deleted Records" modal — same underlying activityLog_ too, filtered
+  // to deletedRecordEntries_() at render time. No unread counter (see the
+  // note on updateDeletedBadge_ above) — just an open flag so
+  // logActivity_/syncActivityLog_/performUndo_ know to keep this view
+  // live while it's on screen, same as the other two.
+  let deletedModalOpen_ = false;
   // Which entries (by id) are currently expanded to show their detail
   // (e.g. the actual list of unmatched/failed customer names) — kept in
   // memory only (not persisted), reset each time the modal is closed.
@@ -2133,6 +2198,7 @@
     }catch(e){ activityLog_ = []; activityUnread_ = 0; actionUnread_ = 0; }
     updateActivityBadge_();
     updateActionBadge_();
+    updateDeletedBadge_();
   }
 
   function saveActivityLog_(){
@@ -2234,25 +2300,82 @@
   // encodeURIComponent'd). Each chunk carries its own opId so a retried
   // chunk after a timeout is deduped by the backend instead of being
   // stored twice — see withIdempotency_ in the Apps Script backend.
-  // Best-effort only: this device's OWN local copy already has the full
-  // snapshots (saved above, before this ever runs) and can undo instantly
-  // regardless of whether this upload succeeds — a failure here only
-  // means OTHER devices won't be able to undo this particular entry from
-  // the shared log until it's retried by a future action.
+  //
+  // STORAGE CAP: MAX_UNDO_CHUNKS_PER_ENTRY bounds how many rows this
+  // upload can ever write into the backend's hidden `_ActivityUndoData`
+  // sheet for ONE entry (see the matching constant of the same name in
+  // Code.gs). Without a cap, a delete of thousands of customers with long
+  // remark histories could spray thousands of rows into that sheet and
+  // never shrink again. If the snapshot list doesn't fit in
+  // MAX_UNDO_CHUNKS_PER_ENTRY chunks at UNDO_CHUNK_RAW_CHARS each, whole
+  // records are dropped off the END of the list (never a record cut in
+  // half — that would produce unparseable JSON) until what's left fits,
+  // and the dropped count is uploaded alongside the data so a device that
+  // later reassembles it can tell the person "N of M restored" instead of
+  // a restore that just looks incomplete with no explanation. This ONLY
+  // affects the copy pushed to the SHARED cross-device log — this
+  // device's own local copy (activityLog_, saved before this ever runs)
+  // always keeps every snapshot regardless, so Undo on THIS device is
+  // never affected by the cap.
+  //
+  // RETRY ON FAILURE: previously a chunk upload that failed partway
+  // (flaky connection, cold start, momentary lock contention) was simply
+  // swallowed and never retried — the entry looked fine on the device
+  // that made the change, but its Undo button would permanently fail (or
+  // just look "missing", if zero chunks made it) on every other device,
+  // forever, with nothing left to trigger a retry. Any chunk that fails
+  // to upload is now queued in the same offline outbox used for ordinary
+  // activity pushes (see queueActivityOutboxItem_ / syncActivityOutbox_)
+  // so it's retried automatically once the connection/backend recovers,
+  // exactly like a queued push or undone-flag already was.
   const UNDO_CHUNK_RAW_CHARS = 2200;
+  const MAX_UNDO_CHUNKS_PER_ENTRY = 50;
   async function pushUndoSnapshotsChunked_(entryId, snapshots){
     if(!API_URL || manualOfflineMode_) return;
     try{
-      const json = JSON.stringify(snapshots);
+      let list = snapshots;
+      let json = JSON.stringify(list);
+      const budgetChars = UNDO_CHUNK_RAW_CHARS * MAX_UNDO_CHUNKS_PER_ENTRY;
+      let truncatedCount = 0;
+      if(json.length > budgetChars){
+        // Keep whole records only, in original order, up to the budget —
+        // see the STORAGE CAP note above.
+        const kept = [];
+        let size = 2; // account for the wrapping [ ]
+        for(let i = 0; i < list.length; i++){
+          const piece = (kept.length ? ',' : '') + JSON.stringify(list[i]);
+          if(size + piece.length > budgetChars) break;
+          kept.push(list[i]);
+          size += piece.length;
+        }
+        truncatedCount = list.length - kept.length;
+        json = JSON.stringify(kept);
+      }
       const chunks = [];
       for(let i = 0; i < json.length; i += UNDO_CHUNK_RAW_CHARS){
         chunks.push(json.slice(i, i + UNDO_CHUNK_RAW_CHARS));
       }
       for(let i = 0; i < chunks.length; i++){
-        await apiCallJson_('pushActivityUndoChunk', {
-          entryId: entryId, chunkIndex: i, chunkCount: chunks.length, data: chunks[i],
-          opId: entryId + '_undochunk_' + i
-        });
+        const opId = entryId + '_undochunk_' + i;
+        try{
+          await apiCallJson_('pushActivityUndoChunk', {
+            entryId: entryId, chunkIndex: i, chunkCount: chunks.length, data: chunks[i],
+            truncatedCount: truncatedCount, opId: opId
+          });
+        }catch(err){
+          // RETRY ON FAILURE — see note above. Queue this chunk (and every
+          // chunk after it — they're order-dependent for a clean
+          // reassembly, so there's no point racing the rest ahead) and
+          // stop; the outbox will pick up from here.
+          for(let j = i; j < chunks.length; j++){
+            queueActivityOutboxItem_({
+              kind: 'undoChunk', entryId: entryId, chunkIndex: j, chunkCount: chunks.length,
+              data: chunks[j], truncatedCount: truncatedCount, opId: entryId + '_undochunk_' + j
+            }, true);
+          }
+          syncActivityOutbox_();
+          break;
+        }
       }
     }catch(err){
       // best-effort — see note above
@@ -2337,6 +2460,11 @@
             await apiCallJson_('pushActivity', { entry: item.entry, opId: item.opId });
           } else if(item.kind === 'undone'){
             await apiCallJson_('setActivityUndone', { id: item.id, undone: true, opId: item.opId });
+          } else if(item.kind === 'undoChunk'){
+            await apiCallJson_('pushActivityUndoChunk', {
+              entryId: item.entryId, chunkIndex: item.chunkIndex, chunkCount: item.chunkCount,
+              data: item.data, truncatedCount: item.truncatedCount, opId: item.opId
+            });
           }
           activityOutbox_.shift();
           saveActivityOutbox_();
@@ -2394,8 +2522,10 @@
         saveActivityLog_();
         updateActivityBadge_();
         updateActionBadge_();
+        updateDeletedBadge_();
         if(activityModalOpen_) renderActivityList_();
         if(actionModalOpen_) renderActionList_();
+        if(deletedModalOpen_) renderDeletedList_();
       }
     }catch(e){
       // offline, or an older/not-yet-redeployed backend that doesn't know
@@ -2469,8 +2599,10 @@
     saveActivityLog_();
     updateActivityBadge_();
     updateActionBadge_();
+    updateDeletedBadge_();
     if(activityModalOpen_) renderActivityList_();
     if(actionModalOpen_) renderActionList_();
+    if(deletedModalOpen_) renderDeletedList_();
     // BUG FIX (bulk delete/clear on a large branch losing its notification
     // AND its Undo button): a bulk delete/clear's `undo.snapshots` holds a
     // full copy of every affected customer (all fields + full remark
@@ -2553,6 +2685,31 @@
     }
   }
 
+  // Which entries count as "deleted records" for the header button/modal
+  // below — a single or bulk customer delete that still has undo data
+  // (once undone, or once its undo data is cleared, it drops off this
+  // list even though it stays in the full Activity Log).
+  function deletedRecordEntries_(){
+    return activityLog_.filter(e => e.undo && !e.undone && (e.undo.kind === 'recreate' || e.undo.kind === 'recreateMany'));
+  }
+
+  // Badge just shows a count — there's no "unread" concept here the way
+  // the bell/action buttons have one, since this view is really "what's
+  // currently restorable / taking up undo storage" rather than a feed of
+  // new events.
+  function updateDeletedBadge_(){
+    const btn = document.getElementById('hdrDeletedBtn');
+    const badge = document.getElementById('hdrDeletedBadge');
+    if(!btn || !badge) return;
+    const count = deletedRecordEntries_().length;
+    if(count > 0){
+      badge.style.display = 'flex';
+      badge.textContent = count > 99 ? '99+' : String(count);
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+
   function activityIconGlyph_(type){
     if(type === 'success') return '✓';
     if(type === 'error') return '!';
@@ -2583,6 +2740,20 @@
     if(!list) return;
     const issues = activityLog_.filter(e => e.type === 'error' || e.type === 'warning');
     renderEntriesInto_(list, issues, 'Nothing needs action right now — errors and warnings will show up here.');
+  }
+
+  // "Deleted Records" view — filtered to just entries with restorable
+  // customer-delete undo data (see deletedRecordEntries_ above). Reuses
+  // the same renderEntriesInto_ card renderer as the other two lists, so
+  // Undo works exactly the same way here as it does from the full
+  // Activity Log.
+  function renderDeletedList_(){
+    const list = document.getElementById('deletedList');
+    const clearBtn = document.getElementById('deletedClearBtn');
+    if(!list) return;
+    const entries = deletedRecordEntries_();
+    if(clearBtn) clearBtn.disabled = !entries.length;
+    renderEntriesInto_(list, entries, 'No deleted records with undo data right now.');
   }
 
   // Shared entry-array → HTML renderer used by both renderActivityList_
@@ -2653,6 +2824,7 @@
     else activityExpanded_.add(id);
     if(activityModalOpen_) renderActivityList_();
     if(actionModalOpen_) renderActionList_();
+    if(deletedModalOpen_) renderDeletedList_();
   }
 
   async function copyActivityDetail_(id){
@@ -2726,6 +2898,54 @@
     unlockBodyScroll();
   }
 
+  function openDeletedLog(){
+    deletedModalOpen_ = true;
+    updateDeletedBadge_();
+    renderDeletedList_();
+    document.getElementById('deletedOverlay').classList.add('open');
+    lockBodyScroll();
+    // Same reasoning as openActivityLog()/openActionLog() — pull the
+    // shared log fresh so a delete made on another device shows up here
+    // too, not just what this browser did itself.
+    syncActivityLog_();
+  }
+
+  function closeDeletedLog(){
+    deletedModalOpen_ = false;
+    activityExpanded_.clear();
+    document.getElementById('deletedOverlay').classList.remove('open');
+    unlockBodyScroll();
+  }
+
+  // Clears every currently-restorable delete's undo data — both this
+  // device's local copy (activityLog_/localStorage) and the shared
+  // server copy (the `undo` column in `_ActivityLog` plus every chunk
+  // row in the hidden `_ActivityUndoData` sheet — see
+  // clearActivityUndoData in the Apps Script backend). The activity
+  // entries themselves (title, detail, timestamp) are left in place —
+  // this only removes the ability to undo them and the (often large)
+  // snapshot data that ability requires, which is the actual storage
+  // cost this button exists to let someone reclaim on demand rather than
+  // waiting for ACTIVITY_LOG_MAX_ROWS to eventually trim old entries off
+  // the end.
+  async function clearUndoData_(){
+    const entries = deletedRecordEntries_();
+    if(!entries.length){ toast('No undo data to clear.'); return; }
+    if(!await appConfirm('Clear undo data for ' + entries.length + ' deleted record' + (entries.length === 1 ? '' : 's') + '? This frees up storage but means none of them can be undone anymore — for everyone, on every device. This can\'t be undone.', { danger: true, title: 'Clear undo data?', confirmText: 'Clear undo data' })) return;
+    activityLog_.forEach(e => {
+      if(e.undo && (e.undo.kind === 'recreate' || e.undo.kind === 'recreateMany')) e.undo = undefined;
+    });
+    saveActivityLog_();
+    renderDeletedList_();
+    updateDeletedBadge_();
+    if(activityModalOpen_) renderActivityList_();
+    if(actionModalOpen_) renderActionList_();
+    if(API_URL){
+      try{ await apiCallJson_('clearActivityUndoData', {}); }
+      catch(e){ toast('Cleared locally, but could not clear it on the shared log — try again once you\'re online.'); }
+    }
+  }
+
   async function clearActivityLog_(){
     if(!activityLog_.length) return;
     if(!await appConfirm('Clear the entire activity log? This clears it for everyone on every device, and can\'t be undone.', { danger: true, title: 'Clear activity log?', confirmText: 'Clear log' })) return;
@@ -2736,8 +2956,10 @@
     saveActivityLog_();
     updateActivityBadge_();
     updateActionBadge_();
+    updateDeletedBadge_();
     renderActivityList_();
     if(actionModalOpen_) renderActionList_();
+    if(deletedModalOpen_) renderDeletedList_();
     if(API_URL){
       try{ await apiCallJson_('clearActivity', {}); }
       catch(e){ toast('Cleared locally, but could not clear the shared log — try again once you\'re online.'); }
@@ -2810,6 +3032,15 @@
         const res = await apiCallJsonRead_('getActivityUndoData', { entryId: entry.id });
         if(res && res.data){
           u.snapshots = JSON.parse(res.data);
+          // STORAGE CAP note (see pushUndoSnapshotsChunked_ in the Apps
+          // Script backend / index.html): the shared copy only keeps up to
+          // MAX_UNDO_CHUNKS_PER_ENTRY chunks' worth of records, so on a
+          // very large bulk delete this may be fewer records than were
+          // actually deleted. Say so up front rather than letting the
+          // restore just look incomplete afterward with no explanation.
+          if(res.truncatedCount){
+            toast(u.snapshots.length + ' of ' + (u.snapshots.length + res.truncatedCount) + ' can be restored from this device — the rest were only kept on the device that made the change.');
+          }
         } else {
           toast('Could not undo: the saved data for this action is missing or already used.');
           return;
@@ -2829,8 +3060,10 @@
 
       entry.undone = true;
       saveActivityLog_();
+      updateDeletedBadge_();
       if(activityModalOpen_) renderActivityList_();
       if(actionModalOpen_) renderActionList_();
+      if(deletedModalOpen_) renderDeletedList_();
       // Push the undone flag to the shared log too, using a fresh opId
       // (NOT entry.id) so it isn't deduped against the original push —
       // see pushActivityUndoneToServer_ above for why that distinction

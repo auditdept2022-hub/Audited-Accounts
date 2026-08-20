@@ -2225,6 +2225,40 @@
     }
   }
 
+  // Uploads a large undo-snapshot array (see the note on logActivity_
+  // above) AFTER its slim activity entry has already been pushed, split
+  // into several requests each safely under the URL/cell size ceiling.
+  // Raw chunk length is kept well under MAX_CHUNK_ENCODED_CHARS to leave
+  // headroom for JSON escaping and URL-encoding expansion (peso signs,
+  // multi-line remarks, etc. can each expand several-fold once
+  // encodeURIComponent'd). Each chunk carries its own opId so a retried
+  // chunk after a timeout is deduped by the backend instead of being
+  // stored twice — see withIdempotency_ in the Apps Script backend.
+  // Best-effort only: this device's OWN local copy already has the full
+  // snapshots (saved above, before this ever runs) and can undo instantly
+  // regardless of whether this upload succeeds — a failure here only
+  // means OTHER devices won't be able to undo this particular entry from
+  // the shared log until it's retried by a future action.
+  const UNDO_CHUNK_RAW_CHARS = 2200;
+  async function pushUndoSnapshotsChunked_(entryId, snapshots){
+    if(!API_URL || manualOfflineMode_) return;
+    try{
+      const json = JSON.stringify(snapshots);
+      const chunks = [];
+      for(let i = 0; i < json.length; i += UNDO_CHUNK_RAW_CHARS){
+        chunks.push(json.slice(i, i + UNDO_CHUNK_RAW_CHARS));
+      }
+      for(let i = 0; i < chunks.length; i++){
+        await apiCallJson_('pushActivityUndoChunk', {
+          entryId: entryId, chunkIndex: i, chunkCount: chunks.length, data: chunks[i],
+          opId: entryId + '_undochunk_' + i
+        });
+      }
+    }catch(err){
+      // best-effort — see note above
+    }
+  }
+
   // IMPORTANT: this call must use a DIFFERENT opId than the entry's own
   // id. setActivityUndone marks the SAME entry.id that pushActivity
   // already sent — if this reused entry.id as its opId, a retried
@@ -2329,10 +2363,33 @@
     try{
       const res = await apiCallJsonRead_('listActivity', {});
       if(res && Array.isArray(res.entries)){
+        // BUG FIX: this used to replace activityLog_ outright with the
+        // server's list. For most entries that's fine (server is the
+        // source of truth), but a large bulk delete/clear's `undo`
+        // deliberately does NOT carry its full snapshots on the server
+        // copy (see the note on logActivity_ above — they're uploaded
+        // separately in chunks instead, to stay under the request/cell
+        // size limit). Blindly overwriting would throw away the fast,
+        // already-local `undo.snapshots` this device kept for itself and
+        // force every future Undo of that entry to re-fetch and
+        // reassemble the chunks even on the very device that has them
+        // sitting right here in memory. Carry them forward by id instead.
+        const localSnapshotsById = {};
+        activityLog_.forEach(e => {
+          if(e && e.id && e.undo && Array.isArray(e.undo.snapshots) && e.undo.snapshots.length){
+            localSnapshotsById[e.id] = e.undo.snapshots;
+          }
+        });
         activityLog_ = res.entries
           .slice()
           .sort((a, b) => (b.ts || 0) - (a.ts || 0))
-          .slice(0, ACTIVITY_LOG_MAX);
+          .slice(0, ACTIVITY_LOG_MAX)
+          .map(e => {
+            if(e && e.undo && e.undo.chunkedEntryId && localSnapshotsById[e.id]){
+              e.undo.snapshots = localSnapshotsById[e.id];
+            }
+            return e;
+          });
         if(typeof res.version === 'number') lastKnownActivityVersion_ = res.version;
         saveActivityLog_();
         updateActivityBadge_();
@@ -2414,7 +2471,38 @@
     updateActionBadge_();
     if(activityModalOpen_) renderActivityList_();
     if(actionModalOpen_) renderActionList_();
-    pushActivityToServer_(entry); // fire-and-forget — see note above
+    // BUG FIX (bulk delete/clear on a large branch losing its notification
+    // AND its Undo button): a bulk delete/clear's `undo.snapshots` holds a
+    // full copy of every affected customer (all fields + full remark
+    // history). For a couple of rows that's tiny; for hundreds of rows it
+    // can run into hundreds of KB — way past what a single GET request (see
+    // apiUrl_ — every write here is a GET with its payload JSON-encoded
+    // into the URL) or a single spreadsheet cell can carry. Pushing that
+    // inline used to just fail silently, forever, on every retry — and the
+    // very next listActivity refresh (tab open, timer, reload) then
+    // OVERWROTE this local entry with the server's list, which never had
+    // it, making the toast and Undo button vanish even though the delete
+    // itself had gone through fine.
+    // Fix: this device's own local copy (activityLog_/localStorage, right
+    // above) always keeps the full snapshots — Undo still works instantly
+    // and offline right here. What gets PUSHED to the shared log strips
+    // out large snapshot sets and uploads them separately afterward, in
+    // small chunks (see pushUndoSnapshotsChunked_ below), so the push
+    // itself always stays small enough to actually succeed.
+    if(entry.undo && Array.isArray(entry.undo.snapshots) && entry.undo.snapshots.length){
+      const encodedLen = encodeURIComponent(JSON.stringify(entry.undo.snapshots)).length;
+      if(encodedLen > MAX_CHUNK_ENCODED_CHARS){
+        const snapshotsForLocal = entry.undo.snapshots;
+        const serverEntry = Object.assign({}, entry, {
+          undo: Object.assign({}, entry.undo, { snapshots: undefined, chunkedEntryId: true, snapshotCount: snapshotsForLocal.length })
+        });
+        pushActivityToServer_(serverEntry).then(() => pushUndoSnapshotsChunked_(entry.id, snapshotsForLocal));
+      } else {
+        pushActivityToServer_(entry); // fire-and-forget — see note above
+      }
+    } else {
+      pushActivityToServer_(entry); // fire-and-forget — see note above
+    }
 
     const bell = document.getElementById('hdrBellBtn');
     if(bell){
@@ -2710,6 +2798,28 @@
     }
     if(!await appConfirm('Undo: ' + (u.confirmLabel || entry.title) + '?', { title: 'Undo this action?', confirmText: 'Undo' })) return;
 
+    // A large bulk delete/clear's snapshots may have been too big to push
+    // inline (see the note on logActivity_) and were instead uploaded
+    // separately in chunks. If this device is the one that did the
+    // delete, `u.snapshots` is already here (kept locally in full) and
+    // this is a no-op. On any OTHER device, fetch and reassemble them now
+    // — only needed right at the moment of actually undoing, not on every
+    // activity-log sync.
+    if(u.kind === 'recreateMany' && !Array.isArray(u.snapshots) && u.chunkedEntryId){
+      try{
+        const res = await apiCallJsonRead_('getActivityUndoData', { entryId: entry.id });
+        if(res && res.data){
+          u.snapshots = JSON.parse(res.data);
+        } else {
+          toast('Could not undo: the saved data for this action is missing or already used.');
+          return;
+        }
+      }catch(err){
+        toast('Could not fetch the data needed to undo this — check your connection and try again.');
+        return;
+      }
+    }
+
     try{
       if(u.kind === 'update') await undoUpdateEntry_(u);
       else if(u.kind === 'recreate') await undoRecreateEntry_(u);
@@ -2839,14 +2949,36 @@
       return fields;
     });
 
-    const result = await apiCallJson_('batchCreateCustomer', { records });
-    const startRow = result.startRow;
-    const createdCount = typeof result.created === 'number' ? result.created : records.length;
+    // BUG FIX (undo of a large bulk delete/clear silently doing nothing):
+    // this used to send every record in ONE batchCreateCustomer call. A
+    // restore of a few rows fits fine, but hundreds of rows (e.g. an
+    // 860-customer branch clear) encodes to far more than a single GET
+    // request can carry (see MAX_CHUNK_ENCODED_CHARS / chunkByEncodedSize_
+    // above, the same limit that Import Accounts already has to respect)
+    // — that request would just fail, and with nothing to fall back to,
+    // Undo looked like it silently did nothing. Now the records are split
+    // into the same size-bounded chunks the import flow already uses, and
+    // sent one chunk at a time, accumulating startRow/created across all
+    // of them so the remark-restore loop below still lines up correctly.
+    const chunks = chunkByEncodedSize_(records, r => r, MAX_CHUNK_ENCODED_CHARS);
+    let startRow = null;
+    let createdCount = 0;
+    let allChunksAligned = true;
+    for(let ci = 0; ci < chunks.length; ci++){
+      const chunkRecords = chunks[ci];
+      const chunkResult = await apiCallJson_('batchCreateCustomer', { records: chunkRecords, opId: genId_() });
+      if(startRow === null) startRow = chunkResult.startRow;
+      const chunkCreated = typeof chunkResult.created === 'number' ? chunkResult.created : chunkRecords.length;
+      createdCount += chunkCreated;
+      if(chunkCreated !== chunkRecords.length) allChunksAligned = false;
+    }
     // Index alignment (startRow + i) is only trustworthy if EVERY record
-    // sent was actually created — see the note above. This should
-    // always hold now that blank-name snapshots are filtered out
-    // up-front, but this is the safety net if it somehow doesn't.
-    const alignmentTrustworthy = (createdCount === records.length);
+    // sent was actually created, IN ORDER, with no gaps between chunks —
+    // see the note above. This should always hold now that blank-name
+    // snapshots are filtered out up-front and each chunk lands
+    // contiguously right after the previous one, but this is the safety
+    // net if it somehow doesn't.
+    const alignmentTrustworthy = allChunksAligned && (createdCount === records.length);
 
     let anyRemarks = false;
     const remarkFailedNames = [];

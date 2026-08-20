@@ -483,9 +483,33 @@
   .activity-detail-more{font-size:11px;color:var(--muted-2);padding:3px 2px;}
   .activity-detail-action{margin-top:9px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer;}
   .activity-detail-action:hover{opacity:.9;}
-  .activity-detail-action.activity-undo-btn{background:var(--del);margin-right:6px;}
+  .activity-detail-action.activity-undo-btn{background:var(--del);margin-right:6px;display:inline-flex;align-items:center;gap:6px;}
+  /* Undo loading state — small spinner swaps in next to the label while
+     performUndo_() is running, and the button is disabled so a second
+     click can't fire mid-undo. Reuses the same spin keyframe as the
+     header refresh button. */
+  .undo-btn-spinner{
+    display:none;width:11px;height:11px;border-radius:50%;flex-shrink:0;
+    border:2px solid rgba(255,255,255,.45);border-top-color:#fff;
+  }
+  .activity-detail-action.activity-undo-btn.is-loading{opacity:.8;cursor:default;}
+  .activity-detail-action.activity-undo-btn.is-loading .undo-btn-spinner{display:inline-block;animation:hdr-sync-spin .7s linear infinite;}
   .activity-undone-note{margin-top:9px;font-size:11.5px;font-weight:700;color:var(--ok);}
   .ai-undone-pill{display:inline-block;font-size:9.5px;font-weight:700;color:var(--muted);background:var(--line);border-radius:5px;padding:1px 6px;margin-left:6px;vertical-align:middle;text-transform:uppercase;letter-spacing:.3px;}
+
+  /* Undo-close animation — played on a card right after its Undo
+     finishes (see playUndoCloseAnimation_ in the script below). Starts
+     from the card's own measured height so the max-height transition has
+     a real starting point to animate from, then collapses it down to
+     nothing while fading/shrinking — used both for a card that's about
+     to disappear entirely (Deleted Records — the entry no longer
+     qualifies once undone) and one that's about to settle into its
+     "✓ Undone" state in place (Activity Log / Action Needed). */
+  .activity-item.undo-closing{
+    transition:max-height .28s var(--ease-out),opacity .22s var(--ease-out),transform .22s var(--ease-out),margin .28s var(--ease-out),padding .28s var(--ease-out);
+    overflow:hidden;opacity:0;transform:scale(.97);
+    max-height:0 !important;margin-top:0 !important;margin-bottom:0 !important;padding-top:0 !important;padding-bottom:0 !important;
+  }
 
   /* ---- Redesigned confirmation dialog — replaces the browser's native
      confirm() popup (which can't be styled at all) with one that matches
@@ -1741,13 +1765,6 @@
           </svg>
           <span class="hdr-action-badge" id="hdrActionBadge">0</span>
         </button>
-        <button class="hdr-bell" id="hdrBellBtn" onclick="openActivityLog()" title="Activity log">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
-            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-          </svg>
-          <span class="hdr-bell-badge" id="hdrBellBadge">0</span>
-        </button>
         <button class="hdr-deleted-btn" id="hdrDeletedBtn" onclick="openDeletedLog()" title="Deleted records / undo data">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="3 6 5 6 21 6"></polyline>
@@ -1756,6 +1773,13 @@
             <line x1="14" y1="11" x2="14" y2="17"></line>
           </svg>
           <span class="hdr-deleted-btn-badge" id="hdrDeletedBadge">0</span>
+        </button>
+        <button class="hdr-bell" id="hdrBellBtn" onclick="openActivityLog()" title="Activity log">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+          </svg>
+          <span class="hdr-bell-badge" id="hdrBellBadge">0</span>
         </button>
       </div>
     </div>
@@ -2185,6 +2209,11 @@
   // (e.g. the actual list of unmatched/failed customer names) — kept in
   // memory only (not persisted), reset each time the modal is closed.
   let activityExpanded_ = new Set();
+  // Which entries (by id) are currently mid-Undo — drives the spinner/
+  // disabled state on their Undo button (see renderEntriesInto_) and is
+  // checked by performUndo_ itself so a second click while one's already
+  // running is a no-op instead of racing the same undo twice.
+  let undoInProgress_ = new Set();
 
   function loadActivityLog_(){
     try{
@@ -2773,6 +2802,7 @@
       // elsewhere (e.g. when asking for help), even if there's nothing
       // else to show.
       const canUndo = !!(e.undo && !e.undone);
+      const isUndoing = undoInProgress_.has(e.id);
       const hasDetail = (e.groups && e.groups.length) || e.action || (e.type === 'error' && e.detail) || canUndo || e.undone;
       const expanded = activityExpanded_.has(e.id);
       const totalItems = (e.groups || []).reduce((n, g) => n + g.items.length, 0);
@@ -2798,11 +2828,12 @@
         }).join('')}
         ${e.action === 'openSync' ? `<button class="activity-detail-action" onclick="event.stopPropagation();openActivityLogAction_('${e.id}')">View sync</button>` : ''}
         ${e.type === 'error' && e.detail ? `<button class="activity-detail-action" onclick="event.stopPropagation();copyActivityDetail_('${e.id}')">Copy error</button>` : ''}
-        ${canUndo ? `<button class="activity-detail-action activity-undo-btn" onclick="event.stopPropagation();performUndo_('${e.id}')">↩ Undo</button>` : ''}
+        ${canUndo ? `<button class="activity-detail-action activity-undo-btn${isUndoing ? ' is-loading' : ''}" ${isUndoing ? 'disabled' : ''} onclick="event.stopPropagation();performUndo_('${e.id}')"><span class="undo-btn-spinner"></span><span class="undo-btn-label">${isUndoing ? 'Undoing…' : '↩ Undo'}</span></button>` : ''}
         ${e.undone ? `<div class="activity-undone-note">✓ Undone</div>` : ''}
       </div>` : '';
 
       return `<div class="activity-item type-${escapeHtml(e.type)}${hasDetail ? ' has-detail' : ''}${expanded ? ' expanded' : ''}"
+                   data-entry-id="${escapeHtml(e.id)}"
                    ${hasDetail ? `onclick="toggleActivityDetail_('${e.id}')"` : ''}>
         <span class="ai-icon">${activityIconGlyph_(e.type)}</span>
         <div class="ai-body">
@@ -3007,7 +3038,7 @@
   // show a blank or different audit date than the original.
   async function performUndo_(id){
     const entry = activityLog_.find(e => e.id === id);
-    if(!entry || !entry.undo || entry.undone) return;
+    if(!entry || !entry.undo || entry.undone || undoInProgress_.has(id)) return;
     const u = entry.undo;
     const branchScoped = (u.kind === 'update' || u.kind === 'recreate' || u.kind === 'recreateMany');
     if(branchScoped && u.branch && u.branch !== currentSheet){
@@ -3019,6 +3050,13 @@
       return;
     }
     if(!await appConfirm('Undo: ' + (u.confirmLabel || entry.title) + '?', { title: 'Undo this action?', confirmText: 'Undo' })) return;
+
+    // Mark this entry as mid-undo and re-render right away, BEFORE any of
+    // the awaits below — this is what swaps the button into its spinner/
+    // "Undoing…" state (see renderEntriesInto_) for the whole operation,
+    // not just the final write.
+    undoInProgress_.add(id);
+    refreshUndoViews_();
 
     // A large bulk delete/clear's snapshots may have been too big to push
     // inline (see the note on logActivity_) and were instead uploaded
@@ -3042,10 +3080,14 @@
             toast(u.snapshots.length + ' of ' + (u.snapshots.length + res.truncatedCount) + ' can be restored from this device — the rest were only kept on the device that made the change.');
           }
         } else {
+          undoInProgress_.delete(id);
+          refreshUndoViews_();
           toast('Could not undo: the saved data for this action is missing or already used.');
           return;
         }
       }catch(err){
+        undoInProgress_.delete(id);
+        refreshUndoViews_();
         toast('Could not fetch the data needed to undo this — check your connection and try again.');
         return;
       }
@@ -3056,22 +3098,62 @@
       else if(u.kind === 'recreate') await undoRecreateEntry_(u);
       else if(u.kind === 'recreateMany') await undoRecreateManyEntry_(u);
       else if(u.kind === 'renameSheet') await undoRenameSheetEntry_(u);
-      else { toast('This action can\'t be undone.'); return; }
+      else {
+        undoInProgress_.delete(id);
+        refreshUndoViews_();
+        toast('This action can\'t be undone.');
+        return;
+      }
 
       entry.undone = true;
+      activityExpanded_.delete(id); // close its expanded detail too
+      undoInProgress_.delete(id);
       saveActivityLog_();
       updateDeletedBadge_();
-      if(activityModalOpen_) renderActivityList_();
-      if(actionModalOpen_) renderActionList_();
-      if(deletedModalOpen_) renderDeletedList_();
+      // Play the closing animation on whichever open modal's card is
+      // showing this entry right now, THEN refresh — the refresh is what
+      // actually removes it from Deleted Records (no longer qualifies
+      // once undone) or settles it into its "✓ Undone" state in the
+      // Activity Log / Action Needed views, so it has to happen after the
+      // animation has visually finished collapsing the card, not before.
+      playUndoCloseAnimation_(id, refreshUndoViews_);
       // Push the undone flag to the shared log too, using a fresh opId
       // (NOT entry.id) so it isn't deduped against the original push —
       // see pushActivityUndoneToServer_ above for why that distinction
       // matters here.
       pushActivityUndoneToServer_(entry.id);
     }catch(err){
+      undoInProgress_.delete(id);
+      refreshUndoViews_();
       toast('Undo failed: ' + err.message);
     }
+  }
+
+  // Shared "re-render whichever of the three activity views is currently
+  // open" helper — used throughout performUndo_ above so every state
+  // change (spinner on, spinner off, done) shows up immediately in
+  // whichever modal the person is actually looking at.
+  function refreshUndoViews_(){
+    if(activityModalOpen_) renderActivityList_();
+    if(actionModalOpen_) renderActionList_();
+    if(deletedModalOpen_) renderDeletedList_();
+  }
+
+  // Plays a shrink/fade-out animation on entry id's card, if it's
+  // currently on screen, then calls done() once it's visually finished
+  // collapsing (or immediately, if the card isn't in the DOM at all —
+  // e.g. its modal isn't open). Purely visual: the actual list/badge
+  // state has already been updated by the caller before this runs: this
+  // just gives the transition something to look at instead of the row
+  // vanishing or relabeling itself instantly.
+  function playUndoCloseAnimation_(id, done){
+    const el = document.querySelector('.activity-item[data-entry-id="' + id + '"]');
+    if(!el){ done(); return; }
+    el.style.maxHeight = el.scrollHeight + 'px';
+    el.style.overflow = 'hidden';
+    void el.offsetHeight; // force reflow so the transition below has a real starting height to animate from
+    el.classList.add('undo-closing');
+    setTimeout(done, 300);
   }
 
   // Re-queues the prior values as an ordinary update — same code path

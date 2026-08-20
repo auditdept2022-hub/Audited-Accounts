@@ -1411,6 +1411,77 @@
   .rec.is-pending::before{background:var(--rstr);}
   .rec.is-conflict::before{background:var(--del);}
 
+  /* ---------- Desktop only: move the icon toolbar (refresh / action /
+     deleted / bell) down so it sits beside the account-status strip
+     instead of stacked under the clock, and let that strip scroll
+     horizontally instead of wrapping/squeezing once it has more chips
+     than fit. Scoped to min-width:901px so tablet (<=900px) and phone
+     (<=640px) — already handled by their own blocks below — are
+     completely untouched, per request.
+
+     How it works: .hdr-clock-wrap is pulled out of the normal header
+     flow and stretched (via top/bottom insets matching .topband's own
+     padding) to the full height of the header. Its own
+     justify-content:space-between then does the rest: the clock stays
+     pinned to the top (next to the brand/title row) and .hdr-icon-row
+     drops to the bottom (next to the status-count chips row) — no
+     magic pixel math needed to line the two rows up, they both simply
+     sit flush with .topband's own top/bottom padding. .hdr-status-counts
+     gets matching right padding so its chips never run under the
+     icons, and switches from wrapping to a single scrollable row (same
+     edge-fade treatment already used on mobile — see updateStatusCountsEdges_
+     in the script, which isn't screen-size gated so it already keeps
+     this in sync). */
+  @media(min-width:901px){
+    .hdr-clock-wrap{
+      position:absolute;
+      top:calc(10px + var(--safe-t));
+      right:20px;
+      bottom:8px;
+      gap:0;
+      justify-content:space-between;
+    }
+    .hdr-status-counts{
+      flex-wrap:nowrap;
+      overflow-x:auto;
+      -webkit-overflow-scrolling:touch;
+      scrollbar-width:none;
+      /* NOTE: this reserves the icon-toolbar's width with margin-right,
+         not padding-right. A scroll container's padding only opens up
+         a gap at the very END of its scrollable content (i.e. only
+         once scrolled all the way right) — the visible viewport itself
+         stays exactly as wide as the element's own box the whole time.
+         Since this element still spans the full header width, a
+         padding-only reserve let chips scroll INTO view directly under
+         the icons at any scroll position short of "fully scrolled".
+         margin-right actually shrinks the element's own box (flex-basis
+         is a hypothetical size here, not a hard floor, so the default
+         flex-shrink:1 lets the browser subtract this margin from it),
+         so the chips can never physically render under the icons no
+         matter where the strip is scrolled to. */
+      margin-right:172px;
+    }
+    .hdr-status-counts::-webkit-scrollbar{display:none;}
+    .hdr-status-counts .sc-item{flex-shrink:0;}
+    /* Same scroll-edge fade as the mobile treatment (see the
+       max-width:640px block below) — updateStatusCountsEdges_() already
+       toggles .scrollable/.at-start/.at-end regardless of screen size,
+       this just gives desktop matching CSS to react to it now that the
+       strip can actually overflow here too instead of only wrapping. */
+    .hdr-status-counts.scrollable{
+      -webkit-mask-image:linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+      mask-image:linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+    }
+    .hdr-status-counts.scrollable.at-start{
+      -webkit-mask-image:linear-gradient(to right, #000, #000 calc(100% - 16px), transparent);
+      mask-image:linear-gradient(to right, #000, #000 calc(100% - 16px), transparent);
+    }
+    .hdr-status-counts.scrollable.at-end{
+      -webkit-mask-image:linear-gradient(to right, transparent, #000 16px, #000);
+      mask-image:linear-gradient(to right, transparent, #000 16px, #000);
+    }
+  }
+
   /* ---------- Responsive: tablet ---------- */
   @media(max-width:900px){
     .topband{flex-wrap:wrap;row-gap:6px;padding:calc(10px + var(--safe-t)) 16px 8px;}

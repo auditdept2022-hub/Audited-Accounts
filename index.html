@@ -7975,6 +7975,12 @@
     }
     isLoading = true;
     updateRefreshLock_(true);
+    // Counts as satisfying the periodic forced-reload safety net (see
+    // AUTO_REFRESH_FORCE_MS below) — any real full list fetch, whatever
+    // triggered it, is just as good at picking up a direct-in-Sheets
+    // formatting change as the dedicated forced tick would have been, so
+    // there's no need to also force a redundant one shortly after.
+    lastForcedReloadAt_ = Date.now();
 
     // Captured now, not read again after the await below — if the user
     // switches branches while this request is in flight, currentSheet
@@ -9741,17 +9747,32 @@
         // remark, or a history edit), and — since the new remark's full
         // text is the thing people actually want to check later — puts
         // it in an expandable group instead of truncating it away.
-        const changedFieldLabels = Object.keys(fields)
-          .filter(k => k !== 'marker' && normForCompare_(str_(fields[k])) !== normForCompare_(c ? str_(c[k]) : ''))
+        // BUG FIX: this used to recompute "what changed" by comparing
+        // `fields` against `c` right here — but `c` is the SAME object
+        // reference that applyOptimisticUpdate_ (called inside
+        // queueOrSend_ above) already mutated in place to the NEW values,
+        // for every field including the color marker. So this comparison
+        // was really "new value vs. new value" and was almost always
+        // false — which is exactly why the log only ever seemed to catch
+        // remark changes (tracked separately via remark/currentEdit/
+        // historyEdit, never diffed against `c`) and silently dropped
+        // every plain field edit and every color-marker change. Reusing
+        // item.changedKeys — computed further up, BEFORE queueOrSend_
+        // touched `c` — and item.snapshot for the "before" values fixes
+        // this for every field, not just the marker.
+        const changedFieldLabels = (item.changedKeys || [])
+          .filter(k => k !== 'marker')
           .map(fieldLabel_);
-        const markerChanged = c && (fields.marker || '') !== (c.marker || '');
+        const markerChanged = (item.changedKeys || []).includes('marker');
+        const markerFrom = item.snapshot ? (item.snapshot.marker || '') : '';
+        const markerTo = fields.marker || '';
 
         const summaryParts = [];
         if(remark) summaryParts.push('added a new remark');
         if(currentEdit !== undefined) summaryParts.push('edited the current remark');
         if(historyEdit !== undefined) summaryParts.push('edited the remark history');
         if(changedFieldLabels.length) summaryParts.push(`updated ${changedFieldLabels.length} field${changedFieldLabels.length === 1 ? '' : 's'} (${changedFieldLabels.join(', ')})`);
-        if(markerChanged) summaryParts.push('changed the color marker');
+        if(markerChanged) summaryParts.push(`changed the color marker (${markColorLabel_(markerFrom)} → ${markColorLabel_(markerTo)})`);
         const detail = summaryParts.length ? summaryParts.join('; ') + '.' : 'Saved with no detected changes.';
 
         const groups = [];
@@ -9993,6 +10014,27 @@
   const AUTO_REFRESH_MS = 10 * 1000;
   const AUTO_REFRESH_JITTER_MS = 3 * 1000;
   let versionCheckInFlight_ = false;
+  // BUG FIX (color marker slow/never appearing across devices): the cheap
+  // version-check fast path above is a huge win for ordinary edits, but
+  // it depends entirely on the backend's version counter — and that
+  // counter can ONLY be bumped from code that runs on a real cell VALUE
+  // edit (see clearListCache/bumpListVersion_ in Code.gs). Recoloring a
+  // row's background directly in the Sheets UI (rather than through the
+  // app's own color swatches) is a FORMATTING-only change, which Google
+  // Apps Script's onEdit trigger never fires for at all — a hard
+  // platform limitation, not something this app can detect. That meant
+  // the version check would report "nothing changed" forever after a
+  // direct-in-Sheets recolor, no matter how long you waited, since
+  // nothing ever told it otherwise.
+  //
+  // This forces a REAL full list fetch periodically regardless of what
+  // the version check says, specifically to catch exactly that kind of
+  // invisible-to-the-version-counter change. Timed comfortably past the
+  // backend's list cache TTL (5 minutes — see CACHE_TTL_SECONDS in
+  // Code.gs) so this forced fetch reliably lands on a re-read of the
+  // live sheet rather than the same stale cached copy.
+  const AUTO_REFRESH_FORCE_MS = 6 * 60 * 1000;
+  let lastForcedReloadAt_ = 0;
   function scheduleAutoRefresh_(){
     setTimeout(autoRefreshTick_, AUTO_REFRESH_MS + Math.round(Math.random() * AUTO_REFRESH_JITTER_MS));
   }
@@ -10013,6 +10055,13 @@
     // already kicks a fresh loadData()/syncOutbox() the moment Offline
     // is switched back off).
     if(!isOnline_()) return;
+
+    if(Date.now() - lastForcedReloadAt_ >= AUTO_REFRESH_FORCE_MS){
+      lastForcedReloadAt_ = Date.now();
+      loadData();
+      return;
+    }
+
     if(versionCheckInFlight_) return; // previous check is still out there — don't stack another on top of it
 
     // PERFORMANCE: check the cheap version counter first (a few bytes,

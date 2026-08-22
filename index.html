@@ -3123,12 +3123,12 @@
   // branch-scoped this way (the old/new names are explicit in the
   // payload), so it's exempt from that check.
   //
-  // A known limitation, called out in the toast/log entry when it
-  // applies: recreating a deleted customer (single or bulk) can restore
-  // the exact remark text and history, but the backend has no writable
-  // "Date of Audit" field of its own — it's only ever derived from
-  // adding a fresh remark — so a restored row with existing remarks may
-  // show a blank or different audit date than the original.
+  // Recreating a deleted customer (single or bulk) restores the exact
+  // remark text, history, AND the original Date of Audit — updateCustomerFull
+  // takes dateOfAudit as an explicit param (see undoRecreateEntry_ /
+  // undoRecreateManyEntry_ below), so a restored row's audit date
+  // matches what it showed before deletion instead of being derived
+  // indirectly from adding a "fresh" remark.
   async function performUndo_(id){
     const entry = activityLog_.find(e => e.id === id);
     if(!entry || !entry.undo || entry.undone || undoInProgress_.has(id)) return;
@@ -3262,6 +3262,7 @@
       remark: null,
       auditor: null,
       currentEdit: u.revertCurrent,
+      currentEditDate: u.revertDate,
       historyEdit: u.revertHistory,
       status: 'pending',
       customerName: (u.afterSnapshot && u.afterSnapshot.customer) || null,
@@ -3299,13 +3300,13 @@
       await apiCallJson_('updateCustomerFull', {
         row: newRow, fields: {},
         currentEdit: snap.auditorRemarks || '', historyEdit: snap.previousRemarks || '',
+        dateOfAudit: snap.dateOfAudit || '',
         remark: '', auditor: '', opId: genId_()
       });
     }
     await loadData();
     toast('Customer restored.');
-    logActivity_('info', 'Undo applied', 'Restored "' + (snap.customer || 'the deleted customer') + '" to "' + currentSheet + '".' +
-      (hasRemarks ? ' Note: the audit date on the restored remark may not exactly match the original.' : ''));
+    logActivity_('info', 'Undo applied', 'Restored "' + (snap.customer || 'the deleted customer') + '" to "' + currentSheet + '".');
   }
 
   // Same idea as undoRecreateEntry_ but for many rows at once (a bulk
@@ -3401,6 +3402,7 @@
           await apiCallJson_('updateCustomerFull', {
             row: startRow + i, fields: {},
             currentEdit: snap.auditorRemarks || '', historyEdit: snap.previousRemarks || '',
+            dateOfAudit: snap.dateOfAudit || '',
             remark: '', auditor: '', opId: genId_()
           });
         }catch(err){
@@ -3443,8 +3445,7 @@
     }
 
     toast(snapshots.length + ' customer' + (snapshots.length === 1 ? '' : 's') + ' restored.');
-    logActivity_('info', 'Undo applied', 'Restored ' + snapshots.length + ' customer' + (snapshots.length === 1 ? '' : 's') + ' to "' + currentSheet + '".' +
-      (anyRemarks ? ' Note: audit dates on restored remarks may not exactly match the originals.' : ''));
+    logActivity_('info', 'Undo applied', 'Restored ' + snapshots.length + ' customer' + (snapshots.length === 1 ? '' : 's') + ' to "' + currentSheet + '".');
   }
 
   async function undoRenameSheetEntry_(u){
@@ -7406,11 +7407,16 @@
     }
     if(item.currentEdit !== undefined && item.currentEdit !== null){
       c.auditorRemarks = item.currentEdit;
-      // A remark that's just been edited down to blank shouldn't keep
-      // showing its old audit date — no remark = no date, same rule
-      // enforced server-side. (If `item.remark` also fires below, it
-      // sets its own fresh date, overriding this.)
-      if(isBlankRemark_(item.currentEdit)) c.dateOfAudit = '';
+      // BUG FIX: this used to only ever CLEAR the date (when the box
+      // was edited down to blank) and never SET it — so editing the
+      // remark to real text left whatever old Date of Audit was
+      // already there, or blank if there'd never been one. Editing to
+      // non-blank text now stamps today's date, same as adding a new
+      // remark used to before that flow was removed. (If `item.remark`
+      // also fires below, it sets its own fresh date, overriding this.)
+      c.dateOfAudit = item.currentEditDate !== undefined
+        ? item.currentEditDate
+        : (isBlankRemark_(item.currentEdit) ? '' : c.dateOfAudit);
     }
     if(item.remark){
       const today = todayStr_();
@@ -7827,6 +7833,15 @@
         fields: item.fields,
         historyEdit: item.historyEdit !== undefined ? item.historyEdit : null,
         currentEdit: item.currentEdit !== undefined ? item.currentEdit : null,
+        // BUG FIX: Date of Audit was only ever stamped server-side when
+        // `remark` (the old "add new remark" flow) was non-empty. Since
+        // remarks are now only ever edited via `currentEdit`, that path
+        // never touched the date at all, so it silently stayed blank on
+        // the sheet on every save. Sending the date explicitly — '' to
+        // clear it, a real date to stamp it, or omitted when the remark
+        // box wasn't touched at all — makes updateCustomerFull set it
+        // directly instead of trying to derive it from `remark`.
+        dateOfAudit: item.currentEditDate !== undefined ? item.currentEditDate : null,
         remark: item.remark || '',
         auditor: item.auditor || '',
         opId: item.id
@@ -10604,6 +10619,19 @@
         const currentEdit = normForCompare_(currentEditVal) !== normForCompare_(editorOriginalCurrent) ? currentEditVal : undefined;
         const historyEdit = normForCompare_(historyEditVal) !== normForCompare_(editorOriginalHistory) ? historyEditVal : undefined;
 
+        // BUG FIX: Date of Audit used to only ever get stamped by the
+        // (now-removed) "add new remark" flow, via item.remark below.
+        // Editing the Auditor Remarks box directly — the ONLY way to
+        // change a remark now — went through currentEdit instead, which
+        // never touched the date at all (except clearing it when the
+        // box was emptied out), so every save silently left Date of
+        // Audit untouched on the sheet. Editing the remark to any
+        // non-blank text now stamps today's date, same as adding a new
+        // remark used to; clearing it to blank still clears the date.
+        const currentEditDate = currentEdit !== undefined
+          ? (isBlankRemark_(currentEdit) ? '' : todayStr_())
+          : undefined;
+
         // BUG FIX: `fields` (from collectFieldValues()) always holds every
         // field in the edit grid, not just the one(s) actually edited —
         // the whole form is sent as a full overwrite. changedKeys is the
@@ -10626,6 +10654,7 @@
           remark: remark || null,
           auditor: auditor || null,
           currentEdit,
+          currentEditDate,
           historyEdit,
           changedKeys,
           status: 'pending',
@@ -10661,6 +10690,11 @@
         }
         const revertCurrent = (remark || currentEdit !== undefined) && item.snapshot ? item.snapshot.auditorRemarks : undefined;
         const revertHistory = historyEdit !== undefined && item.snapshot ? item.snapshot.previousRemarks : undefined;
+        // Same idea as revertCurrent: if this save stamped a new Date of
+        // Audit (currentEditDate), undoing it should put back whatever
+        // date was there before, not just leave today's date sitting on
+        // a reverted remark.
+        const revertDate = currentEditDate !== undefined && item.snapshot ? item.snapshot.dateOfAudit : undefined;
         const hasUndo = Object.keys(revertFields).length || revertCurrent !== undefined || revertHistory !== undefined;
         const undoDescriptor = hasUndo ? {
           kind: 'update',
@@ -10669,6 +10703,7 @@
           revertFields: revertFields,
           revertCurrent: revertCurrent,
           revertHistory: revertHistory,
+          revertDate: revertDate,
           afterSnapshot: c ? Object.assign(
             { customer: c.customer, auditorRemarks: c.auditorRemarks, dateOfAudit: c.dateOfAudit, previousRemarks: c.previousRemarks },
             Object.fromEntries(Object.keys(revertFields).map(k => [k, c[k]]))

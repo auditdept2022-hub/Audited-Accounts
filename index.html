@@ -788,6 +788,28 @@
   .preset-option{display:flex;align-items:center;width:100%;text-align:left;border:none;background:transparent;font:inherit;font-size:12.5px;font-weight:600;color:var(--text);cursor:pointer;padding:8px;border-radius:7px;}
   .preset-option:active,.preset-option:hover{background:var(--paper);}
   .preset-option.active{background:var(--accent-soft);color:var(--accent-dark);}
+
+  /* Option-picker popup (Unit Status / Payment Mode, and any other
+     .us-combo / .preset-combo field). Tapping the field's input or
+     chevron used to open an inline dropdown positioned right under the
+     input (see .us-options / .preset-options above) — on a phone that
+     panel sits low on the card, and since tapping a text input also
+     summons the on-screen keyboard, the keyboard would cover (or push
+     off-screen) the very panel that just opened. This popup instead
+     opens as its own centered/bottom-sheet modal (like #confirmOverlay),
+     independent of the field's position, so the keyboard never hides
+     it. It reuses the shared .overlay/.modal chrome. See appOptionPicker()
+     and the #fieldGrid click delegation further down. */
+  .picker-modal{max-width:420px;}
+  .picker-modal .modal-body{padding-top:14px;}
+  .picker-hint{color:var(--muted);font-size:12px;margin:0 0 12px;}
+  .picker-options{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
+  .picker-option{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--paper);font:inherit;font-size:13px;font-weight:600;color:var(--text);cursor:pointer;padding:10px 14px;border-radius:999px;min-height:40px;touch-action:manipulation;transition:background var(--dur-2) var(--ease-out),border-color var(--dur-2) var(--ease-out);}
+  .picker-option:active{filter:brightness(0.96);}
+  .picker-option.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-dark);}
+  .picker-manual-wrap{margin-top:2px;}
+  .picker-manual-wrap label{display:block;color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px;}
+  .picker-manual-input{width:100%;box-sizing:border-box;}
   /* Note: the account-status counter strip now lives in the header —
      see .hdr-status-counts above — instead of here above the card list. */
   .amount{font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace;font-size:12px;}
@@ -994,9 +1016,9 @@
      translateZ(0) promotes both layers onto their own compositor layer
      up front so the first frame of the animation is already smooth
      instead of stuttering while the browser sets that up mid-transition. */
-  .overlay{position:fixed;inset:0;background:rgba(8,12,34,.66);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;z-index:50;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--dur-4) var(--ease-out),visibility 0s linear var(--dur-4);transform:translateZ(0);}
+  .overlay{position:fixed;inset:0;height:var(--kb-vh, 100dvh);background:rgba(8,12,34,.66);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;z-index:50;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--dur-4) var(--ease-out),visibility 0s linear var(--dur-4);transform:translateZ(0);}
   .overlay.open{opacity:1;visibility:visible;pointer-events:auto;transition:opacity var(--dur-4) var(--ease-out);}
-  .modal{background:#fff;border-radius:18px;max-width:720px;width:100%;overflow:hidden;box-shadow:var(--shadow-lg);max-height:calc(100dvh - 80px);display:flex;flex-direction:column;transform:translateY(10px) scale(.98) translateZ(0);opacity:0;transition:transform var(--dur-4) var(--ease-out),opacity var(--dur-4) var(--ease-out);will-change:transform,opacity;}
+  .modal{background:#fff;border-radius:18px;max-width:720px;width:100%;overflow:hidden;box-shadow:var(--shadow-lg);max-height:calc(var(--kb-vh, 100dvh) - 80px);display:flex;flex-direction:column;transform:translateY(10px) scale(.98) translateZ(0);opacity:0;transition:transform var(--dur-4) var(--ease-out),opacity var(--dur-4) var(--ease-out);will-change:transform,opacity;}
   .overlay.open .modal{transform:translateY(0) scale(1) translateZ(0);opacity:1;}
   .modal-head{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-start;background:linear-gradient(180deg,#F7F8FD,#FFFFFF);flex-shrink:0;}
   .mh-titlewrap{min-width:0;flex:1 1 auto;overflow:hidden;}
@@ -1671,7 +1693,7 @@
     /* Full-width, bottom-sheet style modal: easier to reach one-handed
        and avoids the on-screen keyboard fighting a centered dialog. */
     .overlay{padding:0;align-items:flex-end;}
-    .modal{max-width:100%;border-radius:16px 16px 0 0;max-height:calc(100dvh - 24px);}
+    .modal{max-width:100%;border-radius:16px 16px 0 0;max-height:calc(var(--kb-vh, 100dvh) - 24px);}
     .modal.profile-modal{max-width:100%;}
     .modal-head{padding:10px 12px;}
     .modal-body{padding:12px;}
@@ -1683,7 +1705,7 @@
        every other modal (profile/sync/activity/confirm) still uses. */
     #overlay{padding:0;align-items:stretch;}
     #overlay .modal{
-      width:100%;max-width:100%;height:100dvh;max-height:100dvh;
+      width:100%;max-width:100%;height:var(--kb-vh, 100dvh);max-height:var(--kb-vh, 100dvh);
       border-radius:0;
     }
     #overlay .modal-body{padding-bottom:calc(12px + var(--safe-b));}
@@ -2025,6 +2047,15 @@
         <div id="fieldGrid"></div>
       </div>
 
+      <div class="section" id="historySection">
+        <div class="section-title">Previous audit remarks <span class="edit-hint">🔒 locked — auto-logged</span></div>
+        <div class="history-list" id="mHistoryList"></div>
+        <!-- Hidden: still holds the plain-text value saveModal() actually
+             sends (kept in sync with the list above), so the
+             create/update payload format is unchanged. -->
+        <textarea id="mHistoryEdit" class="history-edit" style="display:none;"></textarea>
+      </div>
+
       <div class="section" id="remarksSection">
         <div class="section-title">
           Auditor Remarks
@@ -2045,15 +2076,6 @@
           </div>
         </div>
         <div class="draft-status" id="draftStatus" style="display:none;"></div>
-      </div>
-
-      <div class="section" id="historySection">
-        <div class="section-title">Previous audit remarks <span class="edit-hint">🔒 locked — auto-logged</span></div>
-        <div class="history-list" id="mHistoryList"></div>
-        <!-- Hidden: still holds the plain-text value saveModal() actually
-             sends (kept in sync with the list above), so the
-             create/update payload format is unchanged. -->
-        <textarea id="mHistoryEdit" class="history-edit" style="display:none;"></textarea>
       </div>
 
     </div>
@@ -2216,6 +2238,29 @@
     <div class="modal-foot">
       <button class="btn confirm-cancel-btn" id="confirmCancelBtn">Cancel</button>
       <button class="btn primary confirm-ok-btn" id="confirmOkBtn">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="pickerOverlay">
+  <div class="modal picker-modal" id="pickerModalEl">
+    <div class="modal-head">
+      <div>
+        <h2 id="pickerTitle">Choose an option</h2>
+      </div>
+      <button class="modal-close" id="pickerCloseBtn">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="picker-hint" id="pickerHint">Tap to select, or type your own below.</p>
+      <div class="picker-options" id="pickerOptions"></div>
+      <div class="picker-manual-wrap">
+        <label for="pickerManualInput">Or type manually</label>
+        <input class="card-input picker-manual-input" id="pickerManualInput" type="text" autocomplete="off">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="pickerCancelBtn">Cancel</button>
+      <button class="btn primary" id="pickerOkBtn">OK</button>
     </div>
   </div>
 </div>
@@ -3465,6 +3510,119 @@
     });
   }
 
+  // ---- Option-picker popup (Unit Status / Payment Mode) ------------------
+  // Promise-based popup for picking one or more preset values, used in
+  // place of the old inline dropdown under the field (see the CSS note on
+  // .picker-modal above for why: the on-screen keyboard could cover that
+  // inline panel on a phone). Opens as its own centered/bottom-sheet
+  // modal, same chrome as appConfirm() above, so its position never
+  // depends on where the field itself sits on screen.
+  //   opts.multi   — true for a multi-select field (e.g. Unit Status,
+  //                  comma-joined); false/omitted for a single-select
+  //                  field (e.g. Payment Mode).
+  //   opts.title   — modal heading, e.g. "Unit Status" / "Payment Mode".
+  //   opts.options — array of preset strings to show as tappable chips.
+  //   opts.value   — the field's current raw string value.
+  // Resolves with the new raw string value to store, or null if the
+  // person cancelled (Cancel, Escape, backdrop tap, or the ✕ button) —
+  // callers should leave the field untouched in that case.
+  function appOptionPicker(opts){
+    opts = opts || {};
+    const multi = !!opts.multi;
+    return new Promise(resolve => {
+      const overlay = document.getElementById('pickerOverlay');
+      const titleEl = document.getElementById('pickerTitle');
+      const hintEl = document.getElementById('pickerHint');
+      const optsEl = document.getElementById('pickerOptions');
+      const manualInput = document.getElementById('pickerManualInput');
+      const okBtn = document.getElementById('pickerOkBtn');
+      const cancelBtn = document.getElementById('pickerCancelBtn');
+      const closeBtn = document.getElementById('pickerCloseBtn');
+
+      const options = opts.options || [];
+      // Selection state lives here (not re-derived from the DOM) so casing
+      // typed by hand is preserved and multi-select toggling is simple.
+      let selected = multi ? unitStatusSplit_(opts.value || '') : [];
+      let singleValue = multi ? '' : (opts.value || '');
+
+      titleEl.textContent = opts.title || 'Choose an option';
+      hintEl.textContent = multi
+        ? 'Tap to select one or more, or type your own below.'
+        : 'Tap to select, or type your own below.';
+
+      function isOptActive(opt){
+        return multi
+          ? selected.some(v => v.toLowerCase() === opt.toLowerCase())
+          : singleValue.trim().toLowerCase() === opt.toLowerCase();
+      }
+      function renderOptions(){
+        optsEl.innerHTML = options.map(opt => {
+          const active = isOptActive(opt);
+          return `<button type="button" class="picker-option${active ? ' active' : ''}" data-opt="${escapeHtml(opt)}">${active ? '✓ ' : ''}${escapeHtml(opt)}</button>`;
+        }).join('');
+      }
+      function syncManualInput(){
+        manualInput.value = multi ? unitStatusJoin_(selected) : singleValue;
+      }
+
+      renderOptions();
+      syncManualInput();
+
+      function onOptionClick(e){
+        const btn = e.target.closest('.picker-option');
+        if(!btn) return;
+        const opt = btn.dataset.opt;
+        if(multi){
+          const idx = selected.findIndex(v => v.toLowerCase() === opt.toLowerCase());
+          if(idx === -1) selected.push(opt); else selected.splice(idx, 1);
+        } else {
+          singleValue = isOptActive(opt) ? '' : opt;
+        }
+        renderOptions();
+        syncManualInput();
+      }
+      function onManualInput(){
+        if(multi){
+          selected = unitStatusSplit_(manualInput.value);
+        } else {
+          singleValue = manualInput.value;
+        }
+        renderOptions();
+      }
+
+      let settled = false;
+      function finish(result){
+        if(settled) return;
+        settled = true;
+        overlay.classList.remove('open');
+        unlockBodyScroll();
+        optsEl.removeEventListener('click', onOptionClick);
+        manualInput.removeEventListener('input', onManualInput);
+        okBtn.onclick = null;
+        cancelBtn.onclick = null;
+        closeBtn.onclick = null;
+        overlay.onclick = null;
+        document.removeEventListener('keydown', onKey);
+        resolve(result);
+      }
+      function onKey(e){
+        if(e.key === 'Escape') finish(null);
+        else if(e.key === 'Enter' && document.activeElement !== manualInput) finish(multi ? unitStatusJoin_(selected) : singleValue);
+      }
+
+      optsEl.addEventListener('click', onOptionClick);
+      manualInput.addEventListener('input', onManualInput);
+      okBtn.onclick = () => finish(multi ? unitStatusJoin_(selected) : singleValue);
+      cancelBtn.onclick = () => finish(null);
+      closeBtn.onclick = () => finish(null);
+      overlay.onclick = (e) => { if(e.target === overlay) finish(null); };
+      document.addEventListener('keydown', onKey);
+
+      overlay.classList.add('open');
+      lockBodyScroll();
+    });
+  }
+
   // ---- Branch profiles (multi-sheet) -----------------------------------
   // A "profile" is a sheet tab in the same spreadsheet — one per branch
   // being audited. There's no hardcoded template name: currentSheet is
@@ -3912,7 +4070,7 @@
     { key:'penaltyDue',     label:'Penalty Due (₱)',              type:'number', lockedOnEdit:true, money:true },
     { key:'customerStatus', label:'Customer Status',              type:'text', placeholder:'e.g. OD, DEL, RSTR, CURRENT', lockedOnEdit:true, span:2 },
     { key:'unitStatus',     label:'Unit Status',                  type:'combo', lockedOnEdit:false },
-    { key:'paymentMode',    label:'Payment Mode',                 type:'preset', presets:['Cash','7/11','Branch','Bank Transfer','GCash'], lockedOnEdit:false },
+    { key:'paymentMode',    label:'Payment Mode',                 type:'preset', presets:['Cash','7/11','Branch','Bank Transfer','GCash','Inter-branch'], lockedOnEdit:false },
   ];
 
   let customers = [];
@@ -6282,6 +6440,65 @@
     openOverlayCount = Math.max(0, openOverlayCount - 1);
     if(openOverlayCount === 0) document.body.style.overflow = '';
   }
+
+  // ---- Keyboard-aware modals ---------------------------------------------
+  // On a phone, opening the on-screen keyboard (e.g. tapping into the
+  // Auditor Remarks box) doesn't reliably shrink a `position:fixed`
+  // overlay to the space actually left above the keyboard — CSS `dvh`
+  // alone doesn't catch every browser/case, so the modal (and whatever
+  // field you're typing into) could end up sitting partly BEHIND the
+  // keyboard instead of scrolled up above it.
+  //
+  // window.visualViewport (iOS Safari 13+, all current Android/desktop
+  // browsers) reports the real visible area once the keyboard has taken
+  // its share. --kb-vh is kept in sync with that (see the .overlay/.modal
+  // rules above, which size against var(--kb-vh, 100dvh) instead of a
+  // bare 100dvh), so the modal itself shrinks to fit above the keyboard
+  // as soon as it opens. Once it settles, whatever field is focused
+  // inside an open modal is scrolled back into view — this is what makes
+  // the remarks box (or any other field) follow the keyboard up instead
+  // of staying put and getting covered.
+  (function setupKeyboardAwareModals_(){
+    const vv = window.visualViewport;
+    if(!vv) return; // no visualViewport support — falls back to plain dvh sizing, same as before
+
+    function applyViewportHeight(){
+      document.documentElement.style.setProperty('--kb-vh', vv.height + 'px');
+    }
+    applyViewportHeight();
+
+    let settleTimer = null;
+    function onViewportChange(){
+      applyViewportHeight();
+      // The keyboard's own show/hide animation takes a beat to finish;
+      // wait for it to settle before measuring where the focused field
+      // actually ended up, or scrollIntoView would aim at a target that's
+      // about to move again.
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(()=>{
+        const active = document.activeElement;
+        if(!active || (active.tagName !== 'TEXTAREA' && active.tagName !== 'INPUT')) return;
+        if(active.readOnly) return; // e.g. the Unit Status/Payment Mode picker inputs — no keyboard involved
+        const openOverlay = active.closest('.overlay.open');
+        if(!openOverlay) return;
+        active.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }, 120);
+    }
+    vv.addEventListener('resize', onViewportChange);
+    vv.addEventListener('scroll', onViewportChange);
+  })();
+
+  // Fallback/first-response: also nudge a focused field into view right
+  // when it's focused, not just once the keyboard has finished animating
+  // (the visualViewport listener above). Covers browsers without
+  // window.visualViewport too, where this is the only mechanism.
+  document.addEventListener('focusin', (e)=>{
+    const el = e.target;
+    if(!el || (el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT') || el.readOnly) return;
+    const openOverlay = el.closest('.overlay.open');
+    if(!openOverlay) return;
+    setTimeout(()=>{ el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 300);
+  });
 
   function openProfileMenu(){
     // Guard against rapid repeat taps on the hamburger button: without
@@ -9951,50 +10168,42 @@
         }
 
         if(f.type === 'combo'){
-          // Free-text input (still typable) plus a MULTI-SELECT dropdown
-          // of presets — see UNIT_STATUS_OPTIONS / unitStatusMeta_ above.
-          // Any number of options can be active at once; picking one
-          // toggles it in/out of the comma-joined value instead of
-          // replacing the whole field (see the click handler below).
-          // The panel starts closed (.us-options only shows inside an
-          // "open" .us-combo — see the CSS) and opens on tapping the
-          // input or the chevron; wiring for that, the option clicks,
-          // and keeping the active options in sync is delegated on
-          // #fieldGrid (see the listeners added right after
-          // buildFieldGrid), not attached here, since this HTML is
-          // rebuilt on every open.
-          const selectedSet = new Set(unitStatusSplit_(raw).map(v => v.toLowerCase()));
-          const optionsHtml = UNIT_STATUS_OPTIONS.map(opt => {
-            const optMeta = unitStatusMeta_(opt);
-            const isActive = selectedSet.has(opt.toLowerCase());
-            return `<button type="button" class="badge us-option ${optMeta.cls}${isActive ? ' active' : ''}" data-us-option="${escapeHtml(opt)}" aria-pressed="${isActive}">${isActive ? '✓ ' : ''}${escapeHtml(opt)}</button>`;
-          }).join('');
+          // Free-text VALUE (still editable, just not via the OS keyboard
+          // inline) plus a MULTI-SELECT popup of presets — see
+          // UNIT_STATUS_OPTIONS / unitStatusMeta_ above. Any number of
+          // options can be active at once; picking one toggles it in/out
+          // of the comma-joined value instead of replacing the whole
+          // field. Tapping the input or the chevron opens
+          // appOptionPicker() as its own centered popup (see the CSS note
+          // on .picker-modal) instead of an inline dropdown right under
+          // the field — that inline panel used to end up hidden behind
+          // the on-screen keyboard on a phone, since tapping a text input
+          // also summons the keyboard. The input itself is `readonly` so
+          // tapping it can never summon the keyboard in the first place;
+          // manual typing still works, just inside the popup. Wiring for
+          // this is delegated on #fieldGrid (see the listeners added
+          // right after buildFieldGrid), not attached here, since this
+          // HTML is rebuilt on every open.
           return `<div class="info-card editable${spanClass}">
             <span class="k">${escapeHtml(f.label)}${f.required ? ' *' : ''}</span>
             <div class="us-combo">
-              <input class="card-input us-input" data-key="${f.key}" type="text" value="${escapeHtml(raw)}" placeholder="Tap to choose one or more, or type manually" autocomplete="off">
+              <input class="card-input us-input" data-key="${f.key}" type="text" value="${escapeHtml(raw)}" placeholder="Tap to choose one or more" autocomplete="off" readonly>
               <button type="button" class="us-toggle" data-us-toggle title="Show options"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
-              <div class="us-options">${optionsHtml}</div>
             </div>
           </div>`;
         }
 
         if(f.type === 'preset'){
-          // Free-text input (still typable) plus a small dropdown of
-          // one-tap preset values (f.presets) for fields with a short
-          // list of common answers — e.g. Payment Mode. Not color-coded
-          // like the Unit Status combo above, just plain option rows.
-          const val = raw.trim().toLowerCase();
-          const optionsHtml = (f.presets || []).map(opt => {
-            const isActive = val === opt.toLowerCase();
-            return `<button type="button" class="preset-option${isActive ? ' active' : ''}" data-preset-option="${escapeHtml(opt)}">${escapeHtml(opt)}</button>`;
-          }).join('');
+          // Free-text VALUE plus a small popup of one-tap preset values
+          // (f.presets) for fields with a short list of common answers —
+          // e.g. Payment Mode. Same popup-over-inline-dropdown reasoning
+          // as the Unit Status combo above: see appOptionPicker() and the
+          // .picker-modal CSS note.
           return `<div class="info-card editable${spanClass}">
             <span class="k">${escapeHtml(f.label)}${f.required ? ' *' : ''}</span>
             <div class="preset-combo">
-              <input class="card-input preset-input" data-key="${f.key}" type="text" value="${escapeHtml(raw)}" placeholder="Tap to choose, or type manually" autocomplete="off">
+              <input class="card-input preset-input" data-key="${f.key}" type="text" value="${escapeHtml(raw)}" placeholder="Tap to choose" autocomplete="off" readonly>
               <button type="button" class="preset-toggle" data-preset-toggle title="Show options"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
-              <div class="preset-options">${optionsHtml}</div>
             </div>
           </div>`;
         }
@@ -10015,105 +10224,55 @@
   }
 
   // Delegated once (not re-attached on every buildFieldGrid rebuild):
-  // handles the Unit Status combo — opening/closing its dropdown panel,
-  // the preset option clicks, and keeping the active/highlighted option
-  // in sync with whatever's typed, whether it matches a preset or not.
-  function refreshUnitStatusActive_(){
-    const input = document.querySelector('#fieldGrid .us-input');
-    if(!input) return;
-    // Unit Status is multi-select: an option is "active" if its text
-    // appears anywhere in the comma-separated value currently typed/set
-    // in the input, not just on an exact whole-field match.
-    const selected = new Set(unitStatusSplit_(input.value).map(v => v.toLowerCase()));
-    document.querySelectorAll('#fieldGrid .us-option').forEach(opt=>{
-      const isActive = selected.has(opt.dataset.usOption.toLowerCase());
-      opt.classList.toggle('active', isActive);
-      opt.setAttribute('aria-pressed', String(isActive));
-      opt.textContent = (isActive ? '✓ ' : '') + opt.dataset.usOption;
-    });
-  }
-  function closeAllDropdowns_(except){
-    document.querySelectorAll('#fieldGrid .us-combo.open, #fieldGrid .preset-combo.open').forEach(combo=>{
-      if(combo !== except) combo.classList.remove('open');
-    });
-  }
+  // handles the Unit Status combo and the Payment Mode preset field —
+  // tapping either one's input or chevron opens appOptionPicker() as its
+  // own popup (see the .picker-modal CSS note above for why this
+  // replaced the old inline dropdown), and applies whatever the person
+  // picked/typed there back onto the underlying readonly input once they
+  // press OK.
   document.getElementById('fieldGrid').addEventListener('click', (e)=>{
-    // Unit Status: multi-select preset pick — toggles this option in/out
-    // of the comma-joined value instead of replacing the whole field, so
-    // several statuses can be selected together (e.g. "Missing, Damage").
-    // The dropdown stays open after a pick so more than one option can
-    // be chosen in one go; it closes on chevron/outside click or Escape,
-    // same as before.
-    const usOption = e.target.closest('.us-option');
-    if(usOption){
-      const input = document.querySelector('#fieldGrid .us-input');
-      if(input){
-        const opt = usOption.dataset.usOption;
-        const current = unitStatusSplit_(input.value);
-        const idx = current.findIndex(v => v.toLowerCase() === opt.toLowerCase());
-        if(idx === -1) current.push(opt); else current.splice(idx, 1);
-        input.value = unitStatusJoin_(current);
-      }
-      refreshUnitStatusActive_();
-      queueDraftSave_(); // set via JS, not typing — 'input' event above never fires for this
+    const usCombo = (e.target.closest('.us-toggle') || e.target.closest('.us-input')) ? e.target.closest('.us-combo') : null;
+    if(usCombo){
+      const input = usCombo.querySelector('.us-input');
+      if(!input) return;
+      appOptionPicker({
+        title: 'Unit Status',
+        multi: true,
+        options: UNIT_STATUS_OPTIONS,
+        value: input.value
+      }).then(result => {
+        if(result === null) return; // cancelled — leave the field untouched
+        input.value = result;
+        queueDraftSave_(); // set via JS, not typing — no 'input' event fires for a readonly field
+      });
       return;
     }
-    // Payment Mode (or any other generic preset field): preset option pick
-    const presetOption = e.target.closest('.preset-option');
-    if(presetOption){
-      const combo = presetOption.closest('.preset-combo');
-      const input = combo && combo.querySelector('.preset-input');
-      if(input){
-        input.value = presetOption.dataset.presetOption;
-        combo.querySelectorAll('.preset-option').forEach(opt=>{
-          opt.classList.toggle('active', opt.dataset.presetOption === presetOption.dataset.presetOption);
-        });
-      }
-      closeAllDropdowns_();
-      queueDraftSave_(); // set via JS, not typing — 'input' event above never fires for this
+    const presetCombo = (e.target.closest('.preset-toggle') || e.target.closest('.preset-input')) ? e.target.closest('.preset-combo') : null;
+    if(presetCombo){
+      const input = presetCombo.querySelector('.preset-input');
+      if(!input) return;
+      const key = input.dataset.key;
+      const fieldDef = FIELDS.find(f => f.key === key);
+      appOptionPicker({
+        title: (fieldDef && fieldDef.label) || 'Choose an option',
+        multi: false,
+        options: (fieldDef && fieldDef.presets) || [],
+        value: input.value
+      }).then(result => {
+        if(result === null) return; // cancelled — leave the field untouched
+        input.value = result;
+        queueDraftSave_(); // set via JS, not typing — no 'input' event fires for a readonly field
+      });
       return;
-    }
-    // Tapping the input or the chevron toggles that field's own dropdown
-    // open, and closes any other dropdown that happened to be open.
-    const combo = (e.target.closest('.us-toggle') || e.target.closest('.us-input'))
-      ? e.target.closest('.us-combo')
-      : (e.target.closest('.preset-toggle') || e.target.closest('.preset-input'))
-        ? e.target.closest('.preset-combo')
-        : null;
-    if(combo){
-      const willOpen = !combo.classList.contains('open');
-      closeAllDropdowns_(combo);
-      combo.classList.toggle('open', willOpen);
     }
   });
   document.getElementById('fieldGrid').addEventListener('input', (e)=>{
-    if(e.target.classList.contains('us-input')){
-      refreshUnitStatusActive_();
-    } else if(e.target.classList.contains('preset-input')){
-      const combo = e.target.closest('.preset-combo');
-      if(combo){
-        const val = e.target.value.trim().toLowerCase();
-        combo.querySelectorAll('.preset-option').forEach(opt=>{
-          opt.classList.toggle('active', opt.dataset.presetOption.toLowerCase() === val);
-        });
-      }
-    }
-    // Any edited field (plain input or one of the combos above) queues a
-    // whole-form draft save — see queueDraftSave_ / saveDraft_ near the
-    // remark-draft code, which now snapshots the entire grid, not just
-    // the remark box.
+    // Any edited field queues a whole-form draft save — see
+    // queueDraftSave_ / saveDraft_ near the remark-draft code, which now
+    // snapshots the entire grid, not just the remark box. (Unit Status /
+    // Payment Mode are readonly and go through the picker's .then() above
+    // instead, since a readonly input never fires 'input'.)
     if(e.target.matches('[data-key]')) queueDraftSave_();
-  });
-  // Closes any open dropdown (Unit Status or a preset combo) on a click
-  // outside it, and on Escape — otherwise it would stay open over the
-  // rest of the form after picking elsewhere, or after typing and
-  // clicking away.
-  document.addEventListener('click', (e)=>{
-    if(e.target.closest('.us-combo') || e.target.closest('.preset-combo')) return;
-    closeAllDropdowns_();
-  });
-  document.addEventListener('keydown', (e)=>{
-    if(e.key === 'Escape') closeAllDropdowns_();
   });
 
   function collectFieldValues(){

@@ -632,7 +632,7 @@
      gets its own extra compacting further down, in the phone media
      query, on top of this.) */
   html, body{height:100%;overflow:hidden;}
-  .shell{height:100vh;height:100dvh;overflow:hidden;}
+  .shell{height:var(--kb-vh, 100dvh);overflow:hidden;}
   .topband{flex-shrink:0;}
   .main{
     flex:1;min-height:0;overflow:hidden;
@@ -752,13 +752,12 @@
      its own distinct color. */
   .us-badges{display:inline-flex;flex-wrap:wrap;gap:4px;}
 
-  /* Unit Status control in the edit modal: a minimalist free-text input
-     (still typable) plus a toggle that opens a dropdown of preset
-     values — each option colored by status (see unitStatusMeta_ /
-     refreshUnitStatusActive_ below). Closed by default (.us-options only
-     shows inside an "open" .us-combo); opens on tapping the input or the
-     chevron, closes on picking an option, pressing Escape, or tapping
-     outside — see the delegated listeners after buildFieldGrid. */
+  /* Unit Status control in the edit modal: a readonly free-text input
+     (value still editable, just via a popup instead of the OS keyboard)
+     plus a toggle that opens appOptionPicker() with one colored option
+     per status (see unitStatusMeta_ and the .picker-modal CSS further
+     down) — tapping the input or chevron opens that popup; wiring is
+     delegated on #fieldGrid after buildFieldGrid. */
   .us-combo{position:relative;display:flex;align-items:center;gap:8px;}
   .us-combo .card-input{flex:1;min-width:0;}
   .us-toggle{flex-shrink:0;width:22px;height:22px;border:none;background:transparent;color:var(--muted-2);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;}
@@ -10369,7 +10368,11 @@
       const el = document.querySelector('#fieldGrid [data-key="' + key + '"]');
       if(el && !el.disabled) el.value = fields[key];
     });
-    refreshUnitStatusActive_();
+    // Note: no active-state refresh needed here anymore — Unit Status /
+    // Payment Mode are now readonly inputs whose popup picker (see
+    // appOptionPicker()) computes its own selected/active options fresh
+    // from the input's current value every time it's opened, rather than
+    // from any pre-rendered "active" class on the field grid itself.
   }
 
   function updateDraftStatus_(){
@@ -10443,39 +10446,55 @@
     modalMode = 'edit';
     activeRow = row;
 
-    document.getElementById('remarksSection').style.display = 'block';
-    document.getElementById('historySection').style.display = 'block';
-    document.getElementById('saveBtn').textContent = 'Save changes';
+    try{
+      document.getElementById('remarksSection').style.display = 'block';
+      document.getElementById('historySection').style.display = 'block';
+      document.getElementById('saveBtn').textContent = 'Save changes';
 
-    // Header stays a generic, static label — the customer's name, model,
-    // and engine no. already live in the Customer & Unit cards right
-    // below, so repeating them up here was redundant.
-    document.getElementById('mTitle').textContent = 'Account & unit information';
+      // Header stays a generic, static label — the customer's name, model,
+      // and engine no. already live in the Customer & Unit cards right
+      // below, so repeating them up here was redundant.
+      document.getElementById('mTitle').textContent = 'Account & unit information';
 
-    buildFieldGrid(c);
+      buildFieldGrid(c);
 
-    const hasRemark = c.auditorRemarks && !isBlankRemark_(c.auditorRemarks);
-    // The current remark's date badge (mCurrentDate) was removed from the
-    // UI — the date is still tracked internally (c.dateOfAudit) and still
-    // used for sorting/history, it's just no longer shown next to the
-    // remark text itself since it isn't part of the remark.
-    editorOriginalCurrent = hasRemark ? stripRedundantDateStamp_(c.auditorRemarks) : '';
-    const mCurrentEditEl = document.getElementById('mCurrentEdit');
+      const hasRemark = c.auditorRemarks && !isBlankRemark_(c.auditorRemarks);
+      // The current remark's date badge (mCurrentDate) was removed from the
+      // UI — the date is still tracked internally (c.dateOfAudit) and still
+      // used for sorting/history, it's just no longer shown next to the
+      // remark text itself since it isn't part of the remark.
+      editorOriginalCurrent = hasRemark ? stripRedundantDateStamp_(c.auditorRemarks) : '';
+      const mCurrentEditEl = document.getElementById('mCurrentEdit');
 
-    editorOriginalHistory = str_(c.previousRemarks);
-    historyEntries_ = parseHistoryEntries_(editorOriginalHistory);
-    historyEditingIdx_ = -1;
-    renderHistoryList_();
+      editorOriginalHistory = str_(c.previousRemarks);
+      historyEntries_ = parseHistoryEntries_(editorOriginalHistory);
+      historyEditingIdx_ = -1;
+      renderHistoryList_();
 
-    const draft = loadDraft_(row);
-    mCurrentEditEl.value = (draft && draft.currentEdit !== undefined) ? draft.currentEdit : editorOriginalCurrent;
-    autoFitTextarea_(mCurrentEditEl);
-    // Overlay any unsaved field/marker edits from a prior crash/close on
-    // top of the real record buildFieldGrid(c) just painted above — see
-    // the WHOLE-FORM DRAFT note near draftKey_.
-    if(draft && draft.fields) applyDraftFieldsToGrid_(draft.fields);
-    setModalMarkerPickerColor_((draft && draft.marker) ? draft.marker : (c.marker || ''));
-    updateDraftStatus_();
+      let draft = null;
+      try{ draft = loadDraft_(row); }catch(err){ /* a bad draft should never block opening the real record */ }
+      mCurrentEditEl.value = (draft && draft.currentEdit !== undefined) ? draft.currentEdit : editorOriginalCurrent;
+      autoFitTextarea_(mCurrentEditEl);
+      // Overlay any unsaved field/marker edits from a prior crash/close on
+      // top of the real record buildFieldGrid(c) just painted above — see
+      // the WHOLE-FORM DRAFT note near draftKey_. Wrapped separately so a
+      // problem restoring a stray draft can never stop the modal itself
+      // from opening — worst case, the draft restore is skipped and the
+      // person just sees the real saved record instead.
+      try{
+        if(draft && draft.fields) applyDraftFieldsToGrid_(draft.fields);
+        setModalMarkerPickerColor_((draft && draft.marker) ? draft.marker : (c.marker || ''));
+        updateDraftStatus_();
+      }catch(err){
+        setModalMarkerPickerColor_(c.marker || '');
+      }
+    }catch(err){
+      // Something genuinely unexpected (a future bug, an odd data value,
+      // etc.) — surface it instead of the tap silently doing nothing, and
+      // still fall through to open the modal so the person isn't stuck.
+      toast('Something went wrong opening this record: ' + err.message);
+    }
+
     document.getElementById('overlay').classList.add('open');
     lockBodyScroll();
   }

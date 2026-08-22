@@ -526,22 +526,27 @@
      question), readable paragraph spacing for multi-part messages, and a
      clearly weighted primary action instead of two identical OS buttons. ---- */
   .confirm-modal{max-width:440px;}
-  .confirm-modal .modal-body{padding:18px 22px 6px;}
-  .confirm-icon-row{display:flex;justify-content:center;margin-bottom:14px;}
+  .confirm-modal .modal-body{padding:20px 22px 6px;}
+  .confirm-icon-row{display:flex;justify-content:center;margin-bottom:16px;}
   .confirm-icon{
-    width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-    font-size:22px;font-weight:800;background:var(--accent-soft);color:var(--accent);
+    width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:23px;font-weight:800;background:var(--accent-soft);color:var(--accent);
+    box-shadow:0 0 0 6px var(--accent-soft);
+    animation:confirm-icon-pop var(--dur-4) var(--ease-out);
   }
-  .confirm-modal.confirm-danger .confirm-icon{background:var(--del-soft);color:var(--del);}
+  .confirm-modal.confirm-danger .confirm-icon{background:var(--del-soft);color:var(--del);box-shadow:0 0 0 6px var(--del-soft);animation:confirm-icon-pop var(--dur-4) var(--ease-out),confirm-icon-pulse 1.8s ease-out .35s 2;}
+  @keyframes confirm-icon-pop{from{transform:scale(.6);opacity:0;}to{transform:scale(1);opacity:1;}}
+  @keyframes confirm-icon-pulse{0%{box-shadow:0 0 0 6px var(--del-soft);}50%{box-shadow:0 0 0 11px rgba(176,48,74,.12);}100%{box-shadow:0 0 0 6px var(--del-soft);}}
   .confirm-title{font-family:'Spectral',serif;font-size:18px;font-weight:700;color:var(--ink);text-align:center;margin:0 0 10px;}
   .confirm-body{font-size:13px;line-height:1.6;color:var(--text);}
   .confirm-body p{margin:0 0 12px;}
   .confirm-body p:last-child{margin-bottom:0;}
   .confirm-modal .modal-foot{justify-content:center;gap:10px;}
-  .confirm-modal .modal-foot .btn{flex:1;justify-content:center;padding:11px 18px;font-size:13px;}
+  .confirm-modal .modal-foot .btn{flex:1;justify-content:center;padding:11px 18px;font-size:13px;transition:transform var(--dur-1) var(--ease-out),background var(--dur-2) var(--ease-out),border-color var(--dur-2) var(--ease-out),box-shadow var(--dur-2) var(--ease-out);}
+  .confirm-modal .modal-foot .btn:active{transform:scale(.97);}
   .confirm-cancel-btn{background:#fff;}
-  .confirm-ok-btn.danger{background:var(--del);border-color:var(--del);color:#fff;}
-  .confirm-ok-btn.danger:hover{background:#961F38;border-color:#961F38;}
+  .confirm-ok-btn.danger{background:var(--del);border-color:var(--del);color:#fff;box-shadow:0 4px 14px rgba(176,48,74,.28);}
+  .confirm-ok-btn.danger:hover{background:#961F38;border-color:#961F38;box-shadow:0 6px 18px rgba(176,48,74,.36);}
 
   /* Main — fluid width so it always fills the current screen instead of
      capping out and leaving dead space on wider monitors; side padding
@@ -1193,8 +1198,18 @@
   .setup{max-width:560px;margin:60px auto;background:#fff;border-radius:16px;border:1px solid var(--line);padding:30px;box-shadow:var(--shadow-md);}
   .setup h2{margin-top:0;font-family:'Spectral',serif;color:var(--ink);}
   .setup code{background:#EEF0F9;padding:2px 6px;border-radius:4px;font-size:12.5px;}
-  .toast{position:fixed;bottom:24px;right:24px;background:var(--panel-2);color:#fff;padding:12px 18px;border-radius:10px;font-size:13px;opacity:0;transform:translateY(10px);transition:opacity var(--dur-3) var(--ease-out),transform var(--dur-3) var(--ease-out);pointer-events:none;z-index:60;box-shadow:0 10px 30px rgba(0,0,0,.3);max-width:calc(100vw - 32px);}
-  .toast.show{opacity:1;transform:translateY(0);}
+  .toast{position:fixed;bottom:24px;right:24px;display:flex;align-items:center;gap:11px;background:var(--panel-2);color:#fff;padding:13px 18px 13px 14px;border-radius:13px;font-size:13.5px;font-weight:500;line-height:1.4;opacity:0;transform:translateY(14px) scale(.96);transition:opacity var(--dur-3) var(--ease-out),transform var(--dur-3) var(--ease-out);pointer-events:none;z-index:60;box-shadow:var(--shadow-lg),0 0 0 1px rgba(255,255,255,.07) inset;max-width:calc(100vw - 32px);overflow:hidden;cursor:pointer;}
+  .toast.show{opacity:1;transform:translateY(0) scale(1);pointer-events:auto;}
+  .toast-icon{flex:0 0 auto;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:800;color:#fff;background:var(--accent);box-shadow:0 1px 3px rgba(0,0,0,.25);}
+  .toast-success .toast-icon{background:var(--ok);}
+  .toast-error .toast-icon{background:var(--del);}
+  .toast-warning .toast-icon{background:var(--od);}
+  .toast-msg{min-width:0;word-break:break-word;}
+  .toast-bar{position:absolute;left:0;bottom:0;height:3px;width:100%;background:var(--accent);opacity:.6;transform-origin:left;animation:toast-shrink 2.6s linear forwards;}
+  .toast-success .toast-bar{background:var(--ok);}
+  .toast-error .toast-bar{background:var(--del);}
+  .toast-warning .toast-bar{background:var(--od);}
+  @keyframes toast-shrink{from{transform:scaleX(1);}to{transform:scaleX(0);}}
 
   /* Offline / sync status: see .hdr-dot / .sub-row above (header). */
 
@@ -1664,7 +1679,9 @@
       transition:transform var(--dur-2) var(--ease-out),background var(--dur-2) var(--ease-out),color var(--dur-2) var(--ease-out);
     }
     .toolbar-toggle:hover{background:#F4F5FB;color:var(--text);}
+    .toolbar-toggle:active{transform:scale(.9);}
     .toolbar-toggle.open{transform:rotate(180deg);color:var(--accent);border-color:#B9C4EE;background:var(--accent-soft);}
+    .toolbar-toggle.open:active{transform:rotate(180deg) scale(.9);}
     .toolbar-extra{display:none;order:2;width:100%;}
     /* The header + toolbar are pinned (overflow:hidden on their parent —
        only the customer list scrolls, see the "pin header/toolbar"
@@ -1680,7 +1697,10 @@
       display:flex;flex-direction:column;gap:10px;
       padding-top:10px;border-top:1px solid var(--line);margin-top:2px;
       max-height:min(52vh,420px);overflow-y:auto;-webkit-overflow-scrolling:touch;
+      animation:toolbar-extra-in var(--dur-3) var(--ease-out);
+      transform-origin:top center;
     }
+    @keyframes toolbar-extra-in{from{opacity:0;transform:translateY(-8px) scaleY(.97);}to{opacity:1;transform:translateY(0) scaleY(1);}}
 
     /* Positioning for .view-menu/.status-menu is now handled entirely by
        positionMenu_() at open time (fixed + viewport-clamped), so no
@@ -1723,7 +1743,7 @@
     .modal-foot .right{width:100%;order:1;}
     .modal-foot .right .btn{flex:1;}
 
-    .toast{left:16px;right:16px;bottom:calc(16px + var(--safe-b));text-align:center;}
+    .toast{left:16px;right:16px;bottom:calc(16px + var(--safe-b));justify-content:center;}
   }
 
   /* ---- Mobile only: further compact the header on top of the app-wide
@@ -6267,11 +6287,39 @@
     e.target.value = ''; // allow re-importing the same file(s) later
   });
 
-  function toast(msg){
+  // TOAST — redesigned to actually distinguish success/error/warning at a
+  // glance (icon + color + shrinking progress bar) instead of every
+  // message looking identical. `type` is optional; when omitted it's
+  // inferred from the message text itself, so every existing toast(...)
+  // call site elsewhere in this file (there are ~150) gets the right
+  // color automatically with no changes needed there. Pass an explicit
+  // type ('success'|'error'|'warning'|'info') for a new call site if the
+  // wording wouldn't make the right one obvious.
+  const TOAST_ICONS = { success: '✓', error: '✕', warning: '!', info: 'ℹ' };
+  let toastHideTimer_ = null;
+  function inferToastType_(msg){
+    const s = String(msg || '');
+    if(/error|fail(ed)?|could not|cannot|can.?t\b|unsupported|missing|is full\b/i.test(s)) return 'error';
+    if(/busy|try again|wait|paused|offline/i.test(s)) return 'warning';
+    if(/restored|saved|exported|complete|synced|renamed|created|updated|deleted|queued|switched to online|back online/i.test(s)) return 'success';
+    return 'info';
+  }
+  function toast(msg, type){
     const t = document.getElementById('toast');
-    t.textContent = msg;
+    const resolvedType = type || inferToastType_(msg);
+    clearTimeout(toastHideTimer_);
+    t.className = 'toast toast-' + resolvedType; // resets .show too — see reflow note below
+    t.innerHTML = `<span class="toast-icon">${TOAST_ICONS[resolvedType] || TOAST_ICONS.info}</span><span class="toast-msg"></span><span class="toast-bar"></span>`;
+    t.querySelector('.toast-msg').textContent = msg; // textContent, not innerHTML — safe by construction, no escaping needed
+    t.onclick = () => { clearTimeout(toastHideTimer_); t.classList.remove('show'); };
+    // Force a reflow before adding 'show' so the entrance transition (and
+    // the progress-bar shrink animation, restarted fresh via className
+    // above) actually replays even if a toast is already showing when a
+    // new one comes in back-to-back — without this, rapid successive
+    // toast() calls could silently no-op the animation.
+    void t.offsetWidth;
     t.classList.add('show');
-    setTimeout(()=>t.classList.remove('show'), 2600);
+    toastHideTimer_ = setTimeout(() => t.classList.remove('show'), 2600);
   }
 
   async function connect(){
@@ -8474,9 +8522,21 @@
       // "Changes synced." — on a big catch-up batch (many offline edits
       // at once) this is what actually confirms every single one made it,
       // rather than leaving it to guesswork once the spinner just stops.
-      toast(syncBatchTotal_ > 1
-        ? `✓ Synced ${syncBatchTotal_} of ${syncBatchTotal_} changes — all done.`
-        : '✓ Changes synced.');
+      //
+      // DOUBLE-TOAST FIX: for the ordinary single-save case (edit/add/
+      // delete one customer, which is by far the most common path) the
+      // person already saw an immediate "Changes saved — syncing…" toast
+      // the moment they hit Save (see saveModal/createCustomer/
+      // deleteCustomer_ below), and the status bar already updates to
+      // "synced HH:MM:SS" a few lines up — a second "✓ Changes synced."
+      // toast arriving a second later just for that same one action read
+      // as a duplicate notification, not new information. Only show this
+      // one when it's actually telling the person something the first
+      // toast didn't: that a genuine BATCH of several queued changes
+      // (e.g. catching up after being offline) all made it through.
+      if(syncBatchTotal_ > 1){
+        toast(`✓ Synced ${syncBatchTotal_} of ${syncBatchTotal_} changes — all done.`);
+      }
       syncBatchTotal_ = 0;
       syncBatchDone_ = 0;
       syncBatchLastNotifiedIssueCount_ = 0;
@@ -8524,9 +8584,11 @@
       syncColdStartRetries = 0;
       notifySyncPaused_('write:' + connErrMsg, 'Sync paused — ' + connErrMsg, connErrMsg);
     } else if(syncedAny){
-      toast(syncBatchTotal_ > 1
-        ? `✓ Synced ${syncBatchTotal_} of ${syncBatchTotal_} changes — all done.`
-        : '✓ Changes synced.');
+      // Same DOUBLE-TOAST FIX as the primary branch above — see that
+      // comment for why single-item saves don't get a second toast here.
+      if(syncBatchTotal_ > 1){
+        toast(`✓ Synced ${syncBatchTotal_} of ${syncBatchTotal_} changes — all done.`);
+      }
       syncBatchTotal_ = 0;
       syncBatchDone_ = 0;
       syncBatchLastNotifiedIssueCount_ = 0;

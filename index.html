@@ -7497,9 +7497,17 @@
     });
   }
 
+  // DATE FORMAT: MM/dd/yyyy (e.g. 08/22/2026), matching the backend's
+  // Utilities.formatDate(...) calls (fmtDate_ / createCustomerFull /
+  // addRemark / batchUpdateCustomer / updateCustomerFull in Code.gs).
+  // This is what gets sent as `currentEditDate`/`dateOfAudit` whenever a
+  // remark is edited directly, so it needs to stay in sync with the
+  // server side or Date of Audit would show two different formats
+  // depending on which code path stamped it. Was yyyy-MM-dd; changed on
+  // request.
   function todayStr_(){
     const d = new Date();
-    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+    return String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0') + '/' + d.getFullYear();
   }
 
   // Cheap fingerprint of a server list response, used to tell "nothing

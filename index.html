@@ -741,8 +741,16 @@
   .badge.us-impounded{background:#EDE3F7;color:#6B3FA0;}
   .badge.us-carnapped{background:#F6DCE4;color:#8B1E3F;}
   .badge.us-notconfirmed{background:#E7E9F2;color:#5B6482;}
+  .badge.us-totalwreck{background:#3A2A2A;color:#F3D8CE;}
+  .badge.us-damage{background:#FCEAD0;color:#9A5B12;}
   .badge.us-custom{background:#E9EBF6;color:var(--muted);}
   .badge.us-none{background:#E9EBF6;color:var(--muted-2);}
+  /* Unit Status now supports MULTIPLE selected values at once (see
+     UNIT_STATUS_OPTIONS / unitStatusMeta_ below) — stored on the sheet
+     as one comma-separated string, but shown as a small row of separate
+     badges wherever it's displayed, so each selected status still gets
+     its own distinct color. */
+  .us-badges{display:inline-flex;flex-wrap:wrap;gap:4px;}
 
   /* Unit Status control in the edit modal: a minimalist free-text input
      (still typable) plus a toggle that opens a dropdown of preset
@@ -1083,21 +1091,18 @@
 
   textarea{width:100%;border:1px solid #D7DCF0;border-radius:10px;padding:10px 12px;font-size:13px;font-family:inherit;resize:vertical;min-height:76px;outline:none;transition:border-color var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);background:#F8F9FD;}
 
-  /* "Add new remark" box: auto-grows to fit whatever's typed (see
-     autoFitTextarea_ + the #mNewRemark input listener below) — no fixed
-     height, no internal scrollbar, and no manual drag-to-resize. Short
-     text keeps the box short; a long remark just makes the box (and the
-     modal under it) taller, the same way plain text on a page would. */
+  /* "Add new remark" box removed — Auditor Remarks is now a single
+     directly-editable field (see .current-remark-edit below). Rule kept
+     harmless/unused in case any legacy markup still references it. */
   #mNewRemark{resize:none;overflow:hidden;}
 
-  /* Directly-editable current remark (edit modal). Wrapped in the same
+  /* Directly-editable Auditor Remarks (edit modal). Wrapped in the same
      .history-entry card used by the "Previous audit remarks" rows below
-     — same border/background/radius, same date-badge + icon-button
-     layout — so the current remark and each past remark read as one
-     consistent visual pattern instead of two different designs.
-     Locked (readonly) by default — see the mCurrentEditBtn/blur handlers
-     — so it only actually accepts changes right after the pencil is
-     clicked, and re-locks itself the moment focus leaves it. */
+     — same border/background/radius, same icon-button layout — so it
+     reads as one consistent visual pattern. Always editable now (no
+     pencil-lock step) — the old "Add new remark" auto-dated/stacked
+     flow was removed, so this box is simply the plain text of the
+     Auditor Remarks column. */
   .edit-hint{font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted-2);font-size:10px;font-style:italic;}
   .current-remark-entry{align-items:flex-start;}
   .current-remark-edit{
@@ -2021,16 +2026,25 @@
       </div>
 
       <div class="section" id="remarksSection">
-        <div class="section-title">Current remark <span class="edit-hint">click to edit</span></div>
+        <div class="section-title">
+          Auditor Remarks
+          <span class="mini-marker-picker" id="modalMarkerPicker" title="Highlight this customer">
+            <button type="button" class="mini-mark-swatch" data-color="green" title="Green"></button>
+            <button type="button" class="mini-mark-swatch" data-color="yellow" title="Yellow"></button>
+            <button type="button" class="mini-mark-swatch" data-color="red" title="Red"></button>
+            <button type="button" class="mini-mark-swatch" data-color="sky" title="Sky blue"></button>
+            <button type="button" class="mini-mark-swatch clear" data-color="" title="Clear highlight">✕</button>
+          </span>
+        </div>
         <div class="history-entry current-remark-entry">
           <div class="h-body">
-            <textarea id="mCurrentEdit" class="current-remark-edit" placeholder="No remarks recorded yet." readonly></textarea>
+            <textarea id="mCurrentEdit" class="current-remark-edit" placeholder="Write the audit finding for this customer..."></textarea>
           </div>
           <div class="h-actions">
-            <button type="button" class="h-btn edit" id="mCurrentEditBtn" title="Edit this remark">✏️</button>
             <button type="button" class="h-btn delete" id="mCurrentDeleteBtn" title="Delete this remark">🗑</button>
           </div>
         </div>
+        <div class="draft-status" id="draftStatus" style="display:none;"></div>
       </div>
 
       <div class="section" id="historySection">
@@ -2042,21 +2056,6 @@
         <textarea id="mHistoryEdit" class="history-edit" style="display:none;"></textarea>
       </div>
 
-      <div class="section" style="margin-bottom:0;">
-        <div class="section-title">
-          <span id="newRemarkLabel">Add new remark</span>
-          <span class="mini-marker-picker" id="modalMarkerPicker" title="Highlight this customer">
-            <button type="button" class="mini-mark-swatch" data-color="green" title="Green"></button>
-            <button type="button" class="mini-mark-swatch" data-color="yellow" title="Yellow"></button>
-            <button type="button" class="mini-mark-swatch" data-color="red" title="Red"></button>
-            <button type="button" class="mini-mark-swatch" data-color="sky" title="Sky blue"></button>
-            <button type="button" class="mini-mark-swatch clear" data-color="" title="Clear highlight">✕</button>
-          </span>
-        </div>
-        <textarea id="mNewRemark" placeholder="Write the audit finding for this visit..."></textarea>
-        <div class="draft-status" id="draftStatus" style="display:none;"></div>
-      </div>
-
     </div>
     <div class="modal-foot">
       <div class="right">
@@ -2065,6 +2064,7 @@
       </div>
     </div>
   </div>
+
 </div>
 
 <div class="overlay" id="syncOverlay">
@@ -4106,13 +4106,6 @@
   // calls at all.
   let editorOriginalCurrent = '';
   let editorOriginalHistory = '';
-  // Whether #mCurrentEdit started this modal-open LOCKED (there was
-  // already a remark, so the pencil is required to edit it) vs directly
-  // typable (no remark yet, so a click straight into the box should just
-  // work — no pencil needed to fill in a box that's currently empty).
-  // Read by the pencil-click, blur, and delete handlers below so they
-  // only re-lock the box when it's guarding an existing remark.
-  let currentRemarkLockable_ = false;
 
   // BUGFIX: a <textarea>'s .value getter normalizes line breaks (CRLF /
   // lone CR -> LF) the moment a string is assigned into it. If a remark
@@ -4254,26 +4247,20 @@
   }
 
 
-  // ---- Current remark: locked by default, editable only via the pencil --
+  // ---- Auditor Remarks: plain, always-editable text -------------------
   //
-  // The textarea starts `readonly` (see the markup above) so a stray tap/
-  // click into the box — or an accidental keystroke while typing a NEW
-  // remark in the box below it — can't quietly overwrite it. "Edit"
-  // unlocks it and focuses the cursor at the end; it re-locks itself the
-  // moment it loses focus (clicking Save, clicking elsewhere, etc.), so
-  // it's never left editable longer than the person is actively using it.
-  // This also removes a real bug: with the box editable at all times, an
-  // unintended edit here made #mCurrentEdit's value differ from what the
-  // modal opened with, which made saveModal() think the current remark
-  // had been deliberately changed — so on top of whatever was typed into
-  // "Add new remark", the (accidentally-touched) old current remark also
-  // got pushed into Previous Audit Remarks, appearing to save "both" even
-  // when the person only meant to add one new remark. Locking the field
-  // means its value only ever changes on a deliberate Edit.
-  // "Delete" clears it with a confirmation — same as before, nothing here
-  // touches historyEntries_/renderHistoryList_ or the server; the actual
-  // save only happens when "Save changes" is clicked, which still just
-  // reads #mCurrentEdit's .value like it always did.
+  // "Add new remark" (which used to auto-stamp "[M-D-YY] - text" and
+  // stack a new dated entry on top, pushing the old one into "Previous
+  // audit remarks") has been REMOVED. #mCurrentEdit is now just the
+  // Auditor Remarks column's plain text, directly editable at any time —
+  // no pencil-unlock step, no automatic date stamp, no automatic
+  // archiving into history. "Previous audit remarks" is still its own
+  // locked/auto-logged column (only Import Remarks or a direct history
+  // edit ever writes to it) — it just no longer gets a new entry pushed
+  // into it as a side effect of editing the current remark.
+  // "Delete" clears it with a confirmation — the actual save only
+  // happens when "Save changes" is clicked, which reads #mCurrentEdit's
+  // .value like it always did.
   // Grows #mCurrentEdit to fit whatever text it currently holds — no
   // max-height, no scrolling, no manual drag. Called right after the
   // box is populated so a long remark is fully visible the moment the
@@ -4284,58 +4271,20 @@
     ta.style.height = ta.scrollHeight + 'px';
   }
 
-  document.getElementById('mCurrentEditBtn').addEventListener('click', function(){
-    const ta = document.getElementById('mCurrentEdit');
-    ta.readOnly = false;
-    ta.focus();
-    ta.selectionStart = ta.selectionEnd = ta.value.length;
-    autoFitTextarea_(ta);
-  });
-
   document.getElementById('mCurrentEdit').addEventListener('input', function(){
     autoFitTextarea_(this);
-  });
-
-  document.getElementById('mCurrentEdit').addEventListener('blur', function(){
-    // Only snap back to locked (pencil-required) if the box actually
-    // started this modal-open with an existing remark to protect. If it
-    // started empty, it's meant to stay directly clickable/typable the
-    // whole time this modal is open — relocking it on every blur would
-    // mean a second click into it (e.g. after tapping another field)
-    // stops working until the pencil is clicked, defeating the point.
-    if(currentRemarkLockable_) this.readOnly = true;
+    queueDraftSave_();
   });
 
   document.getElementById('mCurrentDeleteBtn').addEventListener('click', async function(){
     const ta = document.getElementById('mCurrentEdit');
-    if(!ta.value.trim()){ toast('There\'s no current remark to delete.'); return; }
-    if(!await appConfirm('Delete the current remark? This can\'t be undone once you click Save changes.', { danger: true, title: 'Delete remark?', confirmText: 'Delete' })) return;
+    if(!ta.value.trim()){ toast('There\'s no remark to delete.'); return; }
+    if(!await appConfirm('Delete this remark? This can\'t be undone once you click Save changes.', { danger: true, title: 'Delete remark?', confirmText: 'Delete' })) return;
     ta.value = '';
     autoFitTextarea_(ta);
-    // Once cleared there's nothing left to guard, so the box goes back
-    // to being directly clickable/typable instead of staying locked
-    // behind the pencil.
-    currentRemarkLockable_ = false;
-    ta.readOnly = false;
-    updateCurrentRemarkEditUi_();
+    queueDraftSave_();
     toast('Remark removed — click Save changes to confirm.');
   });
-
-  // Shows/hides the pencil button to match whether the box is currently
-  // guarding an existing remark (locked, pencil needed) or empty and
-  // directly typable (pencil would be redundant, so it's hidden) — and
-  // keeps the "click to add" / "click ✏️ to edit" hint text in sync.
-  function updateCurrentRemarkEditUi_(){
-    const hint = document.querySelector('#remarksSection .edit-hint');
-    const editBtn = document.getElementById('mCurrentEditBtn');
-    if(currentRemarkLockable_){
-      if(hint) hint.textContent = 'click ✏️ to edit';
-      if(editBtn) editBtn.style.display = '';
-    } else {
-      if(hint) hint.textContent = 'click to add';
-      if(editBtn) editBtn.style.display = 'none';
-    }
-  }
 
   // ---- Per-row editable "Previous audit remarks" list -----------------
   //
@@ -8922,12 +8871,31 @@
     return 'other';
   }
 
-  // Unit Status is free text, color-coded everywhere it's displayed
-  // (card list, fact-grid, modal preview) whenever it matches one of the
-  // recognized presets below; anything else falls back to the neutral
-  // "us-custom" color. Also shown as one-tap chips in the edit modal's
-  // dropdown — typing anything else is always allowed too.
-  const UNIT_STATUS_OPTIONS = ['Missing', 'Tracing', 'Good condition', 'Impounded', 'Car-napped', 'Not Confirmed'];
+  // Unit Status supports MULTIPLE selected values at once (e.g. a unit
+  // that's both "Missing" and "Not Confirmed"). On the sheet it's still
+  // just one string in the "Unit status" column — the individual values
+  // are joined with ", " (see UNIT_STATUS_DELIM_) — but everywhere it's
+  // displayed (card list fact-grid, modal preview) each selected value
+  // gets split back out and shown as its own color-coded badge via
+  // unitStatusMeta_ below; anything that doesn't match a recognized
+  // preset falls back to the neutral "us-custom" color. Free typing is
+  // still allowed in the input for anything not covered by the presets.
+  const UNIT_STATUS_OPTIONS = ['Missing', 'Tracing', 'Good condition', 'Impounded', 'Motor-napped', 'Total Wreck', 'Damage', 'Not Confirmed'];
+  const UNIT_STATUS_DELIM_ = ', ';
+
+  // Splits a stored Unit Status string (one or more values joined by
+  // UNIT_STATUS_DELIM_) back into a clean array of individual values.
+  // Tolerant of plain commas/semicolons too, in case a value was ever
+  // typed by hand instead of picked from the dropdown.
+  function unitStatusSplit_(status){
+    const raw = str_(status).trim();
+    if(!raw) return [];
+    return raw.split(/[,;]\s*/).map(s => s.trim()).filter(Boolean);
+  }
+
+  function unitStatusJoin_(list){
+    return (list || []).filter(Boolean).join(UNIT_STATUS_DELIM_);
+  }
 
   function unitStatusMeta_(status){
     const raw = str_(status).trim();
@@ -8937,9 +8905,32 @@
     if(s === 'tracing') return { cls: 'us-tracing', label: raw };
     if(s === 'good condition' || s === 'good') return { cls: 'us-good', label: raw };
     if(s === 'impounded') return { cls: 'us-impounded', label: raw };
+    // "Motor-napped" is the current label; older rows saved before this
+    // rename may still say "Car-napped" — both still resolve to a
+    // sensible badge (kept as the original .us-carnapped color) instead
+    // of falling through to the generic "custom" gray.
+    if(s === 'motor-napped' || s === 'motornapped' || s === 'motor napped') return { cls: 'us-carnapped', label: raw };
     if(s === 'car-napped' || s === 'carnapped' || s === 'car napped') return { cls: 'us-carnapped', label: raw };
+    if(s === 'total wreck' || s === 'totalwreck' || s === 'total-wreck') return { cls: 'us-totalwreck', label: raw };
+    if(s === 'damage' || s === 'damaged') return { cls: 'us-damage', label: raw };
     if(s === 'not confirmed' || s === 'notconfirmed') return { cls: 'us-notconfirmed', label: raw };
     return { cls: 'us-custom', label: raw };
+  }
+
+  // Renders a full Unit Status VALUE (possibly several selected values
+  // joined together) as a row of individually-colored badges — used
+  // anywhere the stored string needs to be displayed (not the editable
+  // combo itself, which renders its own option list).
+  function unitStatusBadgesHtml_(status){
+    const values = unitStatusSplit_(status);
+    if(!values.length){
+      const meta = unitStatusMeta_('');
+      return `<span class="badge ${meta.cls}">${escapeHtml(meta.label)}</span>`;
+    }
+    return `<span class="us-badges">${values.map(v => {
+      const meta = unitStatusMeta_(v);
+      return `<span class="badge ${meta.cls}">${escapeHtml(meta.label)}</span>`;
+    }).join('')}</span>`;
   }
 
   // Minimalist counter strip: one colored entry per DISTINCT Customer
@@ -9738,13 +9729,13 @@
         ['Penalty Due', c.penaltyDue !== '' && c.penaltyDue != null ? '₱' + fmtMoney(c.penaltyDue) : '—'],
         ['Payment Mode', c.paymentMode || '—'],
       ];
-      const usMeta = unitStatusMeta_(c.unitStatus);
-
       let factsHtml = '';
-      // Unit Status renders as its own colored badge (see unitStatusMeta_)
-      // instead of a plain text fact, so it's recognizable at a glance the
-      // same way Customer Status already is up in the card header.
-      factsHtml += `<div class="fact"><div class="k">Unit Status</div><div class="v"><span class="badge ${usMeta.cls}">${escapeHtml(usMeta.label)}</span></div></div>`;
+      // Unit Status renders as one or more colored badges (see
+      // unitStatusBadgesHtml_/unitStatusMeta_) instead of a plain text
+      // fact, so it's recognizable at a glance the same way Customer
+      // Status already is up in the card header — and now supports
+      // several selected values shown side by side.
+      factsHtml += `<div class="fact"><div class="k">Unit Status</div><div class="v">${unitStatusBadgesHtml_(c.unitStatus)}</div></div>`;
       for(let j = 0; j < facts.length; j++){
         factsHtml += `<div class="fact"><div class="k">${escapeHtml(facts[j][0])}</div><div class="v">${escapeHtml(String(facts[j][1]))}</div></div>`;
       }
@@ -9960,23 +9951,28 @@
         }
 
         if(f.type === 'combo'){
-          // Free-text input (still typable) plus a dropdown of presets —
-          // see UNIT_STATUS_OPTIONS / unitStatusMeta_ above. The panel
-          // starts closed (.us-options only shows inside an "open"
-          // .us-combo — see the CSS) and opens on tapping the input or
-          // the chevron; wiring for that, the option clicks, and keeping
-          // the active option in sync is delegated on #fieldGrid (see
-          // the listeners added right after buildFieldGrid), not
-          // attached here, since this HTML is rebuilt on every open.
+          // Free-text input (still typable) plus a MULTI-SELECT dropdown
+          // of presets — see UNIT_STATUS_OPTIONS / unitStatusMeta_ above.
+          // Any number of options can be active at once; picking one
+          // toggles it in/out of the comma-joined value instead of
+          // replacing the whole field (see the click handler below).
+          // The panel starts closed (.us-options only shows inside an
+          // "open" .us-combo — see the CSS) and opens on tapping the
+          // input or the chevron; wiring for that, the option clicks,
+          // and keeping the active options in sync is delegated on
+          // #fieldGrid (see the listeners added right after
+          // buildFieldGrid), not attached here, since this HTML is
+          // rebuilt on every open.
+          const selectedSet = new Set(unitStatusSplit_(raw).map(v => v.toLowerCase()));
           const optionsHtml = UNIT_STATUS_OPTIONS.map(opt => {
             const optMeta = unitStatusMeta_(opt);
-            const isActive = raw.trim().toLowerCase() === opt.toLowerCase();
-            return `<button type="button" class="badge us-option ${optMeta.cls}${isActive ? ' active' : ''}" data-us-option="${escapeHtml(opt)}">${escapeHtml(opt)}</button>`;
+            const isActive = selectedSet.has(opt.toLowerCase());
+            return `<button type="button" class="badge us-option ${optMeta.cls}${isActive ? ' active' : ''}" data-us-option="${escapeHtml(opt)}" aria-pressed="${isActive}">${isActive ? '✓ ' : ''}${escapeHtml(opt)}</button>`;
           }).join('');
           return `<div class="info-card editable${spanClass}">
             <span class="k">${escapeHtml(f.label)}${f.required ? ' *' : ''}</span>
             <div class="us-combo">
-              <input class="card-input us-input" data-key="${f.key}" type="text" value="${escapeHtml(raw)}" placeholder="Tap to choose, or type manually" autocomplete="off">
+              <input class="card-input us-input" data-key="${f.key}" type="text" value="${escapeHtml(raw)}" placeholder="Tap to choose one or more, or type manually" autocomplete="off">
               <button type="button" class="us-toggle" data-us-toggle title="Show options"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
               <div class="us-options">${optionsHtml}</div>
             </div>
@@ -10025,9 +10021,15 @@
   function refreshUnitStatusActive_(){
     const input = document.querySelector('#fieldGrid .us-input');
     if(!input) return;
-    const val = input.value.trim().toLowerCase();
+    // Unit Status is multi-select: an option is "active" if its text
+    // appears anywhere in the comma-separated value currently typed/set
+    // in the input, not just on an exact whole-field match.
+    const selected = new Set(unitStatusSplit_(input.value).map(v => v.toLowerCase()));
     document.querySelectorAll('#fieldGrid .us-option').forEach(opt=>{
-      opt.classList.toggle('active', opt.dataset.usOption.toLowerCase() === val);
+      const isActive = selected.has(opt.dataset.usOption.toLowerCase());
+      opt.classList.toggle('active', isActive);
+      opt.setAttribute('aria-pressed', String(isActive));
+      opt.textContent = (isActive ? '✓ ' : '') + opt.dataset.usOption;
     });
   }
   function closeAllDropdowns_(except){
@@ -10036,13 +10038,23 @@
     });
   }
   document.getElementById('fieldGrid').addEventListener('click', (e)=>{
-    // Unit Status: preset option pick
+    // Unit Status: multi-select preset pick — toggles this option in/out
+    // of the comma-joined value instead of replacing the whole field, so
+    // several statuses can be selected together (e.g. "Missing, Damage").
+    // The dropdown stays open after a pick so more than one option can
+    // be chosen in one go; it closes on chevron/outside click or Escape,
+    // same as before.
     const usOption = e.target.closest('.us-option');
     if(usOption){
       const input = document.querySelector('#fieldGrid .us-input');
-      if(input) input.value = usOption.dataset.usOption;
+      if(input){
+        const opt = usOption.dataset.usOption;
+        const current = unitStatusSplit_(input.value);
+        const idx = current.findIndex(v => v.toLowerCase() === opt.toLowerCase());
+        if(idx === -1) current.push(opt); else current.splice(idx, 1);
+        input.value = unitStatusJoin_(current);
+      }
       refreshUnitStatusActive_();
-      closeAllDropdowns_();
       queueDraftSave_(); // set via JS, not typing — 'input' event above never fires for this
       return;
     }
@@ -10147,21 +10159,21 @@
 
   function draftHasContent_(snap){
     if(!snap) return false;
-    if(snap.text && snap.text.trim()) return true;
+    if(snap.currentEdit && snap.currentEdit.trim()) return true;
     if(snap.marker) return true;
     if(snap.fields) return Object.keys(snap.fields).some(k => snap.fields[k] !== undefined && snap.fields[k] !== '');
     return false;
   }
 
-  // Reads whatever's currently painted into the open modal (remark text,
-  // every editable field, the marker picker) and persists it as one
-  // snapshot. Safe to call often (debounced by callers) — a no-op write
-  // if the modal ended up back at "nothing entered yet".
+  // Reads whatever's currently painted into the open modal (Auditor
+  // Remarks text, every editable field, the marker picker) and persists
+  // it as one snapshot. Safe to call often (debounced by callers) — a
+  // no-op write if the modal ended up back at "nothing entered yet".
   function saveDraft_(row){
     try{
       const key = draftKey_(row);
       const snap = {
-        text: document.getElementById('mNewRemark') ? document.getElementById('mNewRemark').value : '',
+        currentEdit: document.getElementById('mCurrentEdit') ? document.getElementById('mCurrentEdit').value : '',
         fields: document.getElementById('fieldGrid') ? collectFieldValues() : {},
         marker: modalMarkerColor_ || '',
         savedAt: Date.now()
@@ -10215,16 +10227,17 @@
 
   function discardDraft(){
     clearDraft_(activeRow);
-    const ta = document.getElementById('mNewRemark');
-    ta.value = '';
-    autoFitTextarea_(ta);
-    // Reset the field grid + marker back to the real record (edit) or
-    // blank (create) — a discarded draft should leave no trace, not just
-    // clear the remark box while stray field edits stay on screen.
+    // Reset the field grid + marker + remark back to the real record
+    // (edit) or blank (create) — a discarded draft should leave no
+    // trace, not just clear part of the form while stray edits stay on
+    // screen.
     if(modalMode === 'edit'){
       const c = customers.find(x => x.row === activeRow);
       buildFieldGrid(c || {});
       setModalMarkerPickerColor_(c ? (c.marker || '') : '');
+      const ta = document.getElementById('mCurrentEdit');
+      ta.value = c ? str_(c.auditorRemarks) : '';
+      autoFitTextarea_(ta);
     } else {
       buildFieldGrid({});
       setModalMarkerPickerColor_('');
@@ -10240,17 +10253,12 @@
       updateDraftStatus_();
     }, 400);
   }
-  document.getElementById('mNewRemark').addEventListener('input', function(){
-    // Auto-grow the box to fit whatever's been typed so far — see
-    // autoFitTextarea_ / the #mNewRemark CSS rule above.
-    autoFitTextarea_(this);
-    queueDraftSave_();
-  });
   // Any edit to a field in the grid (plain input, Unit Status combo, or
-  // a preset field like Payment Mode) also queues a draft save, same
-  // debounce as the remark box above — see the delegated #fieldGrid
-  // 'input' listener further down, which calls queueDraftSave_() after
-  // its own combo/preset bookkeeping.
+  // a preset field like Payment Mode), or to the Auditor Remarks box
+  // above, queues a draft save, same debounce — see the delegated
+  // #fieldGrid 'input' listener further down, which calls
+  // queueDraftSave_() after its own combo/preset bookkeeping, and the
+  // #mCurrentEdit 'input' listener above.
 
   // ---- Modal highlight picker — mirrors setMark_'s four colors, but
   // doesn't save on click; it just tracks modalMarkerColor_, which
@@ -10278,7 +10286,6 @@
 
     document.getElementById('remarksSection').style.display = 'block';
     document.getElementById('historySection').style.display = 'block';
-    document.getElementById('newRemarkLabel').textContent = 'Add new remark';
     document.getElementById('saveBtn').textContent = 'Save changes';
 
     // Header stays a generic, static label — the customer's name, model,
@@ -10290,23 +10297,11 @@
 
     const hasRemark = c.auditorRemarks && !isBlankRemark_(c.auditorRemarks);
     // The current remark's date badge (mCurrentDate) was removed from the
-    // UI — the date is still tracked internally (c.dateOfAudit, set
-    // automatically on Save changes) and still used for sorting/history,
-    // it's just no longer shown next to the remark text itself since it
-    // isn't part of the remark. stripRedundantDateStamp_ below still
-    // strips a "[date] " prefix baked into the raw text, independent of
-    // whether the badge is displayed.
+    // UI — the date is still tracked internally (c.dateOfAudit) and still
+    // used for sorting/history, it's just no longer shown next to the
+    // remark text itself since it isn't part of the remark.
     editorOriginalCurrent = hasRemark ? stripRedundantDateStamp_(c.auditorRemarks) : '';
     const mCurrentEditEl = document.getElementById('mCurrentEdit');
-    mCurrentEditEl.value = editorOriginalCurrent;
-    autoFitTextarea_(mCurrentEditEl);
-    // Locked behind the pencil only when there's an existing remark to
-    // protect from an accidental overwrite. When there isn't one yet,
-    // leave it directly clickable/typable — no pencil needed to fill in
-    // a box that's currently empty.
-    currentRemarkLockable_ = !!hasRemark;
-    mCurrentEditEl.readOnly = currentRemarkLockable_;
-    updateCurrentRemarkEditUi_();
 
     editorOriginalHistory = str_(c.previousRemarks);
     historyEntries_ = parseHistoryEntries_(editorOriginalHistory);
@@ -10314,9 +10309,8 @@
     renderHistoryList_();
 
     const draft = loadDraft_(row);
-    const mNewRemarkEl = document.getElementById('mNewRemark');
-    mNewRemarkEl.value = draft ? draft.text : '';
-    autoFitTextarea_(mNewRemarkEl);
+    mCurrentEditEl.value = (draft && draft.currentEdit !== undefined) ? draft.currentEdit : editorOriginalCurrent;
+    autoFitTextarea_(mCurrentEditEl);
     // Overlay any unsaved field/marker edits from a prior crash/close on
     // top of the real record buildFieldGrid(c) just painted above — see
     // the WHOLE-FORM DRAFT note near draftKey_.
@@ -10335,7 +10329,6 @@
 
     document.getElementById('remarksSection').style.display = 'none';
     document.getElementById('historySection').style.display = 'none';
-    document.getElementById('newRemarkLabel').textContent = 'Initial remark (optional)';
     document.getElementById('saveBtn').textContent = 'Create customer';
 
     document.getElementById('mTitle').textContent = 'New customer';
@@ -10344,16 +10337,12 @@
     editorOriginalCurrent = '';
     editorOriginalHistory = '';
     const mCurrentEditEl2 = document.getElementById('mCurrentEdit');
-    mCurrentEditEl2.value = '';
-    currentRemarkLockable_ = false;
-    mCurrentEditEl2.readOnly = true;
     historyEntries_ = [];
     historyEditingIdx_ = -1;
     renderHistoryList_();
     const draft = loadDraft_(null);
-    const mNewRemarkEl2 = document.getElementById('mNewRemark');
-    mNewRemarkEl2.value = draft ? draft.text : '';
-    autoFitTextarea_(mNewRemarkEl2);
+    mCurrentEditEl2.value = (draft && draft.currentEdit) ? draft.currentEdit : '';
+    autoFitTextarea_(mCurrentEditEl2);
     // Overlay any unsaved fields/marker from a half-finished "new
     // customer" entry that never got tapped Save — see the WHOLE-FORM
     // DRAFT note near draftKey_.
@@ -10383,8 +10372,11 @@
     const originalLabel = btn.textContent;
     btn.textContent = modalMode === 'create' ? 'Creating…' : 'Saving…';
 
-    const remark = document.getElementById('mNewRemark').value.trim();
-    const auditor = '';
+    // "Add new remark" has been removed — customer creation no longer
+    // takes an initial remark (the remark box only appears once editing
+    // an existing customer, via Auditor Remarks below).
+    const remark = null;
+    const auditor = null;
 
     try{
       if(modalMode === 'create'){
@@ -10393,8 +10385,8 @@
           kind: 'create',
           tempRow: -Date.now(),
           fields,
-          remark: remark || null,
-          auditor: auditor || null,
+          remark: null,
+          auditor: null,
           status: 'pending',
           customerName: fields.customer || null
         };
@@ -10402,8 +10394,8 @@
         toast('Customer added — syncing…');
         logActivity_(
           'success', 'Customer added',
-          (fields.customer ? fields.customer : 'New customer') + ' added to "' + currentSheet + '".' + (remark ? ' Initial remark included.' : ''),
-          remark ? [ { label: 'Initial remark', items: [remark] } ] : null
+          (fields.customer ? fields.customer : 'New customer') + ' added to "' + currentSheet + '".',
+          null
         );
         clearDraft_(null);
       } else {
@@ -10521,16 +10513,14 @@
         const markerTo = fields.marker || '';
 
         const summaryParts = [];
-        if(remark) summaryParts.push('added a new remark');
-        if(currentEdit !== undefined) summaryParts.push('edited the current remark');
+        if(currentEdit !== undefined) summaryParts.push('edited the remarks');
         if(historyEdit !== undefined) summaryParts.push('edited the remark history');
         if(changedFieldLabels.length) summaryParts.push(`updated ${changedFieldLabels.length} field${changedFieldLabels.length === 1 ? '' : 's'} (${changedFieldLabels.join(', ')})`);
         if(markerChanged) summaryParts.push(`changed the color marker (${markColorLabel_(markerFrom)} → ${markColorLabel_(markerTo)})`);
         const detail = summaryParts.length ? summaryParts.join('; ') + '.' : 'Saved with no detected changes.';
 
         const groups = [];
-        if(remark) groups.push({ label: 'New remark added', items: [remark] });
-        if(currentEdit !== undefined) groups.push({ label: 'Current remark edited to', items: [currentEdit || '(cleared)'] });
+        if(currentEdit !== undefined) groups.push({ label: 'Auditor Remarks edited to', items: [currentEdit || '(cleared)'] });
         if(historyEdit !== undefined) groups.push({ label: 'Remark history edited to', items: [historyEdit || '(cleared)'] });
 
         logActivity_('success', 'Customer updated', (c ? c.customer : 'row ' + activeRow) + ' — ' + detail, groups, undefined, undoDescriptor);

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#16215A">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -6463,6 +6463,20 @@
 
     function applyViewportHeight(){
       document.documentElement.style.setProperty('--kb-vh', vv.height + 'px');
+      // Some mobile browsers (older iOS Safari, or Android Chrome when
+      // interactive-widget=resizes-content isn't honored) scroll the
+      // *layout* viewport up when the keyboard opens, even though
+      // html/body are overflow:hidden here. Our overlay is
+      // position:fixed against that layout viewport, not the visual
+      // one, so a scrolled layout viewport leaves the fixed overlay
+      // sitting higher than it should — its bottom edge (and the
+      // Save changes button) falls short of the keyboard, exposing the
+      // real page underneath. Snapping scroll back to (0,0) keeps the
+      // two viewports aligned so the overlay actually covers what's
+      // visible above the keyboard.
+      if(window.scrollY !== 0 || document.documentElement.scrollTop !== 0){
+        window.scrollTo(0, 0);
+      }
     }
     applyViewportHeight();
 
@@ -6485,6 +6499,7 @@
     }
     vv.addEventListener('resize', onViewportChange);
     vv.addEventListener('scroll', onViewportChange);
+    window.addEventListener('scroll', applyViewportHeight, { passive: true });
   })();
 
   // Fallback/first-response: also nudge a focused field into view right

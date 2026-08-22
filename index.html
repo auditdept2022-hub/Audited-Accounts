@@ -2041,13 +2041,13 @@
 </div>
 
 <div class="overlay" id="overlay">
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
     <div class="modal-head">
       <div class="mh-titlewrap">
         <h2 id="mTitle">Account &amp; unit information</h2>
       </div>
       <div class="mh-right">
-        <button class="modal-close" onclick="closeModal()">✕</button>
+        <button class="modal-close" onclick="closeModal()" aria-label="Close">✕</button>
       </div>
     </div>
     <div class="modal-body">
@@ -2099,10 +2099,10 @@
 </div>
 
 <div class="overlay" id="syncOverlay">
-  <div class="modal sync-modal">
+  <div class="modal sync-modal" role="dialog" aria-modal="true" aria-labelledby="syncModalTitle">
     <div class="modal-head">
       <div>
-        <h2>Syncing changes</h2>
+        <h2 id="syncModalTitle">Syncing changes</h2>
         <div class="sync-modal-meta">Changes save to this device instantly and sync to the sheet automatically — this just shows what's happening.</div>
       </div>
       <button class="modal-close" onclick="closeSyncModal()">✕</button>
@@ -2128,18 +2128,18 @@
 </div>
 
 <div class="overlay" id="profileOverlay">
-  <div class="modal profile-modal">
+  <div class="modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profileModalTitle">
     <div class="modal-head">
       <div style="display:flex;align-items:center;gap:12px;min-width:0;">
         <div class="profile-modal-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-8h6v8"/></svg>
         </div>
         <div style="min-width:0;">
-          <h2>Branch Profiles</h2>
+          <h2 id="profileModalTitle">Branch Profiles</h2>
           <div class="meta">Switch, add, or manage branches</div>
         </div>
       </div>
-      <button class="modal-close" onclick="closeProfileMenu()">✕</button>
+      <button class="modal-close" onclick="closeProfileMenu()" aria-label="Close">✕</button>
     </div>
     <div class="modal-body">
       <div class="profile-search-row">
@@ -2170,10 +2170,10 @@
 </div>
 
 <div class="overlay" id="activityOverlay">
-  <div class="modal activity-modal">
+  <div class="modal activity-modal" role="dialog" aria-modal="true" aria-labelledby="activityModalTitle">
     <div class="modal-head">
       <div>
-        <h2>Activity Log</h2>
+        <h2 id="activityModalTitle">Activity Log</h2>
         <div class="activity-modal-meta">Imports, exports, and anything that succeeded or failed — newest first.</div>
       </div>
       <button class="modal-close" onclick="closeActivityLog()">✕</button>
@@ -2193,10 +2193,10 @@
 </div>
 
 <div class="overlay" id="actionOverlay">
-  <div class="modal activity-modal">
+  <div class="modal activity-modal" role="dialog" aria-modal="true" aria-labelledby="actionModalTitle">
     <div class="modal-head">
       <div>
-        <h2>Action Needed</h2>
+        <h2 id="actionModalTitle">Action Needed</h2>
         <div class="activity-modal-meta">Sync conflicts to resolve, plus failed saves, skipped/duplicate rows &amp; other warnings. Fix these here; check the bell for the full history.</div>
       </div>
       <button class="modal-close" onclick="closeActionLog()">✕</button>
@@ -2215,10 +2215,10 @@
 </div>
 
 <div class="overlay" id="deletedOverlay">
-  <div class="modal activity-modal">
+  <div class="modal activity-modal" role="dialog" aria-modal="true" aria-labelledby="deletedModalTitle">
     <div class="modal-head">
       <div>
-        <h2>Deleted Records</h2>
+        <h2 id="deletedModalTitle">Deleted Records</h2>
         <div class="activity-modal-meta">Every single or bulk customer delete that still has undo data, newest first. Restore one from here, or clear the undo data to free up storage.</div>
       </div>
       <button class="modal-close" onclick="closeDeletedLog()">✕</button>
@@ -2238,9 +2238,9 @@
 </div>
 
 <div class="overlay" id="confirmOverlay">
-  <div class="modal confirm-modal" id="confirmModalEl">
+  <div class="modal confirm-modal" id="confirmModalEl" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmBody">
     <div class="modal-body">
-      <div class="confirm-icon-row"><span class="confirm-icon" id="confirmIcon">?</span></div>
+      <div class="confirm-icon-row" aria-hidden="true"><span class="confirm-icon" id="confirmIcon">?</span></div>
       <h3 class="confirm-title" id="confirmTitle">Please confirm</h3>
       <div class="confirm-body" id="confirmBody"></div>
     </div>
@@ -2252,12 +2252,12 @@
 </div>
 
 <div class="overlay" id="pickerOverlay">
-  <div class="modal picker-modal" id="pickerModalEl">
+  <div class="modal picker-modal" id="pickerModalEl" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
     <div class="modal-head">
       <div>
         <h2 id="pickerTitle">Choose an option</h2>
       </div>
-      <button class="modal-close" id="pickerCloseBtn">✕</button>
+      <button class="modal-close" id="pickerCloseBtn" aria-label="Close">✕</button>
     </div>
     <div class="modal-body">
       <p class="picker-hint" id="pickerHint">Tap to select, or type your own below.</p>
@@ -2274,7 +2274,7 @@
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <script>
   // ---- CONFIG ---------------------------------------------------------

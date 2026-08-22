@@ -675,6 +675,7 @@
   .rec-top{display:flex;align-items:center;gap:8px;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #EEF0F8;}
   .rec-id{display:flex;align-items:center;gap:9px;flex-wrap:wrap;min-width:0;}
   .cust-name{font-weight:700;font-size:15.5px;color:var(--ink);letter-spacing:-.15px;overflow:hidden;text-overflow:ellipsis;}
+  .cust-num{font-weight:600;color:var(--muted);margin-right:2px;}
   .cust-sub{color:var(--muted);font-size:10.5px;font-family:'JetBrains Mono',monospace;letter-spacing:.2px;}
   .rec-right{display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto;}
 
@@ -9765,14 +9766,21 @@
   // memory, no behavior change — output is identical either way.
   const rowHtmlCache = new Map();
 
-  function rowSignature_(c, isConflict, mark){
+  function rowSignature_(c, isConflict, mark, listPos){
+    // listPos (the customer's 1-based position in the currently filtered/
+    // sorted list) is folded into the signature so the cached HTML for a
+    // row is invalidated — and its displayed number updated — whenever
+    // that position changes (search, filter, sort, or another row being
+    // added/removed above it), even though none of the customer's own
+    // fields changed.
     return c.customer + '\u0001' + c.model + '\u0001' + c.engineNo + '\u0001' +
       c.releaseDate + '\u0001' + c.dueDate + '\u0001' + c.term + '\u0001' +
       c.ma + '\u0001' + c.begBal + '\u0001' + c.dueThisMonth + '\u0001' +
       c.paymentAdv + '\u0001' + c.penaltyDue + '\u0001' + c.customerStatus + '\u0001' +
       c.unitStatus + '\u0001' + c.paymentMode + '\u0001' + c.dateOfAudit + '\u0001' +
       c.auditorRemarks + '\u0001' + c.previousRemarks + '\u0001' +
-      (c._pending ? 1 : 0) + '\u0001' + (isConflict ? 1 : 0) + '\u0001' + (mark || '');
+      (c._pending ? 1 : 0) + '\u0001' + (isConflict ? 1 : 0) + '\u0001' + (mark || '') +
+      '\u0001' + listPos;
   }
 
   function getFilteredCustomers(){
@@ -9957,7 +9965,7 @@
       const c = toRender[i];
       const isConflict = conflictRows.has(c.row);
       const mark = c.marker || '';
-      const sig = rowSignature_(c, isConflict, mark);
+      const sig = rowSignature_(c, isConflict, mark, i + 1);
       sigs[i] = sig;
 
       const cached = rowHtmlCache.get(c.row);
@@ -10020,7 +10028,7 @@
             <input type="checkbox" class="row-check-box" data-row="${c.row}">
           </label>
           <div class="rec-id">
-            <div class="cust-name">${escapeHtml(c.customer)}</div>
+            <div class="cust-name"><span class="cust-num">${i + 1}.</span> ${escapeHtml(c.customer)}</div>
             <span class="badge ${g}">${escapeHtml(c.customerStatus || '—')}</span>
             ${pendingTag}
           </div>

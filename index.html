@@ -8941,11 +8941,35 @@
       return;
     }
     if(!currentSheet){
-      document.getElementById('connStatus').textContent = 'No branch profiles found — open the ☰ menu to add one.';
-      document.getElementById('tableBody').innerHTML = '';
-      document.getElementById('emptyState').style.display = 'block';
-      document.querySelector('#emptyState div').textContent = 'No branch profiles yet. Open the ☰ menu (top left) to create your first one.';
-      return;
+      // RETRY-RESOLUTION FIX: currentSheet can be null for two very
+      // different reasons — (1) genuinely no branches exist yet, or (2)
+      // the very first attempt to resolve one failed (e.g. the app was
+      // opened while offline, or Apps Script was down) and nothing since
+      // has tried again. Previously this just showed the "no branch
+      // profiles" message forever, with no way to recover short of a
+      // full page reload — tapping ⟳ Refresh, waiting for auto-refresh,
+      // or the connection coming back all did nothing, because loadData
+      // returned here before ever making a network call. One real retry
+      // here means: if the connection is back, this call succeeds,
+      // picks a branch, and continues straight into loading its data —
+      // and either way, a real request is made, so the auto-offline
+      // indicator (see markConnResult_) reflects true connectivity
+      // again instead of staying stuck on whatever it last saw.
+      if(!isLoading){
+        isLoading = true;
+        updateRefreshLock_(true);
+        try{ await resolveInitialSheet_(); }
+        finally{ isLoading = false; updateRefreshLock_(false); }
+      }
+      if(!currentSheet){
+        document.getElementById('connStatus').textContent = 'No branch profiles found — open the ☰ menu to add one.';
+        document.getElementById('tableBody').innerHTML = '';
+        document.getElementById('emptyState').style.display = 'block';
+        document.querySelector('#emptyState div').textContent = 'No branch profiles yet. Open the ☰ menu (top left) to create your first one.';
+        return;
+      }
+      // A branch was just resolved — fall through into the normal load
+      // below instead of returning, so this same call finishes the job.
     }
     if(isLoading){
       // A load is already in flight (initial boot, auto-refresh, another

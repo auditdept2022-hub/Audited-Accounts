@@ -4166,7 +4166,27 @@
   // navigator.onLine directly: real online state AND no manual override.
   let manualOfflineMode_ = false;
   try{ manualOfflineMode_ = localStorage.getItem('aa_manualOffline_v1') === '1'; }catch(e){}
-  function isOnline_(){ return navigator.onLine && !manualOfflineMode_; }
+
+  // AUTO-OFFLINE FIX: navigator.onLine only tells you the device THINKS
+  // it has a network interface up — it says nothing about whether this
+  // app's actual requests are getting through (flaky wifi, a captive
+  // portal, a dead/misconfigured Apps Script deployment, etc. can all
+  // still read navigator.onLine === true). realConnFailing_ is set from
+  // the outcome of every real network call this app makes (see
+  // fetchJson_ below) — true the moment a request genuinely fails to
+  // reach/return from the server (timeout or network-unreachable),
+  // cleared the moment any request succeeds. This is what lets the
+  // header flip to "Offline" on its own when data truly isn't
+  // transmitting, instead of only ever changing via the manual toggle or
+  // a possibly-wrong browser flag — and flip back the instant a request
+  // actually goes through again, with no action needed from the person.
+  let realConnFailing_ = false;
+  function markConnResult_(ok){
+    const changed = realConnFailing_ === ok; // realConnFailing_ true + ok true, or false + !ok, both mean a flip
+    realConnFailing_ = !ok;
+    if(changed) updateSyncUI();
+  }
+  function isOnline_(){ return navigator.onLine && !manualOfflineMode_ && !realConnFailing_; }
   function toggleManualOffline_(){
     manualOfflineMode_ = !manualOfflineMode_;
     try{ localStorage.setItem('aa_manualOffline_v1', manualOfflineMode_ ? '1' : '0'); }catch(e){}
@@ -6362,8 +6382,8 @@
   // Same as apiCallJson_, but retries on transient connection/parse
   // failures. Only safe for read-only actions (listSheets) — writes must
   // keep using apiCallJson_ so a hiccup never causes a duplicate write.
-  async function apiCallJsonRead_(action, payload){
-    return fetchJsonRetry_(apiUrl_(action, payload));
+  async function apiCallJsonRead_(action, payload, timeoutMs){
+    return fetchJsonRetry_(apiUrl_(action, payload), timeoutMs);
   }
 
   // PERFORMANCE: the backend already gzips the customer list before
@@ -6449,7 +6469,14 @@
       if(v && v.trim()){ currentSheet = v.trim(); updateActiveProfileLabel_(); return; }
     }catch(e){ /* ignore, fall through to asking the backend */ }
     try{
-      const data = await apiCallJsonRead_('listSheets', {});
+      // SLOW-BOOT FIX: only 12s here (vs the usual 30s FETCH_TIMEOUT_MS)
+      // — this call gates the very first thing the person sees, and
+      // there's already a safe, useful fallback right below (the last
+      // cached branch list) for exactly this case. Better to fall back
+      // quickly and let the background loadData()/prefetch calls catch
+      // up once the server responds, than to make a first-time visitor
+      // wait the full cold-start timeout before seeing anything at all.
+      const data = await apiCallJsonRead_('listSheets', {}, 12000);
       const sheets = data.sheets || [];
       saveSheetsCache_(sheets);
       currentSheet = sheets[0] || null;
@@ -7686,20 +7713,33 @@
     let res;
     try{
       res = await fetch(url, { cache: 'no-store', signal: controller.signal });
-    } finally {
+    } catch(fetchErr){
+      // AUTO-OFFLINE FIX: this is a genuine failure to reach the server
+      // at all (network unreachable, DNS, or our own timeout firing) —
+      // exactly the "not transmitting" case. Mark it before rethrowing
+      // so the header can reflect reality automatically.
       clearTimeout(timer);
+      markConnResult_(false);
+      throw fetchErr;
     }
+    clearTimeout(timer);
     const text = await res.text();
     let data;
     try{
       data = JSON.parse(text);
     }catch(parseErr){
+      // A response DID come back (just not valid JSON) — that's a real
+      // deployment/config problem, not a connectivity one, so this
+      // doesn't affect the auto-offline signal either way.
       throw new SyntaxError(
         /^\s*</.test(text)
           ? 'Server returned a sign-in/permission page instead of data — redeploy the Apps Script as a Web App with access set to "Anyone", then update the URL here.'
           : ('Server response was not valid JSON: ' + parseErr.message)
       );
     }
+    // A parsed response — good or bad — proves the connection itself is
+    // working, so this is where the auto-offline flag clears.
+    markConnResult_(true);
     if(data && data.error){
       const e = new Error(data.error);
       if(data.retryable === true) e.retryable = true;
@@ -7731,14 +7771,14 @@
   //     then the Apps Script instance is usually warm, so that retry is
   //     fast, instead of silently waiting through a second full timeout
   //     they can't see.
-  async function fetchJsonRetry_(url){
+  async function fetchJsonRetry_(url, timeoutMs){
     try{
-      return await fetchJson_(url);
+      return await fetchJson_(url, timeoutMs);
     }catch(err){
       if(err && err.name === 'AbortError') throw err; // timeout — don't pile on another wait
       if(!isConnectionError_(err)) throw err; // a real application error — retrying won't change it
       await new Promise(r => setTimeout(r, 400));
-      return fetchJson_(url);
+      return fetchJson_(url, timeoutMs);
     }
   }
 
@@ -11257,12 +11297,25 @@
   // Boot
   initBackGuard_(); // guard against swipe/back-gesture exits from first paint — see the note above, near handleBackGuardPopState_
   if(API_URL){
+    // STUCK-ON-BOOT FIX: this used to `await resolveInitialSheet_()`
+    // BEFORE ever revealing dashPanel — so on any device without a saved
+    // branch preference yet (first-ever visit, cleared storage/cache, a
+    // new phone), the ENTIRE app body stayed display:none for as long as
+    // that one network call took. resolveInitialSheet_ hits Apps Script
+    // (listSheets) with no shortcut, so on a cold start that could be
+    // the full 30s FETCH_TIMEOUT_MS before anything besides the header/
+    // logo ever appeared — exactly the "stuck with logo and not loading"
+    // symptom. dashPanel (and a skeleton + clear status line) is now
+    // shown right away; resolveInitialSheet_/loadData still run the same
+    // as before, just underneath UI the person can already see.
+    document.getElementById('dashPanel').style.display = 'block';
+    document.getElementById('connStatus').textContent = 'Connecting…';
+    document.getElementById('tableBody').innerHTML = skeletonHtml(6);
     (async () => {
       await resolveInitialSheet_();
       loadOutbox_();
       loadActivityOutbox_();
       updateSyncUI();
-      document.getElementById('dashPanel').style.display = 'block';
       await loadData();
       if(outbox.length) syncOutbox();
       schedulePrefetch_();

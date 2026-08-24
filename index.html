@@ -293,6 +293,14 @@
   }
   .hdr-status-counts .sc-item.sc-total .sc-num,
   .hdr-status-counts .sc-item.sc-total .sc-label{color:#fff;}
+  /* Placeholder chip shown while there's no data yet (see
+     updateStatusCounts_) so the strip keeps a normal-looking row instead
+     of just vanishing — dimmer/dashed so it visibly reads as "nothing
+     here yet" rather than a real status count. */
+  .hdr-status-counts .sc-item.sc-empty{
+    background:rgba(255,255,255,.04);border-style:dashed;border-color:rgba(255,255,255,.18);
+  }
+  .hdr-status-counts .sc-item.sc-empty .sc-label{color:#8A93C4;}
   .import-status{font-size:11.5px;color:var(--muted);white-space:nowrap;}
   /* Sits in the quiet strip between the header and the toolbar card,
      instead of crowding the Import buttons — empty (0-height) until
@@ -9465,7 +9473,16 @@
   function updateStatusCounts_(list){
     const el = document.getElementById('statusCounts');
     if(!el) return;
-    if(!list || !list.length){ el.innerHTML = ''; return; }
+    // Previously this cleared to '' when there was nothing to show, and
+    // .hdr-status-counts:empty{display:none} then collapsed the whole
+    // strip — so the header visibly shrank a beat, then popped back to
+    // its taller height the moment data arrived. A placeholder chip
+    // keeps the row (and header height) present and stable at all times.
+    if(!list || !list.length){
+      el.innerHTML = '<span class="sc-item sc-empty"><span class="sc-label">No account status</span></span>';
+      updateStatusCountsEdges_(el);
+      return;
+    }
 
     const counts = new Map(); // status text -> count; blank statuses grouped under 'No status'
     for(let i = 0; i < list.length; i++){

@@ -109,8 +109,8 @@
     }
   }
   *{box-sizing:border-box;}
-  html{-webkit-text-size-adjust:100%;text-size-adjust:100%;}
-  body{margin:0;background:var(--paper);color:var(--text);font-size:14px;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;overscroll-behavior-y:contain;}
+  html{-webkit-text-size-adjust:100%;text-size-adjust:100%;overscroll-behavior:none;}
+  body{margin:0;background:var(--paper);color:var(--text);font-size:14px;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;}
   /* Scrollbars: made wider + higher-contrast (darker thumb, visible
      track, hover feedback) than the previous thin/pale version so every
      scrollable area in the app — customer list, modals, dropdowns,
@@ -205,7 +205,7 @@
   .sync-progress-row{display:flex;align-items:center;gap:10px;padding:11px 14px;margin-bottom:14px;background:var(--accent-soft);border:1px solid var(--line);border-radius:10px;}
   .sync-progress-spinner{width:16px;height:16px;border-radius:50%;border:2px solid #C7CEEE;border-top-color:var(--accent);animation:hdr-sync-spin .8s linear infinite;flex-shrink:0;}
   .sync-progress-text{font-size:12.5px;color:var(--ink);font-weight:600;}
-  .sync-item-list{display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow-y:auto;}
+  .sync-item-list{display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow-y:auto;overscroll-behavior:contain;}
   .sync-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;}
   /* ---- Clickable sync items ("View sync" popup) -----------------------
      Only conflict/error rows get this — those are the only statuses with
@@ -450,7 +450,7 @@
 
   /* ---- Activity log modal — reuses the .sync-item look/feel but with
      a type-colored icon chip (success/error/warning/info) per entry. ---- */
-  .activity-list{display:flex;flex-direction:column;gap:8px;max-height:56vh;overflow-y:auto;}
+  .activity-list{display:flex;flex-direction:column;gap:8px;max-height:56vh;overflow-y:auto;overscroll-behavior:contain;}
   .activity-empty{padding:38px 12px;text-align:center;color:var(--muted);font-size:13px;line-height:1.5;}
   .activity-item{display:flex;align-items:flex-start;gap:11px;padding:11px 12px;border:1px solid var(--line);border-radius:11px;background:#fff;}
   .activity-item .ai-icon{
@@ -660,7 +660,7 @@
     flex:1;min-height:0;overflow:hidden;
     display:flex;flex-direction:column;
   }
-  #setupPanel{flex:1;min-height:0;overflow-y:auto;}
+  #setupPanel{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;}
   /* JS toggles this element's inline style between "display:none" and
      "display:block" (see connect()/disconnect() handlers) — matching on
      the inline style text lets this rule apply only while it's actually
@@ -676,6 +676,18 @@
   .table-wrap{
     flex:1;min-height:0;position:relative;
     overflow-y:auto;-webkit-overflow-scrolling:touch;
+    /* NO-DATA / SHORT-LIST FIX: without this, a list short enough to
+       reach its top/bottom edge on the very first drag (i.e. no data,
+       one row, or a heavily filtered result) lets the drag's momentum
+       "chain" past this container to the browser itself, which reads
+       it as a pull-to-reveal gesture and repeatedly flashes the address
+       bar in and out on every touch. overscroll-behavior:contain stops
+       the scroll chain right here — this list still bounces/rubber-
+       bands locally (so it doesn't feel broken), it just never hands
+       the leftover gesture off to the page/browser chrome above it.
+       Same reasoning applies to every other inner-scrolling panel in
+       this file (see setupPanel, modal-body, profile-list, etc). */
+    overscroll-behavior:contain;
   }
 
   .rec-list{display:flex;flex-direction:column;gap:5px;padding:8px;background:linear-gradient(180deg,#F7F8FC,transparent 120px);}
@@ -786,7 +798,7 @@
   .us-toggle{flex-shrink:0;width:22px;height:22px;border:none;background:transparent;color:var(--muted-2);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;}
   .us-toggle svg{width:14px;height:14px;transition:transform var(--dur-2) var(--ease-out);}
   .us-combo.open .us-toggle svg{transform:rotate(180deg);}
-  .us-options{display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-md);padding:6px;z-index:60;max-height:220px;overflow-y:auto;}
+  .us-options{display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-md);padding:6px;z-index:60;max-height:220px;overflow-y:auto;overscroll-behavior:contain;}
   .us-combo.open .us-options{display:block;}
   .us-option{display:flex;align-items:center;width:100%;text-align:left;border:none;background:transparent;font:inherit;cursor:pointer;padding:7px 8px;border-radius:7px;margin-bottom:2px;}
   .us-option:last-child{margin-bottom:0;}
@@ -805,7 +817,7 @@
   .preset-toggle{flex-shrink:0;width:22px;height:22px;border:none;background:transparent;color:var(--muted-2);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;}
   .preset-toggle svg{width:14px;height:14px;transition:transform var(--dur-2) var(--ease-out);}
   .preset-combo.open .preset-toggle svg{transform:rotate(180deg);}
-  .preset-options{display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-md);padding:6px;z-index:60;max-height:220px;overflow-y:auto;}
+  .preset-options{display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-md);padding:6px;z-index:60;max-height:220px;overflow-y:auto;overscroll-behavior:contain;}
   .preset-combo.open .preset-options{display:block;}
   .preset-option{display:flex;align-items:center;width:100%;text-align:left;border:none;background:transparent;font:inherit;font-size:12.5px;font-weight:600;color:var(--text);cursor:pointer;padding:8px;border-radius:7px;}
   .preset-option:active,.preset-option:hover{background:var(--paper);}
@@ -935,7 +947,7 @@
   .status-menu-links{display:flex;gap:10px;}
   .status-menu-link{background:none;border:none;color:var(--accent);font-size:11.5px;font-weight:700;cursor:pointer;padding:2px;}
   .status-menu-link:hover{text-decoration:underline;}
-  .status-menu-list{display:flex;flex-direction:column;gap:1px;overflow-y:auto;max-height:280px;}
+  .status-menu-list{display:flex;flex-direction:column;gap:1px;overflow-y:auto;max-height:280px;overscroll-behavior:contain;}
   .status-option{display:flex;align-items:center;gap:9px;border:none;background:none;border-radius:9px;padding:7px 8px;cursor:pointer;text-align:left;width:100%;touch-action:manipulation;transition:background var(--dur-2) var(--ease-out);}
   .status-option:hover{background:#F4F5FB;}
   .status-option.active{background:var(--accent-soft);}
@@ -1038,7 +1050,7 @@
      translateZ(0) promotes both layers onto their own compositor layer
      up front so the first frame of the animation is already smooth
      instead of stuttering while the browser sets that up mid-transition. */
-  .overlay{position:fixed;inset:0;height:var(--kb-vh, 100dvh);background:rgba(8,12,34,.66);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;z-index:50;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--dur-4) var(--ease-out),visibility 0s linear var(--dur-4);transform:translateZ(0);}
+  .overlay{position:fixed;inset:0;height:var(--kb-vh, 100dvh);background:rgba(8,12,34,.66);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;overscroll-behavior:contain;z-index:50;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--dur-4) var(--ease-out),visibility 0s linear var(--dur-4);transform:translateZ(0);}
   .overlay.open{opacity:1;visibility:visible;pointer-events:auto;transition:opacity var(--dur-4) var(--ease-out);}
   .modal{background:#fff;border-radius:18px;max-width:720px;width:100%;overflow:hidden;box-shadow:var(--shadow-lg);max-height:calc(var(--kb-vh, 100dvh) - 80px);display:flex;flex-direction:column;transform:translateY(10px) scale(.98) translateZ(0);opacity:0;transition:transform var(--dur-4) var(--ease-out),opacity var(--dur-4) var(--ease-out);will-change:transform,opacity;}
   .overlay.open .modal{transform:translateY(0) scale(1) translateZ(0);opacity:1;}
@@ -1050,7 +1062,7 @@
   .modal-close{border:none;background:none;font-size:20px;cursor:pointer;color:var(--muted);line-height:1;padding:4px;border-radius:6px;touch-action:manipulation;transition:background var(--dur-2) var(--ease-out),transform var(--dur-1) var(--ease-out);}
   .modal-close:hover{background:#EEF0F9;}
   .modal-close:active{transform:scale(.92);}
-  .modal-body{padding:12px 16px;overflow-y:auto;flex:1;min-height:0;-webkit-overflow-scrolling:touch;}
+  .modal-body{padding:12px 16px;overflow-y:auto;overscroll-behavior:contain;flex:1;min-height:0;-webkit-overflow-scrolling:touch;}
 
   /* Account & unit information popup header — dark grey instead of the
      default pale gradient, so this record editor reads as a distinct,
@@ -1401,7 +1413,7 @@
   .profile-refresh-btn:disabled{opacity:.6;cursor:default;}
   @keyframes profile-refresh-spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
 
-  .profile-list{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;max-height:52vh;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:2px 2px 2px 0;}
+  .profile-list{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;max-height:52vh;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:2px 2px 2px 0;}
   .profile-loading{color:var(--muted);font-size:12.5px;padding:14px 2px;display:flex;align-items:center;gap:8px;}
   .profile-loading.is-error{color:var(--del);}
   .profile-loading .retry-link{color:var(--accent);font-weight:600;cursor:pointer;text-decoration:underline;margin-left:auto;flex-shrink:0;}
@@ -1704,7 +1716,7 @@
     .toolbar-extra.open{
       display:flex;flex-direction:column;gap:10px;
       padding-top:10px;border-top:1px solid var(--line);margin-top:2px;
-      max-height:min(52vh,420px);overflow-y:auto;-webkit-overflow-scrolling:touch;
+      max-height:min(52vh,420px);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
       animation:toolbar-extra-in var(--dur-3) var(--ease-out);
       transform-origin:top center;
     }

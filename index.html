@@ -3911,6 +3911,20 @@
       rows.forEach(row => applyOptimisticDelete_({ row: row }));
       render();
 
+      // PERFORMANCE FIX (deleting even a small handful of selected rows
+      // felt slow / "more loading"): this used to unconditionally call
+      // loadData() after EVERY batch delete — re-fetching and
+      // re-rendering the WHOLE branch (all 860 customers, in this
+      // report's case) just to confirm that 2-3 selected rows were
+      // actually removed, even though the batchDeleteCustomer response
+      // already tells us exactly which rows succeeded and which failed.
+      // Now: if nothing failed, that response is trusted directly and the
+      // succeeded rows are spliced out of `customers` locally — no extra
+      // network round trip beyond the delete itself, so a small selection
+      // finishes instantly instead of paying for a full-branch refetch.
+      // A full reload is now only done when something actually failed (or
+      // the whole run errored out), so the UI still ends up matching
+      // exactly what the server has whenever there's real uncertainty.
       let result;
       try{
         result = await runBatched_(
@@ -3922,14 +3936,32 @@
           null,
           text => { btn.textContent = text.replace('Importing', 'Deleting').replace('saved', 'deleted'); }
         );
-      } finally {
-        // Refresh from the server so the UI always ends up matching
-        // exactly what actually happened — rows that failed reappear,
-        // rows that succeeded stay gone — regardless of whether the run
-        // finished cleanly, hit an error, or the tab was interrupted
-        // mid-way. This also clears every optimistic "_pendingDelete"
-        // hide applied above.
+        if(result && !result.failed){
+          // Single pass instead of one applyConfirmedDelete_/filter/save
+          // call per row — matters once the selection gets into the
+          // hundreds, since each of those would otherwise re-scan and
+          // re-persist the whole (still-large) customers array on its own.
+          const failedRowSet = new Set(result.failedItems || []);
+          const succeededRowSet = new Set(rows.filter(r => !failedRowSet.has(r)));
+          customers = customers.filter(c => !succeededRowSet.has(c.row));
+          customers.forEach(c => { if(failedRowSet.has(c.row)) delete c._pendingDelete; });
+          saveLocalCache_(customers);
+        } else {
+          await loadData();
+        }
+      } catch(err){
+        // Clear the optimistic hides and re-sync with the server so
+        // nothing stays incorrectly hidden after an unexpected failure —
+        // and reset the button so it isn't left stuck disabled.
+        rows.forEach(row => { const c = customers.find(x => x.row === row); if(c) delete c._pendingDelete; });
         await loadData();
+        btn.textContent = originalLabel;
+        btn.disabled = false;
+        document.getElementById('bulkClearBtn').disabled = false;
+        render();
+        toast('Delete failed: ' + (err && err.message ? err.message : 'please try again.'));
+        logActivity_('error', 'Bulk delete failed', (err && err.message) || 'Unknown error.');
+        return;
       }
 
       btn.textContent = originalLabel;

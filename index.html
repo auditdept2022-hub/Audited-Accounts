@@ -4269,12 +4269,43 @@
   // hasRealConnResult_ tracks whether we've ever gotten a real answer
   // (success or failure) from an actual request to the server.
   let hasRealConnResult_ = false;
+  // STUCK-OFFLINE FIX: previously, once a failure was detected the header
+  // had no fast way back to "Online" — every regular poller
+  // (autoRefreshTick_, activityPollTick_) intentionally stays paused while
+  // isOnline_() is false (so a real outage doesn't get hammered with
+  // requests), and the only thing left probing was keepWarmPing_() on its
+  // plain 6-minute interval. That meant a single transient hiccup (one
+  // slow cold start, one dropped request) could leave the app reading
+  // "Offline" for up to 6 minutes even though the connection came right
+  // back — exactly the "says offline while actually online" symptom.
+  // reconnectProbe_ below fires a cheap ping a few seconds after a
+  // failure is first seen, and again a bit later if that also fails
+  // (backing off up to RECONNECT_PROBE_MAX_MS so it doesn't spin fast
+  // forever during a genuine outage), self-cancelling the instant a real
+  // request succeeds again.
+  let reconnectProbeTimer_ = null;
+  let reconnectProbeDelayMs_ = 3000;
+  const RECONNECT_PROBE_MAX_MS = 15000;
+  function scheduleReconnectProbe_(){
+    if(reconnectProbeTimer_) return; // already have one pending
+    reconnectProbeTimer_ = setTimeout(() => {
+      reconnectProbeTimer_ = null;
+      reconnectProbeDelayMs_ = Math.min(reconnectProbeDelayMs_ * 1.5, RECONNECT_PROBE_MAX_MS);
+      if(!realConnFailing_ || manualOfflineMode_ || !API_URL || document.hidden) return;
+      keepWarmPing_(); // its own success/failure feeds back through markConnResult_ below
+    }, reconnectProbeDelayMs_);
+  }
+  function clearReconnectProbe_(){
+    if(reconnectProbeTimer_){ clearTimeout(reconnectProbeTimer_); reconnectProbeTimer_ = null; }
+    reconnectProbeDelayMs_ = 3000;
+  }
   function markConnResult_(ok){
     const wasFailing = realConnFailing_;
     const hadResult = hasRealConnResult_;
     realConnFailing_ = !ok;
     hasRealConnResult_ = true;
     if(!hadResult || wasFailing !== realConnFailing_) updateSyncUI();
+    if(realConnFailing_) scheduleReconnectProbe_(); else clearReconnectProbe_();
   }
   // navigator.onLine is only consulted as a rough first guess before the
   // app has ever gotten a real answer from the server (i.e. right at

@@ -3843,17 +3843,37 @@
   // longer caps/drops records — a batch this size never needs to).
   const BULK_DELETE_SKIP_UNDO_THRESHOLD = 50;
 
-  // Online: everything selected goes out as ONE batchDeleteCustomer
-  // request (Code.gs groups the rows into a handful of range deletes
-  // under a single lock/flush server-side), instead of one full
-  // network round trip — and one Apps Script exec + lock acquisition —
-  // per row. That per-row looping is what made deleting several
-  // customers at once slow; batching turns an N-request bulk delete
-  // into 1 request no matter how many rows are selected.
-  // Offline (or if the batch call can't reach the server at all): falls
-  // back to the old per-row queueOrSend_ loop, so each row still lands
-  // in the offline outbox individually and syncs/conflict-checks the
-  // same way a single delete always has.
+  // Online: everything selected goes out through runBatched_ — the same
+  // chunked-batch-with-retry machinery Import already uses (see
+  // runBatched_ above) — instead of one single, unbounded
+  // batchDeleteCustomer request.
+  //
+  // BUG FIX (deleting hundreds of rows was extremely slow, and ended up
+  // "all going to sync"): the old code sent every selected row in ONE
+  // batchDeleteCustomer call, no matter how many were selected. For a
+  // real multi-select delete (rows scattered across the branch, not one
+  // contiguous block) the backend used to need one structural sheet
+  // mutation per contiguous run of rows — for hundreds of scattered rows
+  // that could mean hundreds of mutations inside a single request,
+  // easily exceeding the client's request timeout. When that request
+  // timed out, it was treated as a dropped connection and EVERY row fell
+  // back to being queued as its own individual delete in the offline
+  // outbox — hundreds of separate items, each needing its own network
+  // round trip and branch-lock wait, syncing one at a time and
+  // frequently erroring out on lock contention. That's the "goes to
+  // sync, very slow, throws errors" behavior.
+  // Two fixes, one on each side:
+  //   - Code.gs's batchDeleteCustomer is now a single-pass rewrite (read
+  //     every row once, filter in memory, write the survivors back in
+  //     one shot) so even hundreds of scattered rows cost about the same
+  //     as deleting a handful — see its own comment there.
+  //   - Here, the request itself is now chunked (same size-aware
+  //     chunking Import uses) and sent through runBatched_, which
+  //     retries a stalled/busy chunk directly against the server instead
+  //     of ever touching the persistent offline outbox. The offline
+  //     outbox is now reserved for the case that's actually offline (or
+  //     a single-row delete), not a large online delete that merely hit
+  //     a slow request.
   async function deleteSelected_(){
     const rows = Array.from(selectedRows).filter(r =>
       customers.some(c => c.row === r && !c._pendingDelete)
@@ -3862,10 +3882,11 @@
 
     const skipUndo = rows.length > BULK_DELETE_SKIP_UNDO_THRESHOLD;
 
-    const names = rows.map(r=>{
+    const rowNameByRow = new Map(rows.map(r => {
       const c = customers.find(x => x.row === r);
-      return c ? c.customer : ('row ' + r);
-    });
+      return [r, c ? c.customer : ('row ' + r)];
+    }));
+    const names = rows.map(r => rowNameByRow.get(r));
     const preview = names.slice(0, 5).join(', ') + (names.length > 5 ? ', +' + (names.length - 5) + ' more' : '');
     const label = rows.length === 1 ? 'this customer' : ('these ' + rows.length + ' customers');
     const undoNote = skipUndo
@@ -3887,59 +3908,66 @@
     document.getElementById('bulkClearBtn').disabled = true;
 
     if(isOnline_() && rows.length > 1){
-      btn.textContent = 'Deleting ' + rows.length + '…';
       rows.forEach(row => applyOptimisticDelete_({ row: row }));
       render();
+
+      let result;
       try{
-        await apiCallJson_('batchDeleteCustomer', { rows: rows });
-        rows.forEach(row=>{
-          applyConfirmedDelete_({ row: row });
-          clearDraft_(row);
-          selectedRows.delete(row);
-        });
-        btn.textContent = originalLabel;
-        render();
-        toast(rows.length + ' customers deleted.');
-        // DETAIL FIX: this used to log a bare "Bulk delete completed."
-        // with no names anywhere — every OTHER action type (a remark, a
-        // field update) shows exactly what changed via the `groups`
-        // list, but a bulk delete gave no way to tell WHO was removed
-        // without already remembering the confirm dialog's preview.
-        // `names` (built above, before the confirm) is the full list —
-        // pass it as a real expandable group, same pattern as "New
-        // remark added" elsewhere, so the log entry alone answers "who
-        // got deleted" without needing to undo just to check.
-        logActivity_('success', rows.length + ' customer' + (rows.length > 1 ? 's' : '') + ' deleted',
-          'Removed from "' + currentSheet + '": ' + preview + '.',
-          [{ label: 'Customers removed', items: names }],
-          undefined, undoSnapshots.length ? {
-          kind: 'recreateMany',
-          branch: currentSheet,
-          snapshots: undoSnapshots,
-          confirmLabel: 'restore ' + undoSnapshots.length + ' customer' + (undoSnapshots.length === 1 ? '' : 's')
-        } : null);
-        return;
-      }catch(err){
-        // Undo the optimistic hide so the fallback loop below (or the
-        // user retrying) starts from an accurate view again.
-        rows.forEach(row=>{
-          const c = customers.find(x => x.row === row);
-          if(c) delete c._pendingDelete;
-        });
-        if(!isConnectionError_(err)){
-          btn.textContent = originalLabel;
-          btn.disabled = false;
-          document.getElementById('bulkClearBtn').disabled = false;
-          render();
-          toast('Could not delete: ' + err.message);
-          logActivity_('error', 'Bulk delete failed', err.message);
-          return;
-        }
-        // Connection problem — fall through to the per-row offline
-        // queue below, same as before.
+        result = await runBatched_(
+          rows, 'batchDeleteCustomer', 'rows',
+          r => r,
+          'deleteCustomer', r => ({ row: r }),
+          rows.length, 0,
+          r => rowNameByRow.get(r),
+          null,
+          text => { btn.textContent = text.replace('Importing', 'Deleting').replace('saved', 'deleted'); }
+        );
+      } finally {
+        // Refresh from the server so the UI always ends up matching
+        // exactly what actually happened — rows that failed reappear,
+        // rows that succeeded stay gone — regardless of whether the run
+        // finished cleanly, hit an error, or the tab was interrupted
+        // mid-way. This also clears every optimistic "_pendingDelete"
+        // hide applied above.
+        await loadData();
       }
+
+      btn.textContent = originalLabel;
+      btn.disabled = false;
+      document.getElementById('bulkClearBtn').disabled = false;
+      selectedRows.clear();
+      render();
+
+      const failedRowSet = new Set(result.failedItems);
+      const succeededRows = rows.filter(r => !failedRowSet.has(r));
+      const doneNames = succeededRows.map(r => rowNameByRow.get(r));
+      const failedNames = result.failedLabels;
+      const doneSnapshots = undoSnapshots.filter(s => !failedRowSet.has(s.row));
+
+      toast(result.failed
+        ? (result.succeeded + ' deleted, ' + result.failed + ' failed — check the activity log for details.')
+        : (result.succeeded + ' customer' + (result.succeeded > 1 ? 's' : '') + ' deleted.'));
+
+      const groups = [];
+      if(doneNames.length) groups.push({ label: 'Customers removed', items: doneNames });
+      if(failedNames.length) groups.push({ label: 'Failed to remove', items: failedNames });
+
+      logActivity_(result.failed ? 'warning' : 'success',
+        result.succeeded + ' deleted' + (result.failed ? ', ' + result.failed + ' failed' : ''),
+        'Removed from "' + currentSheet + '": ' + preview + '.',
+        groups.length ? groups : null,
+        undefined, doneSnapshots.length ? {
+        kind: 'recreateMany',
+        branch: currentSheet,
+        snapshots: doneSnapshots,
+        confirmLabel: 'restore ' + doneSnapshots.length + ' customer' + (doneSnapshots.length === 1 ? '' : 's')
+      } : null);
+      return;
     }
 
+    // Offline, or a single row selected: queue through the normal
+    // per-row offline outbox path — correct and appropriately sized for
+    // this case (a genuinely offline change, or just one row).
     let done = 0, failed = 0;
     const doneSnapshots = [];
     const failedNames = [];
@@ -6126,8 +6154,20 @@
   // same rows/remarks a second time. Only a real application error (a
   // request that reached the server and failed for a row-specific reason)
   // falls back to per-row retries.
-  async function runBatched_(items, batchAction, batchKey, toBatchItem, singleAction, toSinglePayload, overallTotal, doneSoFar, getLabel, control){
-    if(!items.length) return { succeeded: 0, failed: 0, done: doneSoFar, failedLabels: [], cancelled: false };
+  // onProgress (optional, 11th arg): callback(text) for progress updates.
+  // When omitted, behaves exactly as before and writes into the import
+  // panel's #importStatus element — existing call sites (the three
+  // import flows) don't pass this and are unaffected. Callers outside
+  // the import UI (e.g. deleteSelected_'s bulk-delete path) pass their
+  // own callback instead, since #importStatus isn't visible/relevant
+  // there.
+  //
+  // failedItems (added to the return value): the raw items (not just
+  // display labels) that failed, so a caller that needs to know exactly
+  // WHICH rows failed (not just how many) can tell them apart from the
+  // ones that succeeded — see deleteSelected_ below.
+  async function runBatched_(items, batchAction, batchKey, toBatchItem, singleAction, toSinglePayload, overallTotal, doneSoFar, getLabel, control, onProgress){
+    if(!items.length) return { succeeded: 0, failed: 0, done: doneSoFar, failedLabels: [], failedItems: [], cancelled: false };
 
     // PERFORMANCE: more chunks in flight at once overlaps network round-trip
     // time (and any Apps Script cold start) across requests. This doesn't
@@ -6151,8 +6191,9 @@
     const chunks = chunkByEncodedSize_(items, toBatchItem, MAX_CHUNK_ENCODED_CHARS);
     let succeeded = 0, failed = 0, done = doneSoFar;
     const failedLabels = [];
+    const failedItems = [];
     const FAILED_LABELS_CAP = 300;
-    const statusEl = document.getElementById('importStatus');
+    const statusEl = onProgress ? null : document.getElementById('importStatus');
     let lastStatusText = null;
 
     function reportProgress(paused, slowServer){
@@ -6172,7 +6213,8 @@
       // this runs on every chunk completion, and on a big import that's a
       // lot of calls that were writing the exact same string repeatedly.
       if(text !== lastStatusText){
-        statusEl.textContent = text;
+        if(onProgress) onProgress(text);
+        else statusEl.textContent = text;
         lastStatusText = text;
       }
     }
@@ -6239,6 +6281,7 @@
             }
             failed++;
             handled = true;
+            failedItems.push(item);
             if(getLabel && failedLabels.length < FAILED_LABELS_CAP){
               try{ failedLabels.push(getLabel(item) || 'row ' + item.row); }catch(e){ /* best-effort */ }
             }
@@ -6323,7 +6366,7 @@
     // branch lock in the same instant — see the CONCURRENCY note above.
     await Promise.all(Array.from({ length: workerCount }, (_, i) => worker(i * WORKER_STAGGER_MS)));
 
-    return { succeeded, failed, done, failedLabels, cancelled: !!(control && control.cancelled) };
+    return { succeeded, failed, done, failedLabels, failedItems, cancelled: !!(control && control.cancelled) };
   }
 
   document.getElementById('importBalancesInput').addEventListener('change', (e)=>{

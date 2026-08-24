@@ -4181,12 +4181,44 @@
   // a possibly-wrong browser flag — and flip back the instant a request
   // actually goes through again, with no action needed from the person.
   let realConnFailing_ = false;
+  // BUG FIX (header stuck on "Offline" despite a working connection, and
+  // the toggle/refresh unable to clear it): isOnline_() used to hard-AND
+  // navigator.onLine into its result. That flag is only the browser's own
+  // guess about whether SOME network interface is up — on plenty of real
+  // devices (PWAs, WebViews, some Android/iOS builds, flaky wifi drivers)
+  // it reads false even while every actual request to the server is
+  // succeeding. Every other piece of this file deliberately does NOT
+  // trust navigator.onLine for exactly that reason (see isConnectionError_'s
+  // note and pushActivityToServer_'s note above) — this was the one place
+  // that still did, and because nearly every reconnect path
+  // (autoRefreshTick_, keepWarmPing_, the visibility-change reconnect) is
+  // gated behind isOnline_(), a stuck-false navigator.onLine created a
+  // deadlock: the app believed it was offline, so it never attempted a
+  // real request that could have proven otherwise — and the manual
+  // toggle couldn't fix it either, since flipping manualOfflineMode_ off
+  // still left the navigator.onLine AND in place. That's exactly "toggle
+  // it, refresh, still says Offline" even on good wifi.
+  // hasRealConnResult_ tracks whether we've ever gotten a real answer
+  // (success or failure) from an actual request to the server.
+  let hasRealConnResult_ = false;
   function markConnResult_(ok){
-    const changed = realConnFailing_ === ok; // realConnFailing_ true + ok true, or false + !ok, both mean a flip
+    const wasFailing = realConnFailing_;
+    const hadResult = hasRealConnResult_;
     realConnFailing_ = !ok;
-    if(changed) updateSyncUI();
+    hasRealConnResult_ = true;
+    if(!hadResult || wasFailing !== realConnFailing_) updateSyncUI();
   }
-  function isOnline_(){ return navigator.onLine && !manualOfflineMode_ && !realConnFailing_; }
+  // navigator.onLine is only consulted as a rough first guess before the
+  // app has ever gotten a real answer from the server (i.e. right at
+  // startup, before the first fetchJson_ call completes). Once any real
+  // request has succeeded or failed, that outcome is ground truth and
+  // navigator.onLine is never consulted again — so a browser that
+  // misreports it can no longer keep the app stuck offline.
+  function isOnline_(){
+    if(manualOfflineMode_) return false;
+    if(hasRealConnResult_) return !realConnFailing_;
+    return navigator.onLine;
+  }
   function toggleManualOffline_(){
     manualOfflineMode_ = !manualOfflineMode_;
     try{ localStorage.setItem('aa_manualOffline_v1', manualOfflineMode_ ? '1' : '0'); }catch(e){}
@@ -7358,9 +7390,15 @@
       toggleEl.classList.toggle('is-offline', !online);
       toggleEl.classList.toggle('is-manual', manualOfflineMode_);
       toggleEl.setAttribute('aria-pressed', manualOfflineMode_ ? 'true' : 'false');
+      // BUG FIX: this used to branch on navigator.onLine to decide the
+      // tooltip wording ("force Online" vs "switch to Offline") — but
+      // toggleManualOffline_() always just flips manualOfflineMode_
+      // regardless of navigator.onLine, so that branching was misleading
+      // and, worse, was a symptom of isOnline_() itself trusting
+      // navigator.onLine too much (see the fix on isOnline_() above).
       toggleEl.title = manualOfflineMode_
         ? 'Manually set to Offline — tap to go back Online'
-        : (navigator.onLine ? 'Tap to manually switch to Offline' : 'Tap to manually force Online (device itself is offline)');
+        : 'Tap to manually switch to Offline';
     }
     const pending = outbox.length;
     const wrap = document.getElementById('pendingWrap');
@@ -11171,11 +11209,17 @@
     // once something changed, doing a full loadData()) even while
     // manualOfflineMode_ was on, which is part of why switching to
     // Offline didn't visibly stop network activity. isOnline_() folds in
-    // both navigator.onLine and the manual override, so this now pauses
-    // for either reason and simply resumes on its own next tick once
-    // back online (no separate wiring needed — toggleManualOffline_
-    // already kicks a fresh loadData()/syncOutbox() the moment Offline
-    // is switched back off).
+    // both the manual override and the auto-detected connection state,
+    // so this pauses for either reason.
+    // SLOW-CONNECTION NOTE: this deliberately stays gated on the FULL
+    // isOnline_() (not just manualOfflineMode_) — on a genuinely slow
+    // mobile connection, letting this tick's full list refresh keep
+    // firing every few minutes on top of an already-struggling request
+    // is exactly what can starve that struggling request of bandwidth
+    // and make the app never quite finish loading. Self-healing from an
+    // auto-detected failure is instead handled by ONE lightweight prober
+    // (keepWarmPing_ below — a genuine no-op on the server) rather than
+    // by every poller retrying in parallel.
     if(!isOnline_()) return;
 
     if(Date.now() - lastForcedReloadAt_ >= AUTO_REFRESH_FORCE_MS){
@@ -11226,10 +11270,30 @@
   // saving an edit) doesn't have to pay the cold-start cost itself.
   // Silently ignored on failure — this is a best-effort optimization,
   // never something that should surface an error or retry.
+  // SELF-HEAL FIX: only pauses for the deliberate manual toggle now (was
+  // gated on the full isOnline_(), which also blocked this the moment
+  // realConnFailing_ was auto-detected true — see the matching note on
+  // autoRefreshTick_ above). This ping's own outcome is now fed into
+  // markConnResult_ too, so even on a quiet tab with nothing else to
+  // sync, this becomes a small periodic connectivity probe that can
+  // clear a stuck "Offline" reading on its own, every 6 minutes, with no
+  // action needed from the person.
+  // SLOW-CONNECTION NOTE: capped at PING_TIMEOUT_MS (well under the main
+  // FETCH_TIMEOUT_MS) via AbortController so a single slow attempt can't
+  // sit dangling until the next 6-minute tick fires another on top of
+  // it — this is the ONLY poller allowed to keep probing during an
+  // auto-detected failure (see autoRefreshTick_/activityPollTick_/the
+  // visibilitychange handler, which all stay paused in that state), so
+  // it's kept as cheap and self-limiting as possible on purpose.
   const KEEP_WARM_MS = 6 * 60 * 1000;
+  const PING_TIMEOUT_MS = 10000;
   function keepWarmPing_(){
-    if(!API_URL || document.hidden || !isOnline_()) return;
-    fetch(API_URL + '?action=ping&_=' + Date.now(), { cache: 'no-store' }).catch(() => {});
+    if(!API_URL || document.hidden || manualOfflineMode_) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PING_TIMEOUT_MS);
+    fetch(API_URL + '?action=ping&_=' + Date.now(), { cache: 'no-store', signal: controller.signal })
+      .then(res => { clearTimeout(timer); if(res && res.ok) markConnResult_(true); })
+      .catch(() => { clearTimeout(timer); markConnResult_(false); });
   }
   setInterval(keepWarmPing_, KEEP_WARM_MS);
 
@@ -11262,8 +11326,16 @@
     // behalf while they've deliberately switched to Offline — reopening
     // the tab/app shouldn't quietly start talking to the network again
     // just because it was backgrounded for a while.
-    if(!isOnline_()) return;
+    // SLOW-CONNECTION NOTE: keepWarmPing_() below always fires regardless
+    // of the auto-detected realConnFailing_ state (it has its own, much
+    // lighter gate — see its comment) since reopening the app is a good
+    // moment for that one cheap probe to notice a failure has cleared.
+    // The heavier loadData()/syncOutbox() calls stay gated on the full
+    // isOnline_() though, so a genuinely slow connection doesn't get a
+    // full list refresh piled on top of whatever the keep-warm ping is
+    // still waiting on.
     keepWarmPing_();
+    if(!isOnline_()) return;
     if(!isLoading && !document.getElementById('overlay').classList.contains('open')){
       loadData();
     }
@@ -11292,6 +11364,11 @@
   }
   function activityPollTick_(){
     scheduleActivityPoll_();
+    // SLOW-CONNECTION NOTE: stays gated on the full isOnline_() (manual +
+    // auto-detected), same reasoning as autoRefreshTick_ above — this is
+    // a real network request competing for bandwidth, so it backs off
+    // while a failure is auto-detected rather than piling on. The
+    // lightweight keepWarmPing_() is what clears that state again.
     if(!API_URL || document.hidden || !isOnline_()) return;
     checkActivityVersion_();
   }

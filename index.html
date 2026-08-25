@@ -1459,6 +1459,24 @@
   .profile-modal .p-actions .icon-btn.i-clean:hover{background:var(--rstr-soft);color:#8B6A1F;}
   .profile-modal .p-actions .icon-btn.i-delete:hover{background:var(--del-soft);color:var(--del);}
 
+  /* Star / pin button — deliberately NOT hidden-until-hover like the
+     other row actions (see the general .icon-btn opacity rule above):
+     the whole point is to see at a glance which branches are pinned, so
+     it stays fully visible whether or not the row is being hovered.
+     Gray outline-ish look when unpinned, solid gold when pinned. */
+  .profile-modal .p-actions .icon-btn.i-star{opacity:.55;}
+  .profile-item:hover .p-actions .icon-btn.i-star,
+  .profile-item.active .p-actions .icon-btn.i-star{opacity:.75;}
+  .profile-modal .p-actions .icon-btn.i-star:hover{background:#FFF6E0;color:#B7791F;opacity:1;}
+  .profile-modal .p-actions .icon-btn.i-star.is-pinned{color:#E3A008;opacity:1;}
+  .profile-modal .p-actions .icon-btn.i-star.is-pinned:hover{background:#FFF6E0;color:#B7791F;}
+
+  /* Pinned rows get a small gold accent so "priority" branches are
+     recognizable even without opening the row/hovering the star. */
+  .profile-item.pinned{border-left:3px solid #E3A008;padding-left:11px;}
+  .profile-item.pinned:not(.active){background:#FFFCF3;}
+  .profile-item.pinned:not(.active):hover{background:#FFF9E8;}
+
   /* Utility rows (add branch / force refresh) — plain rows separated by
      a hairline instead of two large dashed cards stacked on top of each
      other, so they read as lower-priority utilities under the branch
@@ -3501,6 +3519,11 @@
   async function undoRenameSheetEntry_(u){
     await apiCallJson_('renameSheet', { oldName: u.newName, newName: u.oldName });
     if(currentSheet === u.newName){ currentSheet = u.oldName; saveCurrentSheet_(); }
+    // Same pin carry-over as a manual rename (see startRenameProfile_'s
+    // commit above) — an undo is just a rename in the other direction.
+    const pinned = loadPinnedBranches_();
+    const pinIdx = pinned.indexOf(u.newName);
+    if(pinIdx !== -1){ pinned[pinIdx] = u.oldName; savePinnedBranches_(pinned); }
     await loadProfiles_();
     if(currentSheet === u.oldName) await loadData();
     toast('Renamed back to "' + u.oldName + '".');
@@ -7270,6 +7293,58 @@
     return clean ? clean.charAt(0).toUpperCase() : '?';
   }
 
+  // ---- Branch pinning ("priority" branches always on top) --------------
+  // Lets a person star a branch so it's always the first thing they see
+  // in the drawer, without having to search/scroll for it. Purely a
+  // per-device UI preference (like currentSheetKey_ below) — it's stored
+  // in localStorage, keyed per spreadsheet (API_URL), and never touches
+  // the sheet itself or syncs to other devices; each device remembers
+  // its own set of starred branches.
+  function pinnedBranchesKey_(){ return 'aa_pinned_branches_v1:' + API_URL; }
+
+  function loadPinnedBranches_(){
+    try{
+      const raw = localStorage.getItem(pinnedBranchesKey_());
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    }catch(e){ return []; }
+  }
+
+  function savePinnedBranches_(list){
+    try{ localStorage.setItem(pinnedBranchesKey_(), JSON.stringify(list)); }
+    catch(e){ /* fine, just won't survive a reload */ }
+  }
+
+  function isBranchPinned_(name){ return loadPinnedBranches_().indexOf(name) !== -1; }
+
+  // Tapping the star toggles this ONE branch in/out of the pinned list
+  // and re-renders — no network call, so it's instant even offline.
+  function toggleBranchPin_(name){
+    const list = loadPinnedBranches_();
+    const idx = list.indexOf(name);
+    if(idx === -1){
+      list.push(name);
+      toast('"' + name + '" pinned to the top.');
+    } else {
+      list.splice(idx, 1);
+      toast('"' + name + '" unpinned.');
+    }
+    savePinnedBranches_(list);
+    renderProfileList_(profilesCache_ || []);
+  }
+
+  // Stable partition: every pinned branch first (in whatever relative
+  // order they already had), then everything else, also in its existing
+  // relative order. Pinning never reorders branches within their own
+  // group — it only decides which group (top vs. rest) each one is in.
+  function orderWithPinnedFirst_(sheets){
+    const pinnedSet = new Set(loadPinnedBranches_());
+    const pinned = [];
+    const rest = [];
+    sheets.forEach(name => { (pinnedSet.has(name) ? pinned : rest).push(name); });
+    return pinned.concat(rest);
+  }
+
   function renderProfileList_(sheets){
     const listEl = document.getElementById('profileList');
     updateProfileCount_();
@@ -7277,15 +7352,18 @@
       listEl.innerHTML = '<div class="profile-loading">No branch profiles yet — add one below.</div>';
       return;
     }
-    listEl.innerHTML = sheets.map((name, i) => {
+    const ordered = orderWithPinnedFirst_(sheets);
+    const canDelete = sheets.length > 1;
+    listEl.innerHTML = ordered.map((name, i) => {
       const isActive = name === currentSheet;
-      const canDelete = sheets.length > 1;
-      return '<div class="profile-item' + (isActive ? ' active' : '') + '" data-name="' + escapeHtml(name) + '" style="animation-delay:' + Math.min(i * 12, 80) + 'ms">'
+      const isPinned = isBranchPinned_(name);
+      return '<div class="profile-item' + (isActive ? ' active' : '') + (isPinned ? ' pinned' : '') + '" data-name="' + escapeHtml(name) + '" style="animation-delay:' + Math.min(i * 12, 80) + 'ms">'
         + '<div class="p-name-wrap" onclick="switchProfile_(\'' + jsAttr_(name) + '\')">'
         + '<span class="p-name">' + escapeHtml(name) + '</span>'
         + (isActive ? '<span class="p-check">✓ Current branch</span>' : '')
         + '</div>'
         + '<div class="p-actions">'
+        + '<button class="icon-btn i-star' + (isPinned ? ' is-pinned' : '') + '" title="' + (isPinned ? 'Unpin — remove from top' : 'Pin to top — always show this branch first') + '" onclick="event.stopPropagation();toggleBranchPin_(\'' + jsAttr_(name) + '\')" aria-label="' + (isPinned ? 'Unpin branch' : 'Pin branch to top') + '" aria-pressed="' + (isPinned ? 'true' : 'false') + '">★</button>'
         + '<button class="icon-btn i-rename" title="Rename" onclick="startRenameProfile_(this, \'' + jsAttr_(name) + '\')">✎</button>'
         + '<button class="icon-btn i-clean" title="Clear all records in this branch (keeps the branch itself)" onclick="clearBranchData_(\'' + jsAttr_(name) + '\')">🧹</button>'
         + (canDelete ? '<button class="icon-btn i-delete" title="Delete" onclick="deleteProfile_(\'' + jsAttr_(name) + '\')">🗑</button>' : '')
@@ -7381,6 +7459,11 @@
       try{
         await apiCallJson_('renameSheet', { oldName, newName });
         if(currentSheet === oldName){ currentSheet = newName; saveCurrentSheet_(); }
+        // Carry a pin over to the new name — otherwise a rename would
+        // silently unpin the branch (the pinned list is keyed by name).
+        const pinned = loadPinnedBranches_();
+        const pinIdx = pinned.indexOf(oldName);
+        if(pinIdx !== -1){ pinned[pinIdx] = newName; savePinnedBranches_(pinned); }
         toast('Renamed to "' + newName + '".');
         logActivity_('success', 'Branch renamed', '"' + oldName + '" → "' + newName + '".', null, undefined, {
           kind: 'renameSheet',
@@ -7455,6 +7538,9 @@
       outbox = [];
       saveOutbox_();
     }
+    // A deleted branch shouldn't linger in the pinned list.
+    const pinned = loadPinnedBranches_();
+    if(pinned.indexOf(name) !== -1) savePinnedBranches_(pinned.filter(n => n !== name));
     // Sweep any per-row remark drafts for this branch — they reference
     // row numbers that no longer exist on the sheet after a clear.
     try{

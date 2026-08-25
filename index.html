@@ -4344,12 +4344,36 @@
   let reconnectProbeTimer_ = null;
   let reconnectProbeDelayMs_ = 3000;
   const RECONNECT_PROBE_MAX_MS = 15000;
+  // FLAPPING FIX (header/toggle flipping Online→Offline→Online on its own
+  // even on a genuinely fine connection): markConnResult_ used to flip
+  // realConnFailing_ (and therefore the header dot + the manual toggle's
+  // visual state, since both read isOnline_()) on the very FIRST failed
+  // request. The 6-minute keep-warm ping is the main thing feeding this —
+  // it's capped at PING_TIMEOUT_MS, and Apps Script's own cold-start
+  // window (see the top-of-file note in Code.gs) is documented as 5-30s,
+  // so a perfectly normal cold start could easily outrun a short ping
+  // timeout and get misread as "the connection is down," then flip right
+  // back the moment the next request succeeded — that back-and-forth IS
+  // the flapping. connFailStreak_ now requires
+  // CONN_FAIL_CONFIRM_THRESHOLD consecutive real failures before the UI
+  // is allowed to show "Offline"; a single blip is invisible to the
+  // person. A genuine outage still surfaces quickly because a failure
+  // (even just the first one) immediately schedules a fast follow-up
+  // probe instead of waiting for the next regularly-scheduled ping.
+  let connFailStreak_ = 0;
+  const CONN_FAIL_CONFIRM_THRESHOLD = 2;
   function scheduleReconnectProbe_(){
     if(reconnectProbeTimer_) return; // already have one pending
     reconnectProbeTimer_ = setTimeout(() => {
       reconnectProbeTimer_ = null;
       reconnectProbeDelayMs_ = Math.min(reconnectProbeDelayMs_ * 1.5, RECONNECT_PROBE_MAX_MS);
-      if(!realConnFailing_ || manualOfflineMode_ || !API_URL || document.hidden) return;
+      // Keep probing as long as we haven't seen a clean success yet
+      // (connFailStreak_ > 0) — not just while the header is already
+      // showing "Offline" — so a single failed request gets a fast,
+      // quiet second opinion within a few seconds instead of either
+      // flipping the UI on unconfirmed evidence or sitting silent until
+      // the next scheduled 6-minute ping.
+      if(connFailStreak_ === 0 || manualOfflineMode_ || !API_URL || document.hidden) return;
       keepWarmPing_(); // its own success/failure feeds back through markConnResult_ below
     }, reconnectProbeDelayMs_);
   }
@@ -4360,10 +4384,24 @@
   function markConnResult_(ok){
     const wasFailing = realConnFailing_;
     const hadResult = hasRealConnResult_;
-    realConnFailing_ = !ok;
     hasRealConnResult_ = true;
-    if(!hadResult || wasFailing !== realConnFailing_) updateSyncUI();
-    if(realConnFailing_) scheduleReconnectProbe_(); else clearReconnectProbe_();
+    if(ok){
+      connFailStreak_ = 0;
+      realConnFailing_ = false;
+      if(!hadResult || wasFailing) updateSyncUI();
+      clearReconnectProbe_();
+      return;
+    }
+    connFailStreak_++;
+    if(connFailStreak_ >= CONN_FAIL_CONFIRM_THRESHOLD){
+      realConnFailing_ = true;
+      if(!hadResult || !wasFailing) updateSyncUI();
+    }
+    // Always chase any failure with a fast confirm probe, even the first
+    // (unconfirmed) one — this is what turns a single bad request into a
+    // real answer within a few seconds instead of a silent multi-minute
+    // wait for the next scheduled poll.
+    scheduleReconnectProbe_();
   }
   // navigator.onLine is only consulted as a rough first guess before the
   // app has ever gotten a real answer from the server (i.e. right at
@@ -6677,9 +6715,9 @@
   // Shared helper for the "get the current customer list" call, used by
   // both loadData() and syncOutbox() — was previously duplicated in each
   // with its own res.json() (no timeout, raw parse errors).
-  function fetchCustomerList_(sheetName){
+  function fetchCustomerList_(sheetName, timeoutMs){
     const gzParam = GZIP_TRANSPORT_SUPPORTED ? '&gz=1' : '';
-    return fetchJsonRetry_(API_URL + '?action=list&sheet=' + encodeURIComponent(sheetName) + gzParam + '&_=' + Date.now());
+    return fetchJsonRetry_(API_URL + '?action=list&sheet=' + encodeURIComponent(sheetName) + gzParam + '&_=' + Date.now(), timeoutMs);
   }
 
   // PERFORMANCE: the cheap counterpart to fetchCustomerList_ above. The
@@ -7978,6 +8016,13 @@
   //      bad response can be diagnosed (and reported clearly via
   //      connectionErrorLabel_ above) instead of just re-thrown as-is.
   const FETCH_TIMEOUT_MS = 30000;
+  // SLOW-LOADING FIX: used only for the very first attempt of a "nothing
+  // on screen yet" load (see coldBootNoCache in loadData()) — short
+  // enough that a truly dead connection (data toggle on, no real signal)
+  // fails fast instead of leaving a blank skeleton on screen for up to
+  // 90 seconds, but still long enough to ride out an ordinary quick
+  // network hiccup.
+  const COLD_BOOT_TIMEOUT_MS = 12000;
   async function fetchJson_(url, timeoutMs){
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs || FETCH_TIMEOUT_MS);
@@ -9053,7 +9098,20 @@
     }
   }
 
-  window.addEventListener('online', () => { updateSyncUI(); syncOutbox(); syncActivityOutbox_(); });
+  window.addEventListener('online', () => {
+    updateSyncUI();
+    syncOutbox();
+    syncActivityOutbox_();
+    // SLOW-LOADING FIX: if the earlier attempt(s) never got real data on
+    // screen (e.g. the app was opened while the connection was down, or
+    // "data on but no signal" — see coldBootNoCache in loadData()), the
+    // browser reporting 'online' is exactly the moment to retry rather
+    // than leaving the person on an empty/error state until the next
+    // auto-refresh tick (up to ~13s away) or a manual ⟳ tap.
+    if(!isLoading && customers.length === 0 && !document.getElementById('overlay').classList.contains('open')){
+      loadData();
+    }
+  });
   window.addEventListener('offline', updateSyncUI);
   // No navigator.onLine gate on these ticks either — same reasoning as
   // syncOutbox()/syncActivityOutbox_() above: this timer is what's meant
@@ -9295,6 +9353,13 @@
         showStaleDataBanner_(cached.ts);
       }
     }
+    // SLOW-LOADING FIX: true only when there's genuinely nothing to show
+    // right now (no cache existed to paint, and nothing was already
+    // loaded from an earlier call) — this is the "blank skeleton" case
+    // that most needs a fast fail instead of a long hang. See the note
+    // at the fetchCustomerList_ call below.
+    const coldBootNoCache = !paintedFromCache && customers.length === 0;
+
     if(!paintedFromCache){
       document.getElementById('connStatus').textContent = 'Loading…';
       if(customers.length === 0){
@@ -9303,13 +9368,27 @@
     }
 
     try{
-      // fetchCustomerList_ (via fetchJsonRetry_) adds a timeout, a couple
-      // of automatic retries on a transient hiccup, and safe parsing —
-      // cache: 'no-store' plus a timestamp query param means the browser
-      // (and any CDN in front of the page, e.g. GitHub Pages) can never
-      // serve back a stale cached response for this request — including
-      // an old failed/404 response from before a deployment was fixed.
-      const data = await fetchCustomerList_(sheetAtStart);
+      // SLOW-LOADING FIX: when there's nothing at all on screen yet (no
+      // cache for this branch — typically the very first time this
+      // device opens the app, or a device that's genuinely never been
+      // online) this attempt uses a much shorter timeout,
+      // COLD_BOOT_TIMEOUT_MS, than the usual FETCH_TIMEOUT_MS. Reasoning:
+      // with data on but no real signal (a very common phone state — the
+      // OS thinks a connection exists, but no packets actually move), a
+      // bare fetch() just hangs until its timeout fires. The old 30s
+      // timeout, chained through up to 2 full-length cold-start retries
+      // below, meant up to ~90 seconds of a blank skeleton before the
+      // person saw anything at all — indistinguishable from the app
+      // being broken. There's nothing on screen to protect here, so
+      // failing fast and falling back to an offline-aware empty state
+      // (see the catch block below) costs nothing and gets the person
+      // into a usable app much sooner; the background retry/auto-refresh
+      // machinery keeps trying quietly and will populate the screen the
+      // moment a real connection comes through. Once something IS on
+      // screen (cache-painted or already loaded), retries go back to the
+      // full FETCH_TIMEOUT_MS — a slow-but-working cold start shouldn't
+      // be cut off just because the first attempt was quick to fail.
+      const data = await fetchCustomerList_(sheetAtStart, coldBootNoCache ? COLD_BOOT_TIMEOUT_MS : undefined);
       const fresh = data.customers || [];
 
       // The branch on screen (or a newer load) may have moved on while
@@ -9370,7 +9449,16 @@
       //   - it is NOT used for writes (queueOrSend_ / sendOne_ never
       //     call loadData, so a queued create/update is never
       //     double-submitted by this)
-      const MAX_COLD_START_RETRIES = 2;
+      // SLOW-LOADING FIX: when there's nothing on screen (coldBootNoCache
+      // — see its definition above), each attempt already uses the much
+      // shorter COLD_BOOT_TIMEOUT_MS instead of the full FETCH_TIMEOUT_MS,
+      // so this only allows ONE retry in that case (2 short attempts
+      // total, a few seconds each) rather than the more generous 2 extra
+      // retries used when data is already visible and the person isn't
+      // staring at a blank skeleton. This is what keeps a genuinely dead
+      // connection from stretching a first-ever/no-cache load out to the
+      // old worst case of ~90 seconds before anything useful appears.
+      const MAX_COLD_START_RETRIES = coldBootNoCache ? 1 : 2;
       if(err && err.name === 'AbortError' && isColdStartRetryCount < MAX_COLD_START_RETRIES){
         document.getElementById('connStatus').textContent = customers.length > 0
           ? 'Sync failed — showing cached data. Retrying (cold start)…'
@@ -9420,7 +9508,18 @@
         // already says so, quietly, and the next auto-refresh (or a
         // manual ⟳) will simply try again.
       } else {
-        document.getElementById('connStatus').textContent = 'Connection error — ' + friendly;
+        // SLOW-LOADING FIX: a connection/timeout failure with nothing on
+        // screen usually just means "offline right now" (e.g. data
+        // toggle on, no real signal) rather than a genuine app/config
+        // problem — say so plainly and reassure the person this will
+        // resolve on its own (auto-refresh, the 'online' listener above,
+        // and the reconnect probe in markConnResult_ all keep retrying
+        // quietly), instead of the more alarming generic "Connection
+        // error" wording, which is kept for real, non-connectivity
+        // failures (bad JSON, an actual thrown app error, etc.).
+        document.getElementById('connStatus').textContent = isConnectionError_(err)
+          ? 'You appear to be offline — will keep trying automatically. (' + friendly + ')'
+          : 'Connection error — ' + friendly;
         toast('Could not load data: ' + friendly);
         logActivity_('error', 'Could not load data', friendly);
       }
@@ -11594,7 +11693,15 @@
   // visibilitychange handler, which all stay paused in that state), so
   // it's kept as cheap and self-limiting as possible on purpose.
   const KEEP_WARM_MS = 6 * 60 * 1000;
-  const PING_TIMEOUT_MS = 10000;
+  // FLAPPING FIX: was 10000. Apps Script's own documented cold-start
+  // window (see the top-of-file note in Code.gs) is 5-30s — a 10s cap on
+  // this "is the connection actually up?" probe meant a perfectly normal
+  // cold start alone could regularly read as a dead connection. Raised to
+  // 20s so a real cold start has room to finish before this ping gives
+  // up; genuine outages still get caught (see connFailStreak_ above,
+  // which now also requires a second confirming failure before the UI
+  // ever shows "Offline").
+  const PING_TIMEOUT_MS = 20000;
   function keepWarmPing_(){
     if(!API_URL || document.hidden || manualOfflineMode_) return;
     const controller = new AbortController();

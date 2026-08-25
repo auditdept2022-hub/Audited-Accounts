@@ -28,7 +28,13 @@
 // URL. See hardRefreshEverything_() in index.html. This file's only
 // supporting role in that is the 'message' listener below, kept as a
 // second path to the same result for any tab still running old JS.
-const CACHE_NAME = 'audited-accounts-shell-v3';
+const CACHE_NAME = 'audited-accounts-shell-v4';
+// SLOW-LOADING FIX: how long the network-first shell/navigation fetch is
+// given before falling back to the cached shell — see the fetch handler
+// below. Short enough that a hung/no-signal connection doesn't leave a
+// blank screen for long, generous enough not to fall back on an ordinary
+// brief hiccup.
+const NAV_NETWORK_TIMEOUT_MS = 4000;
 const SHELL_FILES = [
   './',
   './index.html',
@@ -97,20 +103,49 @@ self.addEventListener('fetch', (event) => {
   const isCacheFirstAsset = CACHE_FIRST_FILES.has(path) || SHELL_FILES.some((f) => url.href.endsWith(f.replace('./', '')));
 
   if (isNavigation || !isCacheFirstAsset) {
-    // NETWORK-FIRST: always try to get the latest index.html/JS. Only
-    // fall back to whatever's cached if the network request fails
-    // (offline, DNS issue, etc.) — this is what makes a fresh edit show
-    // up on the very next load instead of one load later.
+    // NETWORK-FIRST, WITH A FAST FALLBACK (this is the fix for "loading
+    // very slow instead of loading the app when offline/no signal"): a
+    // bare fetch() has no timeout of its own — on a connection that's
+    // "on" but not actually moving packets (a very common phone state:
+    // mobile data toggled on, no real signal; or a captive portal), the
+    // browser can sit waiting far longer than anyone will tolerate before
+    // it gives up on its own, leaving a blank white screen instead of the
+    // app shell the whole time. NAV_NETWORK_TIMEOUT_MS races the network
+    // fetch against a short timer: whichever resolves first wins. If the
+    // timer wins, the cached shell is served immediately (instant app,
+    // exactly like being offline should feel) while the real fetch keeps
+    // running in the background and still refreshes the cache for next
+    // time if/when it eventually completes — so a genuinely fresh edit to
+    // index.html still shows up on the very next load, same as before,
+    // just without blocking THIS load on a connection that isn't working.
     event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          if (response && response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-          }
-          return response;
-        })
-        .catch(() => caches.match(event.request))
+      (async () => {
+        const networkPromise = fetch(event.request)
+          .then((response) => {
+            if (response && response.ok) {
+              const copy = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+            }
+            return response;
+          })
+          .catch(() => null);
+
+        const timeoutPromise = new Promise((resolve) => {
+          setTimeout(() => resolve(null), NAV_NETWORK_TIMEOUT_MS);
+        });
+
+        const winner = await Promise.race([networkPromise, timeoutPromise]);
+        if (winner) return winner;
+
+        const cached = await caches.match(event.request);
+        if (cached) return cached;
+
+        // Nothing cached yet (first-ever load, already offline) — no fast
+        // fallback exists, so wait out whatever the real network call
+        // eventually returns instead of failing outright.
+        const late = await networkPromise;
+        return late || Response.error();
+      })()
     );
     return;
   }

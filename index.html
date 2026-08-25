@@ -3852,16 +3852,37 @@
     if(!selectModeOn_) clearSelection_();
   }
 
-  // Deletes with MORE rows selected than this are treated as a deliberate
-  // bulk wipe rather than a normal handful-of-mistakes delete: no undo
-  // snapshot is captured for them at all, so nothing is uploaded to the
-  // backend's hidden `_ActivityUndoData` sheet and there's no "N of M
-  // restored" truncation notice to ever show, since nothing was ever
-  // truncated in the first place — there's simply no Undo button on that
-  // entry. Deletes at or under this count still get full, un-truncated,
-  // cross-device undo (see pushUndoSnapshotsChunked_ above, which no
-  // longer caps/drops records — a batch this size never needs to).
-  const BULK_DELETE_SKIP_UNDO_THRESHOLD = 50;
+  // Deletes with THIS MANY rows selected OR MORE are treated as a
+  // deliberate bulk wipe rather than a normal handful-of-mistakes delete:
+  // no undo snapshot is captured for them at all, so nothing is uploaded
+  // to the backend's hidden `_ActivityUndoData` sheet and there's no "N
+  // of M restored" truncation notice to ever show, since nothing was
+  // ever truncated in the first place — there's simply no Undo button on
+  // that entry. Deletes strictly UNDER this count still get full,
+  // un-truncated, cross-device undo (see pushUndoSnapshotsChunked_
+  // above, which no longer caps/drops records — a batch this size never
+  // needs to). Comparison is `>=`, not `>` — a delete of exactly
+  // BULK_DELETE_SKIP_UNDO_THRESHOLD rows skips undo too, it's not just
+  // deletes bigger than it.
+  //
+  // BUG FIX (large deletes appearing to "go to sync" one item at a time,
+  // sometimes erroring out): this was 50. That number assumed a fairly
+  // small per-customer undo snapshot, but a snapshot is the FULL row —
+  // every field plus the complete Auditor Remarks / Previous Audit
+  // Remarks text — and on branches with long remark histories, the
+  // combined JSON for as few as ~20 rows can already exceed
+  // MAX_CHUNK_ENCODED_CHARS (see logActivity_ above). Once that happens,
+  // the shared-copy undo data no longer fits in a single request and
+  // falls back to pushUndoSnapshotsChunked_, which uploads it in several
+  // small, SEQUENTIAL requests — that's the "still syncing/one at a
+  // time/times out" behavior, and it happens strictly AFTER the actual
+  // delete has already completed successfully. Lowered to 20 so a delete
+  // bigger than that skips capturing/uploading undo data entirely (same
+  // as it always did above 50) instead of quietly falling into that slow
+  // chunked-upload path — the delete itself finishes exactly as fast
+  // either way, this only decides whether a same-size "Undo" snapshot is
+  // ever built and shipped to the shared log afterward.
+  const BULK_DELETE_SKIP_UNDO_THRESHOLD = 20;
 
   // Online: everything selected goes out through runBatched_ — the same
   // chunked-batch-with-retry machinery Import already uses (see
@@ -3900,7 +3921,7 @@
     );
     if(!rows.length) return;
 
-    const skipUndo = rows.length > BULK_DELETE_SKIP_UNDO_THRESHOLD;
+    const skipUndo = rows.length >= BULK_DELETE_SKIP_UNDO_THRESHOLD;
 
     const rowNameByRow = new Map(rows.map(r => {
       const c = customers.find(x => x.row === r);

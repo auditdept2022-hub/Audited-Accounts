@@ -3911,10 +3911,35 @@
   //   - Here, the request itself is now chunked (same size-aware
   //     chunking Import uses) and sent through runBatched_, which
   //     retries a stalled/busy chunk directly against the server instead
-  //     of ever touching the persistent offline outbox. The offline
-  //     outbox is now reserved for the case that's actually offline (or
-  //     a single-row delete), not a large online delete that merely hit
-  //     a slow request.
+  //     of ever touching the persistent offline outbox, AND already
+  //     handles a genuinely dropped connection on its own (pauses,
+  //     waits for reconnect, resumes with the same opId — see
+  //     runBatched_'s own comment) — so there's nothing left for the
+  //     per-row offline-outbox path to do better for a multi-row delete.
+  //
+  //   BUG FIX (78+ deletes still "going to sync" one at a time): this
+  //   branch used to also require isOnline_() to be true before taking
+  //   the batch path — `isOnline_() && rows.length > 1`. isOnline_() is
+  //   only a CACHED guess based on the last network call's outcome (see
+  //   its own comment), not a fresh check — if the last request before
+  //   the delete happened to fail or time out (a cold start, a momentary
+  //   hiccup), isOnline_() reports "offline" for a while afterward even
+  //   on a perfectly working connection. That stale reading was enough
+  //   to route an entire large delete into the per-row offline outbox
+  //   below — which is exactly the slow, one-item-at-a-time, sometimes-
+  //   erroring "still syncing" behavior this whole fix was meant to
+  //   eliminate. None of the three Import flows gate on isOnline_()
+  //   before calling runBatched_ (grep isOnline_() — only this delete
+  //   path did), and they don't need to: runBatched_ tries the request
+  //   regardless, and if the connection really is down it fails fast and
+  //   pauses/retries on its own. Dropped the isOnline_() check here too,
+  //   so a multi-row delete always takes the batch path and lets
+  //   runBatched_ — not a stale local flag — decide whether the network
+  //   is actually there. The offline outbox is now reserved only for a
+  //   single-row delete, not a multi-row one — a single row is small and
+  //   cheap enough that persisting it in localStorage (so it survives a
+  //   reload if the tab closes mid-flight) is worth more than routing it
+  //   through the batch machinery.
   async function deleteSelected_(){
     const rows = Array.from(selectedRows).filter(r =>
       customers.some(c => c.row === r && !c._pendingDelete)
@@ -3948,7 +3973,7 @@
     btn.disabled = true;
     document.getElementById('bulkClearBtn').disabled = true;
 
-    if(isOnline_() && rows.length > 1){
+    if(rows.length > 1){
       rows.forEach(row => applyOptimisticDelete_({ row: row }));
       render();
 

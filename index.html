@@ -5516,6 +5516,12 @@
   function matchImportRecords_(allRecords, pickPayload_){
     const nameIndex = {};
     const compoundIndex = {};
+    // Engine-only index (new): lets a row match purely on engine number
+    // when the name in the import file doesn't line up exactly — a
+    // retyped/misspelled name, extra initials, different name order,
+    // etc. The engine number is the more reliable identifier of an
+    // actual unit, so it's trusted on its own when it matches exactly.
+    const engineIndex = {};
     customers.forEach(c => {
       const nameKey = normalizeName_(c.customer);
       (nameIndex[nameKey] = nameIndex[nameKey] || []).push(c);
@@ -5523,6 +5529,7 @@
       if(engKey){
         const key = nameKey + '|' + engKey;
         (compoundIndex[key] = compoundIndex[key] || []).push(c);
+        (engineIndex[engKey] = engineIndex[engKey] || []).push(c);
       }
     });
 
@@ -5530,29 +5537,54 @@
     let unmatched = 0;
     let duplicateNameRows = 0;
     let payloadRows = 0;
+    // Rows matched with only ONE of name/engine agreeing exactly (the
+    // other either didn't match or wasn't present in the file) — i.e. a
+    // likely misspelling on one side, rescued by a confident match on
+    // the other. Tracked separately (with examples, capped) so these can
+    // be called out and double-checked rather than silently trusted the
+    // same as an exact name+engine match.
+    let looseMatchRows = 0;
+    const looseMatchExamples = [];
+    const LOOSE_MATCH_CAP = 300;
     // Actual names behind the `unmatched` count, so an error in the
     // activity log can show WHICH customers didn't match instead of just
     // a number — this is what "no match" actually means in practice
-    // (typo'd name, customer not yet added to this branch, wrong branch
-    // selected, etc.). Capped so one bad file can't bloat the log entry.
+    // (typo'd name AND engine, customer not yet added to this branch, or
+    // wrong branch selected). Capped so one bad file can't bloat the log
+    // entry.
     const unmatchedNames = [];
     const UNMATCHED_NAMES_CAP = 300;
     allRecords.forEach(rec => {
       const nameKey = normalizeName_(rec.customer);
       const engKey = normalizeEngine_(rec.engineNo);
       let matches = null;
+      let loose = false;
 
-      if(engKey){
-        // Engine number given — match that exact unit only. If it
-        // doesn't line up with anything on file, don't guess: skip the
-        // row rather than risk updating the wrong account.
+      // 1) Best case: name AND engine both match exactly, together.
+      if(engKey && nameKey){
         matches = compoundIndex[nameKey + '|' + engKey] || null;
-        if(!matches){
-          const byName = nameIndex[nameKey];
-          if(byName && byName.length === 1) matches = byName; // only one account with this name — safe even if the engine text differs slightly
+      }
+
+      // 2) Name didn't match (or wasn't matched together with this
+      //    engine) — but the engine number on its own matches exactly.
+      //    Trust it: the engine number is what actually identifies the
+      //    unit, so a misspelled/retyped name shouldn't block the match.
+      if((!matches || !matches.length) && engKey){
+        const byEngine = engineIndex[engKey];
+        if(byEngine && byEngine.length){ matches = byEngine; loose = true; }
+      }
+
+      // 3) Engine didn't match (missing from the file, or misspelled/
+      //    retyped so it doesn't line up with anything on file) — but
+      //    the name on its own matches exactly. Trust it the same way.
+      //    If the name is shared by more than one account, ALL of them
+      //    get updated (same as before) rather than guessing which one.
+      if((!matches || !matches.length) && nameKey){
+        const byName = nameIndex[nameKey];
+        if(byName && byName.length){
+          matches = byName;
+          if(engKey) loose = true; // an engine WAS given but it didn't line up — flag it
         }
-      } else {
-        matches = nameIndex[nameKey] || null;
       }
 
       if(!matches || !matches.length){
@@ -5567,12 +5599,19 @@
       const payload = pickPayload_(rec);
       if(!payload) return; // nothing this flow cares about on this row
 
-      if(!engKey && matches.length > 1) duplicateNameRows++;
+      if(matches.length > 1) duplicateNameRows++;
+      if(loose){
+        looseMatchRows += matches.length;
+        if(looseMatchExamples.length < LOOSE_MATCH_CAP){
+          const label = String(rec.customer || '').trim() || '(blank name)';
+          looseMatchExamples.push(engKey ? `${label} — ${rec.engineNo}` : label);
+        }
+      }
       payloadRows += matches.length;
       matches.forEach(m => toUpdate.push(Object.assign({ row: m.row, customer: m.customer }, payload)));
     });
 
-    return { toUpdate, unmatched, unmatchedNames, duplicateNameRows, payloadRows };
+    return { toUpdate, unmatched, unmatchedNames, duplicateNameRows, payloadRows, looseMatchRows, looseMatchExamples };
   }
 
   // ---- Import Balances -----------------------------------------------
@@ -5583,7 +5622,7 @@
     const allRecords = await parseImportFiles_(fileList);
     if(!allRecords.length){ toast('No customer rows found to import.'); return; }
 
-    const { toUpdate, unmatched, unmatchedNames, duplicateNameRows } = matchImportRecords_(allRecords, rec => {
+    const { toUpdate, unmatched, unmatchedNames, duplicateNameRows, looseMatchRows, looseMatchExamples } = matchImportRecords_(allRecords, rec => {
       const fields = {};
       ['dueThisMonth', 'paymentAdv', 'penaltyDue'].forEach(k => { if(rec[k] !== undefined) fields[k] = rec[k]; });
       if(!Object.keys(fields).length) return null; // no balance figures on this row — nothing for this flow to do
@@ -5599,7 +5638,8 @@
 
     const msg = `Found ${allRecords.length} data row${allRecords.length === 1 ? '' : 's'}: `
       + `${toUpdate.length} account${toUpdate.length === 1 ? '' : 's'} will have Due This Month / Payment (Adv) / Penalty Due updated`
-      + (duplicateNameRows ? `. ${duplicateNameRows} name${duplicateNameRows === 1 ? '' : 's'} had no engine number to disambiguate and matched more than one account — all of them will be updated` : '')
+      + (looseMatchRows ? `. ${looseMatchRows} matched by name OR engine only (the other didn't line up exactly) — double-check these` : '')
+      + (duplicateNameRows ? `. ${duplicateNameRows} name${duplicateNameRows === 1 ? '' : 's'} matched more than one account — all of them will be updated` : '')
       + (unmatched ? `. ${unmatched} unmatched row${unmatched === 1 ? '' : 's'} will be skipped (no new customers are created by import)` : '')
       + '. Remarks are not touched by this import. Continue?';
     if(!await appConfirm(msg, { title: 'Import balances?', confirmText: 'Import' })) return;
@@ -5641,6 +5681,7 @@
       `${updated} account${updated === 1 ? '' : 's'} updated${failed ? ', ' + failed + ' failed' : ''}${unmatched ? ', ' + unmatched + ' skipped (no match)' : ''}.${cancelledNote}`,
       [
         { label: 'Not matched — no customer found on this branch', items: unmatchedNames },
+        { label: 'Matched by name or engine only — please double-check', items: looseMatchExamples },
         { label: 'Matched, but failed to save', items: updateResult.failedLabels }
       ]
     );
@@ -5659,7 +5700,7 @@
     const allRecords = await parseImportFiles_(fileList);
     if(!allRecords.length){ toast('No customer rows found to import.'); return; }
 
-    const { toUpdate, unmatched, unmatchedNames, duplicateNameRows } = matchImportRecords_(allRecords, rec => {
+    const { toUpdate, unmatched, unmatchedNames, duplicateNameRows, looseMatchRows, looseMatchExamples } = matchImportRecords_(allRecords, rec => {
       const historyAppend = rec.auditorRemarks ? String(rec.auditorRemarks).trim() : '';
       if(!historyAppend) return null; // no remark text on this row — nothing for this flow to do
       return { historyAppend };
@@ -5674,7 +5715,8 @@
 
     const msg = `Found ${allRecords.length} data row${allRecords.length === 1 ? '' : 's'}: `
       + `${toUpdate.length} account${toUpdate.length === 1 ? '' : 's'} will get the imported text added to Previous Audit Remarks`
-      + (duplicateNameRows ? `. ${duplicateNameRows} name${duplicateNameRows === 1 ? '' : 's'} had no engine number to disambiguate and matched more than one account — all of them will be updated` : '')
+      + (looseMatchRows ? `. ${looseMatchRows} matched by name OR engine only (the other didn't line up exactly) — double-check these` : '')
+      + (duplicateNameRows ? `. ${duplicateNameRows} name${duplicateNameRows === 1 ? '' : 's'} matched more than one account — all of them will be updated` : '')
       + (unmatched ? `. ${unmatched} unmatched row${unmatched === 1 ? '' : 's'} will be skipped (no new customers are created by import)` : '')
       + '. Current Auditor Remarks and Date of Audit are not touched. Continue?';
     if(!await appConfirm(msg, { title: 'Import remarks?', confirmText: 'Import' })) return;
@@ -5719,6 +5761,7 @@
       `${updated} account${updated === 1 ? '' : 's'} updated${failed ? ', ' + failed + ' failed' : ''}${unmatched ? ', ' + unmatched + ' skipped (no match)' : ''}.${cancelledNote}`,
       [
         { label: 'Not matched — no customer found on this branch', items: unmatchedNames },
+        { label: 'Matched by name or engine only — please double-check', items: looseMatchExamples },
         { label: 'Matched, but failed to save', items: updateResult.failedLabels }
       ]
     );

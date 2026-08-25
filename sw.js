@@ -16,7 +16,19 @@
 // new icon) so old cached entries for removed files get cleaned up by
 // the activate handler below — it's not what fixes staleness of
 // index.html's contents though; the network-first fetch handler is.
-const CACHE_NAME = 'audited-accounts-shell-v2';
+//
+// FORCE REFRESH (new): network-first alone still isn't a guarantee the
+// VERY NEXT load is fresh — a stale HTTP-level cache of sw.js itself, a
+// half-updated registration, or simply not wanting to wait on any of
+// that can all still leave someone looking at an old shell. The
+// dashboard now has an explicit "Force refresh app" action (hamburger
+// menu, and a hard pull-to-reload) that bypasses this file entirely: it
+// unregisters every service worker for this origin, deletes every Cache
+// Storage entry directly from the page, then reloads with a cache-busting
+// URL. See hardRefreshEverything_() in index.html. This file's only
+// supporting role in that is the 'message' listener below, kept as a
+// second path to the same result for any tab still running old JS.
+const CACHE_NAME = 'audited-accounts-shell-v3';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -32,6 +44,25 @@ const CACHE_FIRST_FILES = new Set([
   './icon-192.png',
   './icon-512.png'
 ]);
+
+// FORCE-REFRESH HOOK: the dashboard's new "Force refresh app" button
+// (hamburger menu → Branch Profiles) and its hard pull-to-reload gesture
+// both call navigator.serviceWorker.getRegistrations() + caches.delete()
+// directly from the page itself — that's enough on its own, since Cache
+// Storage is shared, origin-scoped storage the page can read/write
+// without going through this file at all. This listener is a second,
+// belt-and-suspenders path for the same "wipe everything" action,
+// reachable even from a client the button rewrite hasn't reached yet
+// (an old tab still running JS from before this fix): postMessage
+// {type:'CLEAR_ALL'} to this SW's registration and it drops every cache
+// this worker owns.
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'CLEAR_ALL') {
+    event.waitUntil(
+      caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n))))
+    );
+  }
+});
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

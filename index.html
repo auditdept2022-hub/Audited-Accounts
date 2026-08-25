@@ -2205,6 +2205,18 @@
           <button class="btn primary" id="addProfileBtn" onclick="createProfile_()">+ Add</button>
         </div>
       </div>
+      <div class="profile-add-block">
+        <div class="profile-add-title">
+          <span class="profile-add-icon">⟳</span>
+          <div>
+            <div class="profile-add-title-text">Force refresh app</div>
+            <div class="meta" style="margin-top:2px;">Fixes "my edits aren't showing up" — clears the app's cache and reloads everything fresh.</div>
+          </div>
+        </div>
+        <div class="profile-add-combo">
+          <button class="btn" id="forceRefreshBtn" onclick="confirmHardRefresh_()" style="width:100%;">Force refresh now</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -9388,12 +9400,78 @@
     loadData();
   }
 
+  // ---- Force refresh app (clear cache) ---------------------------------
+  // A plain window.location.reload() still goes through whatever service
+  // worker is currently controlling the page — and normally that's fine
+  // (sw.js is network-first for the HTML shell), but there are a few
+  // ways someone can still end up stuck on an old version regardless:
+  // a stale HTTP-level cache of sw.js ITSELF (outside sw.js's own control
+  // — that's the browser's ordinary network cache for the .js file, not
+  // Cache Storage), a registration that's mid-update, or just not
+  // wanting to wait on any of that at all. This is the "nuclear option"
+  // that sidesteps all of it from the page side directly:
+  //   1. Unregister every service worker registered for this origin —
+  //      nothing is left in a position to intercept the next request.
+  //   2. Delete every entry in Cache Storage (the app-shell cache sw.js
+  //      built up) directly — this doesn't need sw.js's cooperation,
+  //      Cache Storage is shared, origin-scoped storage the page can
+  //      read/write on its own.
+  //   3. Navigate to a cache-busted URL (a throwaway query param) so the
+  //      BROWSER's own plain HTTP cache can't serve a stale index.html
+  //      either — with no service worker and no Cache Storage entry left
+  //      to intercept it, this is a guaranteed fully-fresh network fetch
+  //      of everything, and re-registers whatever the current sw.js is
+  //      from scratch on the next load.
+  // Wired to the hamburger menu's "Force refresh app" button and to a
+  // hard pull-to-reload gesture (see initPullToReload_ below) — both are
+  // meant as an explicit "something looks stale/stuck, fix it now"
+  // action, not the everyday refresh (that's the ⟳ button above, which
+  // stays fast/data-only on purpose).
+  async function hardRefreshEverything_(){
+    try{
+      if('serviceWorker' in navigator){
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+      }
+    }catch(err){
+      console.warn('Service worker unregister failed:', err);
+    }
+    try{
+      if('caches' in window){
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+    }catch(err){
+      console.warn('Cache clear failed:', err);
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set('_refresh', Date.now());
+    window.location.replace(url.toString());
+  }
+
+  // Wired to the drawer's "Force refresh now" button — this one is a
+  // deliberate, explicit click (not a swipe gesture that already implies
+  // intent), so it confirms first: it interrupts whatever the person is
+  // doing and briefly shows a blank/loading screen while everything
+  // re-fetches.
+  async function confirmHardRefresh_(){
+    if(!await appConfirm(
+      'This clears the app\'s saved copy of the page and reloads everything fresh from the server. Your spreadsheet data is never affected — only the app itself refreshes. Continue?',
+      { title: 'Force refresh app?', confirmText: 'Refresh now' }
+    )) return;
+    hardRefreshEverything_();
+  }
+
   // Pull-to-reload — a hard downward swipe starting at the very top of
-  // the page (the header) does a FULL window.location.reload(), the
-  // same as a native browser/PWA pull-to-refresh. This is deliberately
-  // separate from manualRefresh_()/loadData() above: that only re-pulls
-  // the customer list, this re-fetches the whole HTML/CSS/JS shell too
-  // (picks up a new service-worker/app version, not just new data).
+  // the page (the header) triggers hardRefreshEverything_() (see above):
+  // unregisters the service worker, clears Cache Storage, and reloads
+  // with a cache-busting URL. This is deliberately separate from
+  // manualRefresh_()/loadData() above: that only re-pulls the customer
+  // list, this re-fetches the whole HTML/CSS/JS shell too and guarantees
+  // it's actually fresh (picks up a new service-worker/app version, not
+  // just new data — previously this was a plain window.location.reload(),
+  // which still went through whatever service worker/cache was currently
+  // active and so wasn't a reliable fix for a stuck/stale shell).
   const PTR_TRIGGER_PX = 70;   // pull distance (post-resistance) needed to reload
   const PTR_MAX_PX = 90;       // visual cap on how far the indicator travels
   const PTR_RESISTANCE = 0.5;  // pull feels "heavier" than a 1:1 finger drag
@@ -9442,7 +9520,7 @@
         indicator.classList.add('ptr-spinning');
         indicator.classList.remove('ptr-ready');
         setIndicatorHeight(48);
-        window.location.reload();
+        hardRefreshEverything_();
       } else {
         reset();
       }

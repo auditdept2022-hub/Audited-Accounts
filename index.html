@@ -4787,7 +4787,10 @@
   // Alternate header names accepted on import, in addition to each field's
   // own label and key, so files from slightly different sources still map.
   const FIELD_ALIASES = {
-    customer: ['customer name', 'customer', 'name'],
+    // 'acct type/status customer' is the exact header this app's own
+    // backend uses (see COLS.CUSTOMER in Code.gs) — i.e. what's actually
+    // on the live sheet, and what a direct Google Sheets export carries.
+    customer: ['customer name', 'customer', 'name', 'acct type/status customer'],
     engineNo: ['engine no.', 'engine no', 'engine number', 'engineno'],
     releaseDate: ['release / restructure date', 'release date', 'restructure date', 'releasedate'],
     ma: ['ma (₱)', 'ma'],
@@ -5128,7 +5131,22 @@
       let score = 0, hasCustomer = false, hasFinancial = false;
       row.forEach((cell, idx) => {
         const norm = normHeader_(cell);
-        const key = ALIAS_TO_FIELD[norm];
+        let key = ALIAS_TO_FIELD[norm];
+        // Loose fallback for the customer column only: any header text
+        // that contains the word "customer" — e.g. this app's OWN sheet
+        // header "Acct Type/Status Customer" (see COLS.CUSTOMER in the
+        // Apps Script backend), or a direct Google Sheets export of a
+        // branch, or "Customer Details", etc. — is accepted even though
+        // it isn't one of FIELD_ALIASES.customer's exact phrases. Without
+        // this, any file whose header came straight from the live sheet
+        // (rather than this app's own Export button, which always writes
+        // the plain "Customer Name" label) fails to have its Customer
+        // column recognized at all, which makes EVERY row in the file
+        // silently fail to import — not just one customer. This mirrors
+        // the same loose `indexOf('customer') !== -1` matching
+        // findAccountsHeaderRow_ already uses for the Import Accounts
+        // flow below.
+        if(!key && /\bcustomer\b/.test(norm)) key = 'customer';
         if(key && map[key] === undefined){
           map[key] = idx;
           score++;

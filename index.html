@@ -4732,6 +4732,7 @@
   document.getElementById('mCurrentEdit').addEventListener('input', function(){
     autoFitTextarea_(this);
     queueDraftSave_();
+    updateSaveButtonState_();
   });
 
   document.getElementById('mCurrentDeleteBtn').addEventListener('click', async function(){
@@ -4741,6 +4742,7 @@
     ta.value = '';
     autoFitTextarea_(ta);
     queueDraftSave_();
+    updateSaveButtonState_();
     toast('Remark removed — click Save changes to confirm.');
   });
 
@@ -10955,6 +10957,7 @@
         if(result === null) return; // cancelled — leave the field untouched
         input.value = result;
         queueDraftSave_(); // set via JS, not typing — no 'input' event fires for a readonly field
+        updateSaveButtonState_();
       });
       return;
     }
@@ -10973,6 +10976,7 @@
         if(result === null) return; // cancelled — leave the field untouched
         input.value = result;
         queueDraftSave_(); // set via JS, not typing — no 'input' event fires for a readonly field
+        updateSaveButtonState_();
       });
       return;
     }
@@ -10983,7 +10987,7 @@
     // snapshots the entire grid, not just the remark box. (Unit Status /
     // Payment Mode are readonly and go through the picker's .then() above
     // instead, since a readonly input never fires 'input'.)
-    if(e.target.matches('[data-key]')) queueDraftSave_();
+    if(e.target.matches('[data-key]')){ queueDraftSave_(); updateSaveButtonState_(); }
   });
 
   function collectFieldValues(){
@@ -11117,6 +11121,7 @@
       setModalMarkerPickerColor_('');
     }
     updateDraftStatus_();
+    updateSaveButtonState_();
   }
 
   let draftSaveDebounce;
@@ -11134,6 +11139,56 @@
   // queueDraftSave_() after its own combo/preset bookkeeping, and the
   // #mCurrentEdit 'input' listener above.
 
+  // ---- Save button lock — only enable Save/Create once something has
+  // actually changed --------------------------------------------------
+  //
+  // Previously "Save changes" was always clickable the instant the modal
+  // opened, even with zero edits. That meant tapping near the Save
+  // button (very easy on mobile, it sits right next to Cancel) could
+  // fire a real save — an empty "update" with no actual changes — and
+  // leave the record showing a pending sync for nothing. This checks the
+  // live form against what the modal opened with (same comparisons
+  // saveModal() itself uses: normForCompare_ on fields/remark/history,
+  // plus the marker) and disables Save/Create whenever nothing differs,
+  // so an accidental tap on a disabled button just does nothing instead
+  // of queuing a save. Cancel and the ✕ always work regardless of this
+  // state — they never touch saveBtn.
+  function formIsDirty_(){
+    if(modalMode === 'create'){
+      // A brand-new customer starts fully blank, so ANY field, remark,
+      // or marker set counts as a change. (saveModal still separately
+      // requires a customer name before it will actually submit.)
+      const fields = collectFieldValues();
+      if(Object.keys(fields).some(k => fields[k] !== '')) return true;
+      if(modalMarkerColor_) return true;
+      const remarkEl = document.getElementById('mCurrentEdit');
+      if(remarkEl && remarkEl.value.trim()) return true;
+      return false;
+    }
+    // Edit mode: compare the live grid against the real record the modal
+    // was opened with, same field-by-field comparison saveModal() uses
+    // for changedKeys.
+    const c = customers.find(x => x.row === activeRow);
+    const fields = collectFieldValues();
+    const fieldsChanged = c
+      ? Object.keys(fields).some(k => normForCompare_(fields[k]) !== normForCompare_(c[k]))
+      : Object.keys(fields).some(k => fields[k] !== '');
+    if(fieldsChanged) return true;
+    if(modalMarkerColor_ !== (c ? (c.marker || '') : '')) return true;
+    const currentEditVal = document.getElementById('mCurrentEdit').value.trim();
+    if(normForCompare_(currentEditVal) !== normForCompare_(editorOriginalCurrent)) return true;
+    const historyEditEl = document.getElementById('mHistoryEdit');
+    const historyEditVal = historyEditEl ? historyEditEl.value.trim() : editorOriginalHistory;
+    if(normForCompare_(historyEditVal) !== normForCompare_(editorOriginalHistory)) return true;
+    return false;
+  }
+
+  function updateSaveButtonState_(){
+    const btn = document.getElementById('saveBtn');
+    if(!btn || btn.classList.contains('loading')) return; // don't fight an in-flight save
+    btn.disabled = !formIsDirty_();
+  }
+
   // ---- Modal highlight picker — mirrors setMark_'s four colors, but
   // doesn't save on click; it just tracks modalMarkerColor_, which
   // saveModal() folds into the same fields object as everything else so
@@ -11150,6 +11205,7 @@
     if(!btn) return;
     setModalMarkerPickerColor_(btn.dataset.color);
     queueDraftSave_();
+    updateSaveButtonState_();
   });
 
   function openEditModal(row){
@@ -11207,6 +11263,11 @@
       toast('Something went wrong opening this record: ' + err.message);
     }
 
+    // A restored draft can open the modal already "dirty" (that's the
+    // whole point — it's unsaved content from before); a record with no
+    // draft opens clean, so Save starts locked until something changes.
+    updateSaveButtonState_();
+
     document.getElementById('overlay').classList.add('open');
     lockBodyScroll();
   }
@@ -11239,6 +11300,7 @@
     if(draft && draft.fields) applyDraftFieldsToGrid_(draft.fields);
     setModalMarkerPickerColor_(draft && draft.marker ? draft.marker : '');
     updateDraftStatus_();
+    updateSaveButtonState_();
     document.getElementById('overlay').classList.add('open');
     lockBodyScroll();
   }

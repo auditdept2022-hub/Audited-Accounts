@@ -754,8 +754,9 @@ function refreshCashComputed(){
         exp = n(c.lessExpenses), dep = depositsTotal(c.deposits);
   const net = total + gcash - exp;
   const onHand = net - dep;
-  c.netCollection = net ? net.toFixed(2) : '';
-  c.cashOnHand = onHand ? onHand.toFixed(2) : '';
+  const hasInput = c.totalCollection !== '' || c.gcashCollection !== '' || c.lessExpenses !== '' || dep !== 0;
+  c.netCollection = hasInput ? net.toFixed(2) : '';
+  c.cashOnHand = hasInput ? onHand.toFixed(2) : '';
 
   const netEl = document.getElementById('cashNetDisplay');
   if(netEl) netEl.value = c.netCollection;
@@ -1738,29 +1739,10 @@ function renderHistorySection(){
       }).join('');
 }
 
-function renderBranchSection(){
-  if(!backendConfigured){
-    return '<div class="drawer-section-title">Start new audit for branch</div>'
-      + '<div class="empty-hint">Backend not configured yet, so the branch list isn\'t available.</div>';
-  }
-  if(knownBranches.length === 0){
-    return '<div class="drawer-section-title">Start new audit for branch</div>';
-  }
-  return '<div class="drawer-section-title">Start new audit for branch</div>'
-    + '<div class="drawer-hint">Tap a branch to start this audit for it.</div>'
-    + knownBranches.map(b => {
-        const isCurrent = state.branch === b;
-        return '<button class="branch-item'+(isCurrent?' current':'')+'" onclick="selectBranch(\''+escAttr(b).replace(/'/g,"\\'")+'\')">'
-          + '<span class="b-name">'+escHtml(b)+'</span>'
-          + (isCurrent ? '<span class="chev">&#10003;</span>' : '<span class="chev">&rsaquo;</span>')
-          + '</button>';
-      }).join('');
-}
-
 function renderBranchDrawer(){
   const body = document.getElementById('branchDrawerBody');
   if(!body) return;
-  body.innerHTML = renderHistorySection() + renderBranchSection();
+  body.innerHTML = renderHistorySection();
 }
 
 /* ---------- report viewer (read-only summary of a past audit) ---------- */
@@ -1781,6 +1763,17 @@ function buildReportHtml(h){
     + (s.cash ? '<div class="info-row"><span>Net collection</span><span>'+(escHtml(s.cash.netCollection)||'&mdash;')+'</span></div>'
               + '<div class="info-row"><span>Cash on hand</span><span>'+(escHtml(s.cash.cashOnHand)||'&mdash;')+'</span></div>' : '')
     + '</div>';
+
+  const depositRows = (s.cash && s.cash.deposits || []).filter(d => d && ((d.amount!=='' && d.amount!=null) || (d.remarks && String(d.remarks).trim())));
+  if(depositRows.length){
+    html += '<div class="report-section-title">Deposits</div>';
+    html += depositRows.map(d =>
+      '<div class="report-row"><div class="r-label">'+fmtMoney(parseFloat(d.amount)||0)
+        + (d.remarks ? '<div class="r-remark">'+escHtml(d.remarks)+'</div>' : '')
+        + '</div></div>'
+    ).join('');
+    html += '<div class="report-row"><div class="r-label"><strong>Total</strong></div><span class="badge">'+fmtMoney(depositsTotal(s.cash.deposits))+'</span></div>';
+  }
 
   html += '<div class="report-section-title">Checklist answers</div>';
   Object.keys(ynLabels).forEach(p=>{

@@ -345,6 +345,7 @@
      that it sits right next to it. Spinning is applied to the inner svg
      so the button's own hover/active states (background, scale) still
      work independently while a refresh is in flight. */
+  #hdrAuditSheetBtn{text-decoration:none;}
   .hdr-sync-btn{
     position:relative;display:flex;align-items:center;justify-content:center;
     width:32px;height:32px;border-radius:9px;flex-shrink:0;
@@ -1498,8 +1499,8 @@
   .rec.is-pending::before{background:var(--rstr);}
   .rec.is-conflict::before{background:var(--del);}
 
-  /* ---------- Desktop only: move the icon toolbar (refresh / action /
-     deleted / bell) down so it sits beside the account-status strip
+  /* ---------- Desktop only: move the icon toolbar (audit sheet / refresh /
+     action / deleted / bell) down so it sits beside the account-status strip
      instead of stacked under the clock, and let that strip scroll
      horizontally instead of wrapping/squeezing once it has more chips
      than fit. Scoped to min-width:901px so tablet (<=900px) and phone
@@ -1533,7 +1534,9 @@
       overflow-x:auto;
       -webkit-overflow-scrolling:touch;
       scrollbar-width:none;
-      /* NOTE: this reserves the icon-toolbar's width with margin-right,
+      /* NOTE: reserve = 5 icons × 32px + 4 gaps × 8px + ~20px buffer = 212px.
+         Bump this by 40px any time another icon is added to .hdr-icon-row.
+         This reserves the icon-toolbar's width with margin-right,
          not padding-right. A scroll container's padding only opens up
          a gap at the very END of its scrollable content (i.e. only
          once scrolled all the way right) — the visible viewport itself
@@ -1546,7 +1549,7 @@
          flex-shrink:1 lets the browser subtract this margin from it),
          so the chips can never physically render under the icons no
          matter where the strip is scrolled to. */
-      margin-right:172px;
+      margin-right:212px;
     }
     .hdr-status-counts::-webkit-scrollbar{display:none;}
     .hdr-status-counts .sc-item{flex-shrink:0;}
@@ -1913,6 +1916,12 @@
         <div class="hdr-clock-date" id="hdrClockDate">— — —</div>
       </div>
       <div class="hdr-icon-row">
+        <a class="hdr-sync-btn" id="hdrAuditSheetBtn" href="Audit_Sheet.html" title="Open Audit Sheet">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 11l3 3L22 4"></path>
+            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+          </svg>
+        </a>
         <button class="hdr-sync-btn" id="hdrSyncBtn" onclick="manualRefresh_()" title="Refresh">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="23 4 23 10 17 10"></polyline>

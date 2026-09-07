@@ -233,7 +233,7 @@
   .field label{font-size:11px; color:var(--muted); font-weight:600;}
   .input, select, .field input, .field select{
     width:100%; border:1px solid #D7DCF0; background:#F8F9FD; border-radius:9px; padding:9px 10px;
-    font-size:13.5px; color:var(--text); outline:none; font-family:inherit;
+    font-size:13.5px; color:var(--text); outline:none; font-family:inherit; text-align:left;
     transition:border-color .15s, box-shadow .15s;
   }
   .input:focus, select:focus, textarea:focus{border-color:var(--accent); box-shadow:0 0 0 3px rgba(42,61,154,.12);}
@@ -273,6 +273,7 @@
   .cond-seg button.active.poor{background:var(--del-soft); color:var(--del); border-color:#F0C3CE;}
   .cond-seg button.active.complete{background:var(--ok-soft); color:var(--ok); border-color:#B7E1CE;}
   .cond-seg button.active.missing{background:var(--del-soft); color:var(--del); border-color:#F0C3CE;}
+  .cond-seg button.active.incomplete{background:var(--del-soft); color:var(--del); border-color:#F0C3CE;}
   .status-row{border:1px solid var(--line); border-radius:var(--radius-sm); padding:11px 12px; margin-bottom:8px; background:#fff;}
   .status-row .status-head{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:9px;}
   .status-row .status-head .cond-label{margin-bottom:0;}
@@ -281,6 +282,12 @@
   .entry-row{display:flex; gap:8px; align-items:center; border:1px solid var(--line); border-radius:var(--radius-sm);
     padding:8px; margin-bottom:8px; background:#fff;}
   .entry-row .input{flex:1; min-width:0;}
+  .entry-row-typed{display:flex; flex-direction:column; gap:6px; border:1px solid var(--line); border-radius:var(--radius-sm);
+    padding:8px; margin-bottom:8px; background:#fff;}
+  .entry-row-typed .er-main{display:flex; gap:8px; align-items:center;}
+  .entry-row-typed .er-main .input{flex:1; min-width:0; font-weight:700;}
+  .entry-row-typed .er-sub{display:flex; gap:8px;}
+  .entry-row-typed .er-sub .input{flex:1; min-width:0; font-weight:400;}
   .icon-btn{border:1px solid #D9DDF0; background:#fff; border-radius:8px; width:32px; height:32px; flex-shrink:0;
     display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--del); font-size:16px; line-height:1;}
   .icon-btn:active{background:var(--del-soft);}
@@ -294,30 +301,36 @@
   .pair-sub{font-size:10.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin:2px 0 10px;}
 
   /* ---------- cash denomination breakdown ---------- */
+  .denom-details{border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; background:#fff;}
+  .denom-details[open] .denom-summary{border-bottom:1px solid var(--line);}
+  .denom-summary{list-style:none; cursor:pointer; display:flex; align-items:center; justify-content:space-between;
+    gap:8px; padding:11px 12px; background:#F8F9FD; font-size:12.5px; font-weight:700; color:var(--text);
+    -webkit-tap-highlight-color:transparent;}
+  .denom-summary::-webkit-details-marker{display:none;}
+  .denom-summary .ds-right{display:flex; align-items:center; gap:8px; flex-shrink:0;}
+  .denom-summary .ds-total{font-family:'JetBrains Mono',monospace; font-size:12.5px; font-weight:800; color:var(--accent-dark);}
+  .denom-summary .ds-chev{color:var(--muted-2); transition:transform .15s; flex-shrink:0;}
+  .denom-details[open] .denom-summary .ds-chev{transform:rotate(180deg);}
+  .denom-details .denom-table{border:none; border-radius:0;}
   .denom-table{border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; background:#fff;}
   .denom-head{display:grid; grid-template-columns:1fr 78px 92px; gap:8px; padding:7px 10px; background:#F1F3FB;
     font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.3px;}
   .denom-row{display:grid; grid-template-columns:1fr 78px 92px; gap:8px; align-items:center; padding:6px 10px;
     border-top:1px solid var(--line);}
   .denom-row .denom-label{font-family:'JetBrains Mono',monospace; font-weight:700; color:var(--text); font-size:12.5px;}
-  .denom-row .input{padding:6px 7px; font-size:13px; text-align:center;}
+  .denom-row .input{padding:6px 7px; font-size:13px; text-align:left;}
   .denom-sub{font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--muted); text-align:right; padding-right:2px;}
   .denom-total{display:grid; grid-template-columns:1fr 78px 92px; gap:8px; align-items:center; padding:8px 10px;
     border-top:1.5px solid var(--accent); background:var(--accent-soft);}
   .denom-total .denom-label{font-size:12px; font-weight:700; color:var(--accent-dark);}
   .denom-total .denom-sub{font-size:13px; font-weight:800; color:var(--accent-dark);}
-  .cash-variance{display:flex; justify-content:space-between; align-items:center; gap:8px;
-    padding:9px 12px; border-radius:var(--radius-sm); font-size:12px; font-weight:700; margin-top:12px;}
-  .cash-variance.ok{background:var(--ok-soft); color:var(--ok);}
-  .cash-variance.warn{background:var(--del-soft); color:var(--del);}
-
   /* ---------- deposits: compact, minimalist single-line rows ---------- */
   .deposit-list{display:flex; flex-direction:column; gap:5px; margin-bottom:4px;}
   .deposit-row{display:flex; align-items:center; gap:5px;}
   .deposit-row .dep-amt, .deposit-row .dep-remarks{
     border:1px solid #D7DCF0; background:#F8F9FD; border-radius:7px; font-family:inherit;
     color:var(--text); outline:none; padding:5px 7px; font-size:12px; min-width:0;}
-  .deposit-row .dep-amt{width:84px; flex:0 0 84px; text-align:right;}
+  .deposit-row .dep-amt{width:84px; flex:0 0 84px; text-align:left;}
   .deposit-row .dep-remarks{flex:1;}
   .deposit-row .dep-amt:focus, .deposit-row .dep-remarks:focus{border-color:var(--accent); box-shadow:0 0 0 2px rgba(42,61,154,.10);}
   .deposit-row .dep-remove{flex-shrink:0; border:none; background:transparent; color:var(--muted-2);
@@ -494,7 +507,14 @@ const backendConfigured = APPS_SCRIPT_URL && APPS_SCRIPT_URL.indexOf('PASTE_YOUR
 /* ============================================================
    STATE
    ============================================================ */
-const emptyEntry = () => ({ seriesNo:'', remarks:'' });
+const emptyEntry = () => ({ type:'', seriesNo:'', remarks:'' });
+const defaultOrEntries = () => ([
+  { type:'Use/Stock \u2013 Motowheels', seriesNo:'', remarks:'' },
+  { type:'Stock \u2013 Motofinance', seriesNo:'', remarks:'' },
+  { type:'Spareparts', seriesNo:'', remarks:'' },
+  { type:'Sales Invoice', seriesNo:'', remarks:'' },
+  { type:'Delivery Receipt', seriesNo:'', remarks:'' }
+]);
 const emptyDepositEntry = () => ({ amount:'', remarks:'' });
 const emptyStatusEntry = () => ({ status:'', remarks:'' });
 
@@ -512,7 +532,7 @@ function freshState(){
     notebooks:{ cashReceiptJournal:null, salesJournal:null, registrationNotebook:null,
       closedAccountNotebook:null, noPendingChattel:null },
     officialReceipts:{ allComplete:null, cutoffSigned:null, greenCopiesFiledSeries:null,
-      greenCopiesOrganized:null, entries:[ emptyEntry() ] },
+      greenCopiesOrganized:null, entries: defaultOrEntries() },
     image:{
       cleanliness:{condition:'',remarks:''}, grooming:{condition:'',remarks:''},
       idUniforms:{condition:'',remarks:''}, signages:{condition:'',remarks:''},
@@ -523,15 +543,10 @@ function freshState(){
       oil:{condition:'',remarks:''}, promo:{condition:'',remarks:''},
       mcUnits:{condition:'',remarks:''}, serviceUnits:{condition:'',remarks:''},
       repairUnits:{condition:'',remarks:''},
-      tools:[ emptyStatusEntry() ], spareparts:[ emptyStatusEntry() ],
-      platesOrCr:[ emptyStatusEntry() ], assets:[ emptyStatusEntry() ]
+      tools: emptyStatusEntry(), spareparts: emptyStatusEntry(),
+      platesOrCr: emptyStatusEntry(), assets: emptyStatusEntry()
     },
-    confirmation:{
-      sampling:{ status:'', remarks:'' },
-      overdue:{ noIncentive100:null, noIncentiveRemarks:'', randomSample15:null, randomSampleRemarks:'' },
-      delinquent:{ always100:null, remarks:'' },
-      risk:{ repoRateOver5:null, repoRateRemarks:'', inventoryAging90:null, inventoryAgingRemarks:'' }
-    },
+    confirmation:{ remarks:'' },
     findings:[]
   };
 }
@@ -615,6 +630,8 @@ function onDenomInput(group, denom, el){
   if(sub) sub.textContent = fmtMoney(qty*denom);
   const totalEl = document.getElementById('denom-'+group+'-total');
   if(totalEl) totalEl.textContent = fmtMoney(denomGroupTotal(state.cash[group]));
+  const summaryTotalEl = document.getElementById('denom-'+group+'-total-summary');
+  if(summaryTotalEl) summaryTotalEl.textContent = fmtMoney(denomGroupTotal(state.cash[group]));
   refreshCashComputed();
 }
 function onCashFieldInput(field, val){
@@ -645,16 +662,6 @@ function refreshCashComputed(){
   if(netEl) netEl.value = c.netCollection;
   const onHandEl = document.getElementById('cashOnHandDisplay');
   if(onHandEl) onHandEl.value = c.cashOnHand;
-
-  const cashCountTotal = denomGroupTotal(c.cashCount);
-  const variance = cashCountTotal - onHand;
-  const varEl = document.getElementById('cashVarianceDisplay');
-  if(varEl){
-    const show = cashCountTotal > 0 || onHand !== 0;
-    varEl.style.display = show ? 'flex' : 'none';
-    varEl.className = 'cash-variance ' + (Math.abs(variance) < 0.01 ? 'ok' : 'warn');
-    varEl.innerHTML = '<span>Variance (cash count \u2212 cash on hand)</span><span>\u20b1'+fmtMoney(variance)+'</span>';
-  }
 }
 
 /* ============================================================
@@ -667,9 +674,7 @@ const ynPaths = [
   'notebooks.cashReceiptJournal','notebooks.salesJournal','notebooks.registrationNotebook',
   'notebooks.closedAccountNotebook','notebooks.noPendingChattel',
   'officialReceipts.allComplete','officialReceipts.cutoffSigned',
-  'officialReceipts.greenCopiesFiledSeries','officialReceipts.greenCopiesOrganized',
-  'confirmation.overdue.noIncentive100','confirmation.overdue.randomSample15',
-  'confirmation.delinquent.always100'
+  'officialReceipts.greenCopiesFiledSeries','officialReceipts.greenCopiesOrganized'
 ];
 function getFrom(obj, path){
   return path.split('.').reduce((o,k)=> (o==null?o:o[k]), obj);
@@ -701,10 +706,7 @@ const ynLabels = {
   'officialReceipts.allComplete':'All official receipts complete (per OR monitoring)?',
   'officialReceipts.cutoffSigned':'Collectors\u2019 receipts found with a cut-off signature by the cashier?',
   'officialReceipts.greenCopiesFiledSeries':'Green copies of used OR / SI / DR filed in series?',
-  'officialReceipts.greenCopiesOrganized':'Green copies filed & organized?',
-  'confirmation.overdue.noIncentive100':'100% confirmed for CI/Collectors not receiving incentive (past 3 months)?',
-  'confirmation.overdue.randomSample15':'15% random sample confirmed for incentive-earning CI/Collectors (past 3 months)?',
-  'confirmation.delinquent.always100':'Always 100% confirmation (delinquent)?'
+  'officialReceipts.greenCopiesOrganized':'Green copies filed & organized?'
 };
 const condLabels = {
   'image.cleanliness':'Cleanliness', 'image.grooming':'Grooming', 'image.idUniforms':'I.D. & uniforms',
@@ -756,16 +758,16 @@ function remarksInline(path, placeholder){
   return '<div class="remarks-inline">'+inputEl(get(path), 'oninput="set(\''+path+'\', this.value)"', 'text', 'placeholder="'+escAttr(placeholder||'Remarks (optional)')+'"')+'</div>';
 }
 
-function conditionRow(path, label){
+function conditionRow(path, label, opts){
+  opts = opts || ['Good','Fair','Poor'];
   const v = get(path+'.condition');
   const r = get(path+'.remarks');
+  const seg = opts.map(function(o){
+    return '<button type="button" class="'+(v===o?'active '+o.toLowerCase():'')+'" onclick="setCond(\''+path+'\',\''+o+'\')">'+o+'</button>';
+  }).join('');
   return '<div class="cond-row">'
     + '<div class="cond-label">'+label+'</div>'
-    + '<div class="cond-seg">'
-    + '<button type="button" class="'+(v==='Good'?'active good':'')+'" onclick="setCond(\''+path+'\',\'Good\')">Good</button>'
-    + '<button type="button" class="'+(v==='Fair'?'active fair':'')+'" onclick="setCond(\''+path+'\',\'Fair\')">Fair</button>'
-    + '<button type="button" class="'+(v==='Poor'?'active poor':'')+'" onclick="setCond(\''+path+'\',\'Poor\')">Poor</button>'
-    + '</div>'
+    + '<div class="cond-seg">'+seg+'</div>'
     + inputEl(r, 'oninput="set(\''+path+'.remarks\', this.value)"', 'text', 'placeholder="Remarks (optional)"')
     + '</div>';
 }
@@ -774,10 +776,15 @@ function repeatableList(path, addLabel){
   const arr = get(path);
   let html = '';
   arr.forEach((row,i)=>{
-    html += '<div class="entry-row">'
+    html += '<div class="entry-row-typed">'
+      + '<div class="er-main">'
+      + inputEl(row.type, 'oninput="setRepField(\''+path+'\','+i+',\'type\',this.value)"', 'text', 'placeholder="Type (e.g. Sales Invoice)"')
+      + '<button type="button" class="icon-btn" onclick="removeRep(\''+path+'\','+i+')">&times;</button>'
+      + '</div>'
+      + '<div class="er-sub">'
       + inputEl(row.seriesNo, 'oninput="setRepField(\''+path+'\','+i+',\'seriesNo\',this.value)"', 'text', 'placeholder="Series No"')
       + inputEl(row.remarks, 'oninput="setRepField(\''+path+'\','+i+',\'remarks\',this.value)"', 'text', 'placeholder="Remarks"')
-      + '<button type="button" class="icon-btn" onclick="removeRep(\''+path+'\','+i+')">&times;</button>'
+      + '</div>'
       + '</div>';
   });
   html += '<button type="button" class="btn-add" onclick="addRep(\''+path+'\')">+ Add '+addLabel+'</button>';
@@ -785,49 +792,21 @@ function repeatableList(path, addLabel){
 }
 
 const STATUS_OPTS = ['Complete','Missing','Good','Poor'];
-function setEntryStatus(path, idx, val){
-  const cur = get(path)[idx].status;
-  get(path)[idx].status = cur===val ? '' : val;
+/** Single overall Status + Remarks row (no repeatable/numbered entries) —
+ *  used for Tools, Spareparts, Plates & OR-CR, and Assets. Just log the
+ *  remarks if there's a finding; otherwise leave remarks blank. */
+function setStatusField(path, val){
+  const cur = get(path+'.status');
+  set(path+'.status', cur===val ? '' : val);
   renderSection(sectionIdForPath(path));
 }
-function setEntryStatusField(path, idx, field, val){ get(path)[idx][field] = val; }
-function addStatusEntry(path){ get(path).push(emptyStatusEntry()); renderSection(sectionIdForPath(path)); }
-function removeStatusEntry(path, idx){
-  get(path).splice(idx,1);
-  if(get(path).length===0) get(path).push(emptyStatusEntry());
-  renderSection(sectionIdForPath(path));
-}
-function statusEntryList(path, addLabel){
-  const arr = get(path);
-  let html = '';
-  arr.forEach((row,i)=>{
-    html += '<div class="status-row">'
-      + '<div class="status-head"><div class="cond-label">'+addLabel+' '+(i+1)+'</div>'
-      + '<button type="button" class="icon-btn" onclick="removeStatusEntry(\''+path+'\','+i+')">&times;</button></div>'
-      + '<div class="cond-seg">' + STATUS_OPTS.map(opt =>
-          '<button type="button" class="'+(row.status===opt?'active '+opt.toLowerCase():'')+'" onclick="setEntryStatus(\''+path+'\','+i+',\''+opt+'\')">'+opt+'</button>'
-        ).join('') + '</div>'
-      + inputEl(row.remarks, 'oninput="setEntryStatusField(\''+path+'\','+i+',\'remarks\',this.value)"', 'text', 'placeholder="Remarks (optional)"')
-      + '</div>';
-  });
-  html += '<button type="button" class="btn-add" onclick="addStatusEntry(\''+path+'\')">+ Add '+addLabel+'</button>';
-  return html;
-}
-
-/** Single overall status + remarks (no repeatable entries) — used for
- *  the Confirmation of Accounts sampling summary. */
-function setSamplingStatus(val){
-  const cur = state.confirmation.sampling.status;
-  state.confirmation.sampling.status = cur===val ? '' : val;
-  renderSection('sec-confirmation');
-}
-function singleStatusRow(){
-  const s = state.confirmation.sampling;
+function statusRow(path){
+  const row = get(path) || {status:'',remarks:''};
   return '<div class="status-row">'
     + '<div class="cond-seg">' + STATUS_OPTS.map(opt =>
-        '<button type="button" class="'+(s.status===opt?'active '+opt.toLowerCase():'')+'" onclick="setSamplingStatus(\''+opt+'\')">'+opt+'</button>'
+        '<button type="button" class="'+(row.status===opt?'active '+opt.toLowerCase():'')+'" onclick="setStatusField(\''+path+'\',\''+opt+'\')">'+opt+'</button>'
       ).join('') + '</div>'
-    + inputEl(s.remarks, 'oninput="set(\'confirmation.sampling.remarks\', this.value)"', 'text', 'placeholder="Remarks (optional)"')
+    + inputEl(row.remarks, 'oninput="set(\''+path+'.remarks\', this.value)"', 'text', 'placeholder="Remarks \u2014 only if there\u2019s a finding"')
     + '</div>';
 }
 
@@ -914,13 +893,16 @@ function depositsList(){
 }
 function denomTable(group, title){
   return '<div class="field span2">'
-    + '<label>'+title+'</label>'
+    + '<details class="denom-details">'
+    + '<summary class="denom-summary"><span>'+title+'</span>'
+    + '<span class="ds-right"><span class="ds-total" id="denom-'+group+'-total-summary">\u20b1'+fmtMoney(denomGroupTotal(state.cash[group]))+'</span>'
+    + '<span class="ds-chev">&#9662;</span></span></summary>'
     + '<div class="denom-table">'
     + '<div class="denom-head"><span>Denom.</span><span>Qty</span><span>Subtotal</span></div>'
     + denomRows(group)
     + '<div class="denom-total"><span class="denom-label">Total</span><span></span>'
     + '<span class="denom-sub" id="denom-'+group+'-total">'+fmtMoney(denomGroupTotal(state.cash[group]))+'</span></div>'
-    + '</div></div>';
+    + '</div></details></div>';
 }
 
 function renderChangeFund(){
@@ -947,8 +929,7 @@ function renderCash(){
     + depositsList()
     + field('Net collection', '<input class="input locked" id="cashNetDisplay" type="text" value="'+escAttr(c.netCollection)+'" disabled>')
     + field('Cash on hand', '<input class="input locked" id="cashOnHandDisplay" type="text" value="'+escAttr(c.cashOnHand)+'" disabled>')
-    + '</div>'
-    + '<div class="cash-variance ok" id="cashVarianceDisplay" style="display:none;"></div>', true);
+    + '</div>', true);
 }
 
 function renderReports(){
@@ -985,12 +966,13 @@ function renderOR(){
   const paths = ['officialReceipts.allComplete','officialReceipts.cutoffSigned',
     'officialReceipts.greenCopiesFiledSeries','officialReceipts.greenCopiesOrganized'];
   return card('sec-or','Official receipts, sales invoices &amp; delivery receipts', null, sectionYNStats(paths),
-    ynRow('officialReceipts.allComplete','All official receipts complete (per OR monitoring)?')
+    '<div class="review-sub">Spot-checks</div>'
+    + repeatableList('officialReceipts.entries','entry')
+    + '<div class="review-sub" style="margin-top:14px;">Checklist</div>'
+    + ynRow('officialReceipts.allComplete','All official receipts complete (per OR monitoring)?')
     + ynRow('officialReceipts.cutoffSigned','Collectors\u2019 receipts found with a cut-off signature by the cashier?')
     + ynRow('officialReceipts.greenCopiesFiledSeries','Green copies of used OR / SI / DR filed in series?')
-    + ynRow('officialReceipts.greenCopiesOrganized','Green copies filed &amp; organized?')
-    + '<div class="review-sub" style="margin-top:14px;">Spot-checks</div>'
-    + repeatableList('officialReceipts.entries','entry'));
+    + ynRow('officialReceipts.greenCopiesOrganized','Green copies filed &amp; organized?'));
 }
 
 function renderImage(){
@@ -1008,33 +990,23 @@ function renderImage(){
 
 function renderInventory(){
   return card('sec-inventory','Inventories', null, null,
-    conditionRow('inventory.oil','Oil')
+    conditionRow('inventory.oil','Oil',['Complete','Incomplete'])
     + conditionRow('inventory.promo','Promo')
     + conditionRow('inventory.mcUnits','Motorcycle units (repo &amp; brand new)')
     + conditionRow('inventory.serviceUnits','Service units')
     + conditionRow('inventory.repairUnits','Repair units (if any)')
-    + '<div class="review-sub" style="margin-top:14px;">Tools (owned by company)</div>' + statusEntryList('inventory.tools','tool')
-    + '<div class="review-sub" style="margin-top:6px;">Spareparts (3S shop only)</div>' + statusEntryList('inventory.spareparts','sparepart')
-    + '<div class="review-sub" style="margin-top:6px;">Plates and OR-CR</div>' + statusEntryList('inventory.platesOrCr','entry')
-    + '<div class="review-sub" style="margin-top:6px;">Assets</div>' + statusEntryList('inventory.assets','asset'));
+    + '<div class="review-sub" style="margin-top:14px;">Tools (owned by company)</div>' + statusRow('inventory.tools')
+    + '<div class="review-sub" style="margin-top:6px;">Spareparts (3S shop only)</div>' + statusRow('inventory.spareparts')
+    + '<div class="review-sub" style="margin-top:6px;">Plates and OR-CR</div>' + statusRow('inventory.platesOrCr')
+    + '<div class="review-sub" style="margin-top:6px;">Assets</div>' + statusRow('inventory.assets'));
 }
 
 function renderConfirmation(){
   return card('sec-confirmation','Confirmation of accounts', null, null,
-    '<div class="review-sub">Sampling</div>' + singleStatusRow()
-    + '<div class="review-sub" style="margin-top:14px;">Overdue accounts</div>'
-    + ynRow('confirmation.overdue.noIncentive100','100% confirmed for CI/Collectors not receiving incentive (past 3 months)?')
-    + remarksInline('confirmation.overdue.noIncentiveRemarks')
-    + ynRow('confirmation.overdue.randomSample15','15% random sample confirmed for incentive-earning CI/Collectors (past 3 months)?')
-    + remarksInline('confirmation.overdue.randomSampleRemarks')
-    + '<div class="review-sub" style="margin-top:10px;">Delinquent accounts</div>'
-    + ynRow('confirmation.delinquent.always100','Always 100% confirmation?')
-    + remarksInline('confirmation.delinquent.remarks')
-    + '<div class="review-sub" style="margin-top:10px;">Risk flags</div>'
-    + ynRow('confirmation.risk.repoRateOver5','Repo rate exceeding 5%? (review CI approval process)')
-    + remarksInline('confirmation.risk.repoRateRemarks')
-    + ynRow('confirmation.risk.inventoryAging90','Inventory aging over 90 days? (repo / brand new units)')
-    + remarksInline('confirmation.risk.inventoryAgingRemarks'));
+    '<div class="field span2"><label>Remarks</label>'
+    + textareaEl(state.confirmation.remarks, 'oninput="set(\'confirmation.remarks\', this.value)"',
+        'Leave blank if nothing to flag. Otherwise note the issue here (overdue, delinquent, risk, etc.)...')
+    + '</div>', true);
 }
 
 function renderFindings(){
@@ -1390,9 +1362,10 @@ function buildReportHtml(h){
   Object.keys(condLabels).forEach(p=>{
     const c = getFrom(s,p) || {};
     const cond = c.condition || '\u2014';
+    const condOk = (cond==='Good'||cond==='Complete'), condBad = (cond==='Poor'||cond==='Incomplete');
     html += '<div class="report-row"><div class="r-label">'+condLabels[p]
       + (c.remarks ? '<div class="r-remark">'+escHtml(c.remarks)+'</div>' : '')
-      + '</div><span class="badge '+(cond==='Good'?'ok':cond==='Poor'?'del':'')+'">'+escHtml(cond)+'</span></div>';
+      + '</div><span class="badge '+(condOk?'ok':condBad?'del':'')+'">'+escHtml(cond)+'</span></div>';
   });
 
   html += '<div class="report-section-title">Findings</div>';

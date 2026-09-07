@@ -611,6 +611,11 @@ function removeRep(path, idx){
   if(hasData && !confirm('Remove this entry? The series no. and remarks you entered for it will be deleted.')) return;
   get(path).splice(idx,1);
   if(get(path).length===0) get(path).push(emptyEntry());
+  // Row indices just shifted, so any remembered "Other" dropdown
+  // selections for this path are no longer trustworthy — clear them.
+  // typeCell() will still correctly re-detect "Other" for any row
+  // that already has real custom text stored in it.
+  Object.keys(orOtherFlags).forEach(k=>{ if(k.indexOf(path+'::')===0) delete orOtherFlags[k]; });
   renderSection(sectionIdForPath(path));
 }
 
@@ -801,21 +806,34 @@ const OR_TYPE_PRESETS = [
   'Sales Invoice',
   'Delivery Receipt'
 ];
+/* Tracks which OR entry rows currently have "Other" selected in the
+   Type dropdown, keyed by "path::idx". This is UI-only state (kept
+   outside `state`, so it never gets submitted) — it exists because an
+   empty custom-type field can't otherwise be told apart from "nothing
+   selected yet", which was causing the row to snap back to the
+   placeholder and hide the text box before anything was typed. Reset
+   per-path whenever a row is removed, since indices shift. */
+const orOtherFlags = {};
 function setEntryType(path, idx, val){
   const row = get(path)[idx];
+  const key = path+'::'+idx;
   if(val === '' || OR_TYPE_PRESETS.indexOf(val) !== -1){
+    delete orOtherFlags[key];
     setRepField(path, idx, 'type', val);
   } else {
-    // "Other" chosen: only clear the field if it was previously a preset
-    // (switching away from a preset into free text); keep any existing
-    // custom text so re-selecting "Other" doesn't wipe what was typed.
+    // "Other" chosen: remember it explicitly so it survives re-render
+    // even while the custom text field is still empty. Only clear the
+    // underlying value if it was previously a preset (switching away
+    // from a preset into free text) — keep any existing custom text.
+    orOtherFlags[key] = true;
     if(OR_TYPE_PRESETS.indexOf(row.type) !== -1) setRepField(path, idx, 'type', '');
   }
   renderSection(sectionIdForPath(path));
 }
 function typeCell(path, row, i){
   const isPreset = OR_TYPE_PRESETS.indexOf(row.type) !== -1;
-  const selectValue = row.type === '' ? '' : (isPreset ? row.type : 'Other');
+  const isOther = orOtherFlags[path+'::'+i] || (row.type !== '' && !isPreset);
+  const selectValue = isOther ? 'Other' : (isPreset ? row.type : '');
   let html = '<div class="er-type">'
     + '<select class="input er-type-select" onchange="setEntryType(\''+path+'\','+i+',this.value)">'
     + '<option value=""'+(selectValue===''?' selected':'')+'>Select type&hellip;</option>'

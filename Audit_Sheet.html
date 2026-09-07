@@ -126,21 +126,66 @@
   .branch-item .chev{color:var(--muted-2); flex-shrink:0;}
   .branch-item .b-name{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 
-  /* ---------- jump nav ---------- */
-  .jumpnav{display:flex; overflow-x:auto; padding:10px 14px; background:#fff;
-    border-bottom:1px solid var(--line); -webkit-overflow-scrolling:touch;
-    box-shadow:0 4px 10px rgba(16,22,60,.05);}
-  .jumpnav::-webkit-scrollbar{display:none;}
-  .jumpnav-inner{display:flex; gap:6px; flex-shrink:0; width:max-content;}
-  .jump-chip{flex-shrink:0; border:1px solid var(--line); background:#F8F9FD; color:var(--muted);
-    font-size:11.5px; font-weight:600; padding:7px 12px; border-radius:999px; text-decoration:none; white-space:nowrap;
-    transition:background .15s, color .15s, border-color .15s;}
-  .jump-chip:active, .jump-chip:hover{background:var(--accent-soft); color:var(--accent-dark); border-color:#C9D1EE;}
+  .drawer-section-title{font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase;
+    letter-spacing:.4px; padding:10px 8px 8px; margin-top:2px;}
+  .drawer-section-title:first-child{margin-top:0;}
+  .history-item{display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+    border:1px solid var(--line); background:#fff; border-radius:10px; padding:10px 12px; margin-bottom:8px;
+    font-family:inherit; cursor:pointer;}
+  .history-item:active{background:var(--accent-soft); border-color:#C9D1EE;}
+  .history-item .h-main{flex:1; min-width:0;}
+  .history-item .h-branch{font-size:13px; font-weight:700; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .history-item .h-date{font-size:11px; color:var(--muted); margin-top:2px;}
+  .history-item .h-score{flex-shrink:0; font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:700;
+    padding:4px 9px; border-radius:20px;}
+  .history-item .h-score.good{background:var(--ok-soft); color:var(--ok);}
+  .history-item .h-score.bad{background:var(--del-soft); color:var(--del);}
+  .history-item .chev{color:var(--muted-2); flex-shrink:0;}
+
+  .report-hero{display:flex; align-items:center; gap:14px; padding:14px; background:var(--accent-soft);
+    border:1px solid #D6DBF6; border-radius:12px; margin-bottom:14px;}
+  .report-section-title{font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase;
+    letter-spacing:.4px; margin:16px 0 8px;}
+  .report-section-title:first-of-type{margin-top:0;}
+  .report-row{display:flex; justify-content:space-between; gap:10px; font-size:12.5px; padding:8px 10px;
+    border:1px solid var(--line); border-radius:9px; margin-bottom:6px; background:#fff;}
+  .report-row .r-label{flex:1; color:var(--text);}
+  .report-row .r-remark{font-size:11px; color:var(--muted); margin-top:3px;}
+
+  /* ---------- toolbar: search / print / share (replaces old jump-chip row) ---------- */
+  .toolbar-row{display:flex; align-items:center; gap:8px; padding:10px 14px; background:#fff;
+    border-bottom:1px solid var(--line); box-shadow:0 4px 10px rgba(16,22,60,.05);}
+  .search-wrap{flex:1; min-width:0; display:flex; align-items:center; gap:6px;
+    border:1px solid #D7DCF0; background:#F8F9FD; border-radius:999px; padding:0 6px 0 12px;}
+  .search-wrap svg{flex-shrink:0; width:15px; height:15px; color:var(--muted-2);}
+  .search-wrap input{flex:1; min-width:0; border:none; background:transparent; outline:none;
+    font-family:inherit; font-size:13px; color:var(--text); padding:8px 4px;}
+  .search-wrap input::placeholder{color:var(--muted-2);}
+  .search-count{flex-shrink:0; font-size:10.5px; font-weight:700; color:var(--muted); padding:0 4px; white-space:nowrap;}
+  .search-clear{flex-shrink:0; border:none; background:transparent; color:var(--muted); width:24px; height:24px;
+    border-radius:50%; font-size:15px; line-height:1; cursor:pointer;}
+  .search-clear:active{background:var(--accent-soft);}
+  .tb-icon-btn{flex-shrink:0; width:34px; height:34px; border-radius:50%; border:1px solid var(--line);
+    background:#F8F9FD; color:var(--accent-dark); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; padding:0;}
+  .tb-icon-btn:active{background:var(--accent-soft);}
+  .tb-icon-btn svg{width:16px; height:16px;}
+  mark.search-hit{background:var(--gold-soft); color:inherit; border-radius:3px; padding:0 1px;}
+  mark.search-hit.current{background:#F3D77A;}
   @media (min-width:860px){
-    .jumpnav{flex-wrap:wrap; justify-content:center; overflow-x:visible; padding:12px 24px;}
-    .jumpnav-inner{max-width:1120px; margin:0 auto; display:flex; flex-wrap:wrap; justify-content:center; gap:6px; width:100%;}
+    .toolbar-row{padding:12px 24px;}
+    .search-wrap{max-width:520px; margin:0 auto 0 0;}
   }
-  @media (min-width:1440px){ .jumpnav-inner{max-width:1360px;} }
+
+  /* ---------- print ---------- */
+  @media print{
+    .app-toolbar, footer.nav-bar, .drawer-overlay, .drawer, .toast{display:none !important;}
+    #scrollArea{overflow:visible !important; height:auto !important; padding-bottom:0 !important;}
+    body{overflow:visible !important; height:auto !important; display:block !important;}
+    .card{break-inside:avoid; box-shadow:none !important; border:1px solid #ccc !important;}
+    #main{column-count:1 !important;}
+  }
+
 
   /* ---------- layout ----------
      Mobile: everything is one narrow column (as before).
@@ -326,15 +371,28 @@
       <div class="sub" id="headSub">New audit &middot; not yet submitted</div>
     </div>
     <div class="hdr-right">
-      <div class="hdr-chip" id="draftBadge">Draft saved</div>
-      <button class="hdr-icon-btn" id="menuBtn" aria-label="Previous branches" onclick="openBranchMenu()">
+      <button class="hdr-icon-btn" id="menuBtn" aria-label="Menu" onclick="openBranchMenu()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
     </div>
   </div>
 </header>
 
-<nav class="jumpnav" id="jumpnav"></nav>
+<div class="toolbar-row" id="toolbarRow">
+  <div class="search-wrap">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+    <input type="text" id="searchInput" placeholder="Search this audit&hellip;" autocomplete="off"
+      oninput="onSearchInput(this.value)" onkeydown="onSearchKeydown(event)">
+    <span class="search-count" id="searchCount"></span>
+    <button class="search-clear" id="searchClearBtn" aria-label="Clear search" onclick="clearSearch()" style="display:none;">&times;</button>
+  </div>
+  <button class="tb-icon-btn" aria-label="Print this audit" onclick="window.print()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+  </button>
+  <button class="tb-icon-btn" aria-label="Share this audit" onclick="shareCurrentAudit()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>
+  </button>
+</div>
 </div>
 
 <main class="wrap">
@@ -349,7 +407,7 @@
 <div class="drawer-overlay" id="drawerOverlay" onclick="closeBranchMenu()"></div>
 <aside class="drawer" id="branchDrawer" aria-hidden="true">
   <div class="drawer-head">
-    <div class="drawer-title">Previous branches</div>
+    <div class="drawer-title">Menu</div>
     <button class="drawer-close" aria-label="Close" onclick="closeBranchMenu()">&times;</button>
   </div>
   <div class="drawer-body" id="branchDrawerBody">
@@ -360,8 +418,18 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
       Hard reload &middot; reset app
     </button>
-    <div class="drawer-reset-hint">Clears the cached version &amp; saved draft, then reloads the latest app from GitHub.</div>
+    <div class="drawer-reset-hint">Clears the cached version and reloads the latest app from GitHub. Your previous audit reports on this device are kept.</div>
   </div>
+</aside>
+
+<div class="drawer-overlay" id="reportOverlay" onclick="closeReport()"></div>
+<aside class="drawer" id="reportDrawer" aria-hidden="true">
+  <div class="drawer-head">
+    <button class="drawer-close" aria-label="Back" onclick="closeReport()" style="order:-1;">&larr;</button>
+    <div class="drawer-title" id="reportTitle">Audit report</div>
+    <span style="width:30px;"></span>
+  </div>
+  <div class="drawer-body" id="reportBody"></div>
 </aside>
 
 <footer class="nav-bar">
@@ -430,29 +498,26 @@ function freshState(){
 let state = freshState();
 let submitting = false;
 
+/* search state (toolbar below header) */
+let searchQuery = '';
+let searchMatches = [];
+let searchIndex = -1;
+
 /* ============================================================
-   PERSISTENCE (localStorage draft on this device)
+   PERSISTENCE (previous submitted audits, kept on this device)
    ============================================================ */
-const LOCAL_KEY = 'branchAuditDraft_v2';
+const HISTORY_KEY = 'branchAuditHistory_v1';
 
-function saveLocal(){
-  try{ localStorage.setItem(LOCAL_KEY, JSON.stringify(state)); }catch(e){}
-  flashBadge('Draft saved');
+function loadHistory(){
+  try{ const raw = localStorage.getItem(HISTORY_KEY); return raw ? JSON.parse(raw) : []; }
+  catch(e){ return []; }
 }
-let saveTimer = null;
-function scheduleSave(){
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveLocal, 500);
-}
-function flashBadge(text){
-  const b = document.getElementById('draftBadge');
-  b.textContent = text;
-}
-
-function loadInitial(){
+function saveHistoryEntry(entry){
   try{
-    const raw = localStorage.getItem(LOCAL_KEY);
-    if(raw) state = Object.assign(freshState(), JSON.parse(raw));
+    const list = loadHistory();
+    list.unshift(entry);
+    if(list.length > 30) list.length = 30;
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
   }catch(e){}
 }
 
@@ -467,7 +532,6 @@ function set(path, value){
   let o = state;
   for(let i=0;i<keys.length-1;i++) o = o[keys[i]];
   o[keys[keys.length-1]] = value;
-  scheduleSave();
 }
 function escAttr(s){ return (s==null?'':String(s)).replace(/"/g,'&quot;'); }
 function escHtml(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
@@ -478,10 +542,10 @@ function setCond(path, val){
   set(path+'.condition', cur===val ? '' : val);
   render();
 }
-function setRepField(path, idx, field, val){ get(path)[idx][field] = val; scheduleSave(); }
+function setRepField(path, idx, field, val){ get(path)[idx][field] = val; }
 function addRep(path){ get(path).push(emptyEntry()); render(); }
 function removeRep(path, idx){ get(path).splice(idx,1); if(get(path).length===0) get(path).push(emptyEntry()); render(); }
-function setPairField(path, idx, field, val){ get(path)[idx][field] = val; scheduleSave(); }
+function setPairField(path, idx, field, val){ get(path)[idx][field] = val; }
 function addPair(path){ get(path).push(emptyPairEntry()); render(); }
 function removePair(path, idx){ get(path).splice(idx,1); if(get(path).length===0) get(path).push(emptyPairEntry()); render(); }
 
@@ -511,13 +575,47 @@ const ynPaths = [
   'confirmation.overdue.noIncentive100','confirmation.overdue.randomSample15',
   'confirmation.delinquent.always100'
 ];
-function computeScore(){
+function getFrom(obj, path){
+  return path.split('.').reduce((o,k)=> (o==null?o:o[k]), obj);
+}
+function computeScore(fromState){
+  const s = fromState || state;
   let yes=0, no=0;
-  ynPaths.forEach(p=>{ const v=get(p); if(v===true) yes++; else if(v===false) no++; });
+  ynPaths.forEach(p=>{ const v=getFrom(s,p); if(v===true) yes++; else if(v===false) no++; });
   const total = yes+no;
   const pct = total ? Math.round((yes/total)*100) : 0;
   return { total, yes, no, pct };
 }
+/* human-readable labels for the yes/no + condition checklist items,
+   used to build the readable "previous audits" report */
+const ynLabels = {
+  'reportsAttachments.depositSlipReconciled':'Deposit slips reconciled to the report?',
+  'reportsAttachments.dailyPerfReconciled':'Daily performance reconciled to the collection report?',
+  'reportsAttachments.attachmentsComplete':'All attachments of the reports complete?',
+  'reportsAttachments.vouchersSigned':'All cash vouchers signed by designated personnel?',
+  'reportsAttachments.last7DaysFiled':'Last 7 days of transactions filed with complete attachments?',
+  'fieldCollection.picturesOnTime':'Collectors submitting field collection pictures on time?',
+  'fieldCollection.copiesMonitored':'Field picture copies monitored by the cashier properly?',
+  'fieldCollection.whiteCopiesArranged':'White copies of online-payment receipts properly arranged & monitored?',
+  'notebooks.cashReceiptJournal':'Cash receipt journal updated?',
+  'notebooks.salesJournal':'Sales journal updated?',
+  'notebooks.registrationNotebook':'Registration / plate notebook updated?',
+  'notebooks.closedAccountNotebook':'Closed account notebook updated?',
+  'notebooks.noPendingChattel':'Branch is without pending chattel documents?',
+  'officialReceipts.allComplete':'All official receipts complete (per OR monitoring)?',
+  'officialReceipts.cutoffSigned':'Collectors\u2019 receipts found with a cut-off signature by the cashier?',
+  'officialReceipts.greenCopiesFiledSeries':'Green copies of used OR / SI / DR filed in series?',
+  'officialReceipts.greenCopiesOrganized':'Green copies filed & organized?',
+  'confirmation.overdue.noIncentive100':'100% confirmed for CI/Collectors not receiving incentive (past 3 months)?',
+  'confirmation.overdue.randomSample15':'15% random sample confirmed for incentive-earning CI/Collectors (past 3 months)?',
+  'confirmation.delinquent.always100':'Always 100% confirmation (delinquent)?'
+};
+const condLabels = {
+  'image.cleanliness':'Cleanliness', 'image.grooming':'Grooming', 'image.idUniforms':'I.D. & uniforms',
+  'image.signages':'Signages', 'image.branchKey':'Branch key', 'image.branchVaultKey':'Branch vault key',
+  'inventory.oil':'Oil', 'inventory.promo':'Promo', 'inventory.mcUnits':'Motorcycle units (repo & brand new)',
+  'inventory.serviceUnits':'Service units', 'inventory.repairUnits':'Repair units (if any)'
+};
 function sectionYNStats(paths){
   let answered=0;
   paths.forEach(p=>{ if(get(p)!==null) answered++; });
@@ -612,7 +710,7 @@ function pairList(path, sampleLabel){
 
 function addFinding(){ state.findings.push({text:'', severity:'Medium'}); render(); }
 function removeFinding(i){ state.findings.splice(i,1); render(); }
-function setFinding(i, field, val){ state.findings[i][field]=val; if(field!=='text') render(); else scheduleSave(); }
+function setFinding(i, field, val){ state.findings[i][field]=val; if(field!=='text') render(); }
 
 function findingsList(){
   let html = '';
@@ -798,18 +896,10 @@ function renderReview(){
 /* ============================================================
    RENDER
    ============================================================ */
-function renderJumpNav(){
-  return '<div class="jumpnav-inner">'
-    + sections.map(s=>'<a class="jump-chip" href="#'+s.id+'">'+s.navLabel+'</a>').join('')
-    + '<a class="jump-chip" href="#sec-review">Review</a>'
-    + '</div>';
-}
-
 function render(){
   const sheetHtml = sections.map(s => s.render()).join('');
   document.getElementById('main').innerHTML = sheetHtml;
   document.getElementById('reviewWrap').innerHTML = renderReview();
-  document.getElementById('jumpnav').innerHTML = renderJumpNav();
   document.getElementById('headSub').textContent = state.branch ? (state.branch + (state.auditDate?(' \u00b7 '+state.auditDate):'')) : 'New audit \u00b7 not yet submitted';
   const s = computeScore();
   const footerStatus = document.getElementById('footerStatus');
@@ -823,6 +913,7 @@ function render(){
     submitBtn.textContent = 'Submit audit';
     submitBtn.disabled = false;
   }
+  applySearchHighlight(); // re-apply since #main was just rebuilt
 }
 
 document.getElementById('submitBtn').addEventListener('click', doSubmit);
@@ -831,6 +922,105 @@ function showToast(msg){
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'), 2400);
+}
+
+/* ============================================================
+   SEARCH (toolbar below header) — highlights matching questions,
+   field labels, condition labels and section titles inside #main.
+   ============================================================ */
+const SEARCH_SELECTOR = '#main .q-text, #main .cond-label, #main .field > label, '
+  + '#main .section-title .st-text, #main .pair-sub, #main .card-hint';
+
+function applySearchHighlight(scrollToFirst){
+  // undo any previous highlighting first
+  document.querySelectorAll('#main mark.search-hit').forEach(m=>{
+    const parent = m.parentNode;
+    if(!parent) return;
+    parent.replaceChild(document.createTextNode(m.textContent), m);
+    parent.normalize();
+  });
+  const countEl = document.getElementById('searchCount');
+  searchMatches = []; searchIndex = -1;
+  if(!searchQuery){ if(countEl) countEl.textContent = ''; return; }
+
+  const q = searchQuery.toLowerCase();
+  document.querySelectorAll(SEARCH_SELECTOR).forEach(el=>{
+    const text = el.textContent;
+    const idx = text.toLowerCase().indexOf(q);
+    if(idx === -1) return;
+    const before = text.slice(0, idx), match = text.slice(idx, idx+q.length), after = text.slice(idx+q.length);
+    el.innerHTML = escHtml(before) + '<mark class="search-hit">' + escHtml(match) + '</mark>' + escHtml(after);
+    const markEl = el.querySelector('mark.search-hit');
+    if(markEl) searchMatches.push(markEl);
+  });
+
+  if(searchMatches.length){
+    searchIndex = 0;
+    searchMatches[0].classList.add('current');
+    if(scrollToFirst){
+      const card = searchMatches[0].closest('.card');
+      (card||searchMatches[0]).scrollIntoView({behavior:'smooth', block:'center'});
+    }
+  }
+  if(countEl) countEl.textContent = searchMatches.length ? (searchIndex+1)+'/'+searchMatches.length : 'No matches';
+}
+
+function goToSearchMatch(dir){
+  if(!searchMatches.length) return;
+  searchMatches[searchIndex].classList.remove('current');
+  searchIndex = (searchIndex + dir + searchMatches.length) % searchMatches.length;
+  const cur = searchMatches[searchIndex];
+  cur.classList.add('current');
+  (cur.closest('.card')||cur).scrollIntoView({behavior:'smooth', block:'center'});
+  const countEl = document.getElementById('searchCount');
+  if(countEl) countEl.textContent = (searchIndex+1)+'/'+searchMatches.length;
+}
+
+function onSearchInput(v){
+  searchQuery = v.trim();
+  document.getElementById('searchClearBtn').style.display = searchQuery ? 'flex' : 'none';
+  applySearchHighlight(true);
+}
+function onSearchKeydown(e){
+  if(e.key === 'Enter'){ e.preventDefault(); goToSearchMatch(e.shiftKey ? -1 : 1); }
+  else if(e.key === 'Escape'){ clearSearch(); }
+}
+function clearSearch(){
+  const input = document.getElementById('searchInput');
+  if(input) input.value = '';
+  searchQuery = '';
+  document.getElementById('searchClearBtn').style.display = 'none';
+  applySearchHighlight(false);
+}
+
+/* ============================================================
+   SHARE (toolbar below header) — sends a quick text snapshot of
+   the audit you're currently filling in via the device's native
+   share sheet (Messenger shows up there on phones that have it
+   installed). Falls back to copying the text if share isn't
+   available, e.g. on most desktop browsers.
+   ============================================================ */
+async function shareCurrentAudit(){
+  const score = computeScore();
+  const lines = [
+    'Branch Audit \u2014 ' + (state.branch || '(no branch yet)'),
+    state.auditor ? 'Auditor: ' + state.auditor : null,
+    state.auditDate ? 'Date: ' + state.auditDate : null,
+    'Checklist so far: ' + score.pct + '% (' + score.yes + ' yes, ' + score.no + ' no)',
+    state.findings.length ? 'Findings logged: ' + state.findings.length : null
+  ].filter(Boolean);
+  const text = lines.join('\n');
+
+  if(navigator.share){
+    try{ await navigator.share({ title: 'Branch Audit', text }); return; }
+    catch(e){ if(e && e.name === 'AbortError') return; /* user cancelled, fall through to copy */ }
+  }
+  try{
+    await navigator.clipboard.writeText(text);
+    showToast('Sharing isn\u2019t available here \u2014 summary copied. Paste it into Messenger.');
+  }catch(e){
+    showToast('Couldn\u2019t share or copy automatically \u2014 select the Review section text manually.');
+  }
 }
 
 async function doSubmit(){
@@ -861,7 +1051,10 @@ async function doSubmit(){
     submitting = false;
     if(result && result.ok){
       showToast('Audit submitted \u2014 saved as its own tab in the Sheet.');
-      localStorage.removeItem(LOCAL_KEY);
+      saveHistoryEntry({
+        branch: payload.branch, auditor: payload.auditor, auditDate: payload.auditDate,
+        submittedAt: new Date().toISOString(), score: score, state: payload
+      });
       state = freshState();
       render();
       window.scrollTo({top:0, behavior:'smooth'});
@@ -900,18 +1093,49 @@ function goToDashboard(){
   window.location.href = 'index.html';
 }
 
-function renderBranchDrawer(){
-  const body = document.getElementById('branchDrawerBody');
-  if(!body) return;
+function fmtDate(iso){
+  if(!iso) return '';
+  try{
+    const d = new Date(iso);
+    if(isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})
+      + ' \u00b7 ' + d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+  }catch(e){ return iso; }
+}
+
+function renderHistorySection(){
+  const list = loadHistory();
+  if(list.length === 0){
+    return '<div class="drawer-section-title">Previous audits</div>'
+      + '<div class="empty-hint">No submitted audits saved on this device yet.</div>';
+  }
+  return '<div class="drawer-section-title">Previous audits</div>'
+    + '<div class="drawer-hint">Tap an audit to view its summary report.</div>'
+    + list.map((h,i) => {
+        const pct = h.score ? h.score.pct : 0;
+        const goodBad = pct >= 80 ? 'good' : 'bad';
+        return '<button class="history-item" onclick="openReport('+i+')">'
+          + '<div class="h-main">'
+          + '<div class="h-branch">'+(escHtml(h.branch)||'(no branch name)')+'</div>'
+          + '<div class="h-date">'+escHtml(h.auditDate||'')+' &middot; submitted '+escHtml(fmtDate(h.submittedAt))+'</div>'
+          + '</div>'
+          + '<div class="h-score '+goodBad+'">'+pct+'%</div>'
+          + '<span class="chev">&rsaquo;</span>'
+          + '</button>';
+      }).join('');
+}
+
+function renderBranchSection(){
   if(!backendConfigured){
-    body.innerHTML = '<div class="empty-hint">Backend not configured yet, so the branch list isn\'t available.</div>';
-    return;
+    return '<div class="drawer-section-title">Start new audit for branch</div>'
+      + '<div class="empty-hint">Backend not configured yet, so the branch list isn\'t available.</div>';
   }
   if(knownBranches.length === 0){
-    body.innerHTML = '<div class="empty-hint">No branches found yet. You can still type a new branch name in the Basics section.</div>';
-    return;
+    return '<div class="drawer-section-title">Start new audit for branch</div>'
+      + '<div class="empty-hint">No branches found yet. You can still type a new branch name in the Basics section.</div>';
   }
-  body.innerHTML = '<div class="drawer-hint">Tap a branch to start this audit for it.</div>'
+  return '<div class="drawer-section-title">Start new audit for branch</div>'
+    + '<div class="drawer-hint">Tap a branch to start this audit for it.</div>'
     + knownBranches.map(b => {
         const isCurrent = state.branch === b;
         return '<button class="branch-item'+(isCurrent?' current':'')+'" onclick="selectBranch(\''+escAttr(b).replace(/'/g,"\\'")+'\')">'
@@ -919,6 +1143,72 @@ function renderBranchDrawer(){
           + (isCurrent ? '<span class="chev">&#10003;</span>' : '<span class="chev">&rsaquo;</span>')
           + '</button>';
       }).join('');
+}
+
+function renderBranchDrawer(){
+  const body = document.getElementById('branchDrawerBody');
+  if(!body) return;
+  body.innerHTML = renderHistorySection() + renderBranchSection();
+}
+
+/* ---------- report viewer (read-only summary of a past audit) ---------- */
+function buildReportHtml(h){
+  const s = h.state || {};
+  const score = h.score || computeScore(s);
+  const pillYN = v => v===true ? '<span class="badge ok">Yes</span>' : v===false ? '<span class="badge del">No</span>' : '&mdash;';
+  let html = '';
+  html += '<div class="report-hero">'
+    + '<div class="score-num">'+score.pct+'%</div>'
+    + '<div class="score-meta">Checklist compliance<br><strong>'+score.yes+'</strong> yes &middot; <strong>'+score.no+'</strong> no &middot; '+score.total+' items scored</div>'
+    + '</div>';
+  html += '<div class="info-list">'
+    + '<div class="info-row"><span>Branch</span><span>'+(escHtml(h.branch)||'&mdash;')+'</span></div>'
+    + '<div class="info-row"><span>Auditor</span><span>'+(escHtml(h.auditor)||'&mdash;')+'</span></div>'
+    + '<div class="info-row"><span>Audit date</span><span>'+(escHtml(h.auditDate)||'&mdash;')+'</span></div>'
+    + '<div class="info-row"><span>Submitted</span><span>'+(escHtml(fmtDate(h.submittedAt))||'&mdash;')+'</span></div>'
+    + (s.cash ? '<div class="info-row"><span>Net collection</span><span>'+(escHtml(s.cash.netCollection)||'&mdash;')+'</span></div>'
+              + '<div class="info-row"><span>Cash on hand</span><span>'+(escHtml(s.cash.cashOnHand)||'&mdash;')+'</span></div>' : '')
+    + '</div>';
+
+  html += '<div class="report-section-title">Checklist answers</div>';
+  Object.keys(ynLabels).forEach(p=>{
+    const v = getFrom(s,p);
+    html += '<div class="report-row"><div class="r-label">'+ynLabels[p]+'</div>'+pillYN(v)+'</div>';
+  });
+
+  html += '<div class="report-section-title">Condition checks</div>';
+  Object.keys(condLabels).forEach(p=>{
+    const c = getFrom(s,p) || {};
+    const cond = c.condition || '\u2014';
+    html += '<div class="report-row"><div class="r-label">'+condLabels[p]
+      + (c.remarks ? '<div class="r-remark">'+escHtml(c.remarks)+'</div>' : '')
+      + '</div><span class="badge '+(cond==='Good'?'ok':cond==='Poor'?'del':'')+'">'+escHtml(cond)+'</span></div>';
+  });
+
+  html += '<div class="report-section-title">Findings</div>';
+  if(s.findings && s.findings.length){
+    html += s.findings.map((f,i)=>'<div class="finding-review-row"><span>#'+(i+1)+' ('+(f.severity||'Medium')+')</span><span>'+(escHtml(f.text||'')||'&mdash;')+'</span></div>').join('');
+  } else {
+    html += '<div class="empty-hint">None logged.</div>';
+  }
+  return html;
+}
+
+function openReport(idx){
+  const list = loadHistory();
+  const h = list[idx];
+  if(!h) return;
+  document.getElementById('reportTitle').textContent = h.branch || 'Audit report';
+  document.getElementById('reportBody').innerHTML = buildReportHtml(h);
+  document.getElementById('reportDrawer').classList.add('open');
+  document.getElementById('reportOverlay').classList.add('open');
+  document.getElementById('reportDrawer').setAttribute('aria-hidden','false');
+}
+
+function closeReport(){
+  document.getElementById('reportDrawer').classList.remove('open');
+  document.getElementById('reportOverlay').classList.remove('open');
+  document.getElementById('reportDrawer').setAttribute('aria-hidden','true');
 }
 
 function selectBranch(name){
@@ -945,16 +1235,15 @@ function closeBranchMenu(){
    ------------------------------------------------------------
    For use after pushing an update to GitHub: clears any Cache
    Storage / service worker (in case one is ever added later),
-   clears the local draft, then force-navigates to a cache-busted
-   URL so the browser can't serve a stale copy of this file on
-   PC or mobile.
+   then force-navigates to a cache-busted URL so the browser
+   can't serve a stale copy of this file on PC or mobile.
+   Previous audit reports (HISTORY_KEY) are deliberately left
+   alone so they aren't lost on reset.
    ============================================================ */
 async function hardResetApp(){
   const btn = document.getElementById('hardResetBtn');
-  if(!confirm('This clears the saved draft on this device and reloads the latest version of the app. Continue?')) return;
+  if(!confirm('This reloads the latest version of the app from GitHub. Your previous audit reports on this device are kept. Continue?')) return;
   if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Resetting\u2026'; }
-
-  try{ localStorage.removeItem(LOCAL_KEY); }catch(e){}
 
   try{
     if('caches' in window){
@@ -990,7 +1279,6 @@ if(window.ResizeObserver){
 }
 syncFooterHeight();
 
-loadInitial();
 render();
 loadBranches();
 </script>

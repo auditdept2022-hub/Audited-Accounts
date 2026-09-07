@@ -45,9 +45,9 @@
     *,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important;scroll-behavior:auto!important;}
   }
   *{box-sizing:border-box;}
-  html{-webkit-text-size-adjust:100%;}
+  html{-webkit-text-size-adjust:100%; background:var(--panel-2); overscroll-behavior-y:none; height:100%;}
   body{margin:0;background:var(--paper);color:var(--text);font-size:14px;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;
-    padding-bottom:calc(84px + var(--safe-b));}
+    padding-bottom:calc(84px + var(--safe-b)); overscroll-behavior-y:none; min-height:100%;}
   *{scrollbar-width:thin;scrollbar-color:#C7CEEE var(--line);}
   ::-webkit-scrollbar{height:8px;width:8px;}
   ::-webkit-scrollbar-thumb{background:#C7CEEE;border-radius:8px;}
@@ -58,10 +58,12 @@
       radial-gradient(900px 200px at 10% -60%, rgba(90,110,220,.30), transparent 60%),
       linear-gradient(120deg, var(--panel-2) 0%, var(--panel) 55%, var(--panel-3) 100%);
     color:#EDEFF9; padding:calc(10px + var(--safe-t)) 10px 10px;
-    display:flex; align-items:center; justify-content:flex-start; gap:8px;
     box-shadow:0 2px 20px rgba(4,8,32,.35); position:sticky; top:0; z-index:30;
     border-bottom:1px solid rgba(255,255,255,.08);
   }
+  .topband-inner{max-width:640px; margin:0 auto; display:flex; align-items:center; gap:8px; transition:max-width .15s;}
+  @media (min-width:860px){ .topband-inner{max-width:1120px;} .topband{padding-left:24px; padding-right:24px;} }
+  @media (min-width:1440px){ .topband-inner{max-width:1360px;} }
   .hdr-icon-btn{flex-shrink:0; width:36px; height:36px; border-radius:10px; border:1px solid rgba(255,255,255,.16);
     background:rgba(255,255,255,.08); color:#fff; display:flex; align-items:center; justify-content:center;
     cursor:pointer; padding:0; -webkit-tap-highlight-color:transparent;}
@@ -100,16 +102,19 @@
   .branch-item .chev{color:var(--muted-2); flex-shrink:0;}
 
   /* ---------- jump nav ---------- */
-  .jumpnav{display:flex; gap:6px; overflow-x:auto; padding:10px 14px; background:#fff;
+  .jumpnav{display:flex; overflow-x:auto; padding:10px 14px; background:#fff;
     border-bottom:1px solid var(--line); -webkit-overflow-scrolling:touch;}
   .jumpnav::-webkit-scrollbar{display:none;}
+  .jumpnav-inner{display:flex; gap:6px;}
   .jump-chip{flex-shrink:0; border:1px solid var(--line); background:#F8F9FD; color:var(--muted);
     font-size:11.5px; font-weight:600; padding:7px 12px; border-radius:999px; text-decoration:none; white-space:nowrap;
     transition:background .15s, color .15s, border-color .15s;}
   .jump-chip:active, .jump-chip:hover{background:var(--accent-soft); color:var(--accent-dark); border-color:#C9D1EE;}
   @media (min-width:860px){
     .jumpnav{flex-wrap:wrap; justify-content:center; overflow-x:visible; padding:12px 24px;}
+    .jumpnav-inner{max-width:1120px; margin:0 auto; display:flex; flex-wrap:wrap; justify-content:center; gap:6px; width:100%;}
   }
+  @media (min-width:1440px){ .jumpnav-inner{max-width:1360px;} }
 
   /* ---------- layout ----------
      Mobile: everything is one narrow column (as before).
@@ -282,18 +287,20 @@
 <body>
 
 <header class="topband">
-  <button class="hdr-icon-btn" id="backBtn" aria-label="Back to dashboard" onclick="goToDashboard()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
-  </button>
-  <div class="brand">
-    <div class="mark">Audit Sheet</div>
-    <div class="sub" id="headSub">New audit &middot; not yet submitted</div>
-  </div>
-  <div class="hdr-right">
-    <div class="hdr-chip" id="draftBadge">Draft saved</div>
-    <button class="hdr-icon-btn" id="menuBtn" aria-label="Previous branches" onclick="openBranchMenu()">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  <div class="topband-inner">
+    <button class="hdr-icon-btn" id="backBtn" aria-label="Back to dashboard" onclick="goToDashboard()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
     </button>
+    <div class="brand">
+      <div class="mark">Audit Sheet</div>
+      <div class="sub" id="headSub">New audit &middot; not yet submitted</div>
+    </div>
+    <div class="hdr-right">
+      <div class="hdr-chip" id="draftBadge">Draft saved</div>
+      <button class="hdr-icon-btn" id="menuBtn" aria-label="Previous branches" onclick="openBranchMenu()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+    </div>
   </div>
 </header>
 
@@ -752,8 +759,10 @@ function renderReview(){
    RENDER
    ============================================================ */
 function renderJumpNav(){
-  return sections.map(s=>'<a class="jump-chip" href="#'+s.id+'">'+s.navLabel+'</a>').join('')
-    + '<a class="jump-chip" href="#sec-review">Review</a>';
+  return '<div class="jumpnav-inner">'
+    + sections.map(s=>'<a class="jump-chip" href="#'+s.id+'">'+s.navLabel+'</a>').join('')
+    + '<a class="jump-chip" href="#sec-review">Review</a>'
+    + '</div>';
 }
 
 function render(){

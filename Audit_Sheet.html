@@ -285,7 +285,8 @@
   .entry-row-typed{display:flex; gap:6px; align-items:center; border:1px solid var(--line); border-radius:var(--radius-sm);
     padding:7px 7px; margin-bottom:8px; background:#fff;}
   .entry-row-typed .input{min-width:0; padding:7px 8px; font-size:12px;}
-  .entry-row-typed .er-type{flex:1 1 30%;}
+  .entry-row-typed .er-type{flex:1 1 30%; display:flex; flex-direction:column; gap:5px; min-width:0;}
+  .entry-row-typed .er-type-select{width:100%;}
   .entry-row-typed .er-series{flex:1 1 24%;}
   .entry-row-typed .er-remarks{flex:1 1 34%;}
   .icon-btn{border:1px solid #D9DDF0; background:#fff; border-radius:8px; width:32px; height:32px; flex-shrink:0;
@@ -721,6 +722,17 @@ const condLabels = {
   'inventory.oil':'Oil', 'inventory.promo':'Promo', 'inventory.mcUnits':'Motorcycle units (repo & brand new)',
   'inventory.serviceUnits':'Service units', 'inventory.repairUnits':'Repair units (if any)'
 };
+/* Tools/Spareparts/Plates & OR-CR/Assets use a { status, remarks } shape
+   (STATUS_OPTS: Complete/Missing/Good/Poor), not { condition, remarks }
+   like the rows above — they need their own label map + their own
+   ok/bad badge rule so the report shows their actual rating instead of
+   silently dropping them or mis-coloring "Missing". */
+const statusLabels = {
+  'inventory.tools':'Tools (owned by company)',
+  'inventory.spareparts':'Spareparts (3S shop only)',
+  'inventory.platesOrCr':'Plates and OR-CR',
+  'inventory.assets':'Assets'
+};
 function sectionYNStats(paths){
   let answered=0;
   paths.forEach(p=>{ if(get(p)!==null) answered++; });
@@ -779,6 +791,44 @@ function conditionRow(path, label, opts){
     + '</div>';
 }
 
+/* Preset Type options for the Official Receipt / SI / DR entry table.
+   Selecting "Other (type manually)" reveals a free-text input so the
+   type field still ends up as a plain string either way. */
+const OR_TYPE_PRESETS = [
+  'Use/Stock \u2013 Motowheels',
+  'Stock \u2013 Motofinance',
+  'Spareparts',
+  'Sales Invoice',
+  'Delivery Receipt'
+];
+function setEntryType(path, idx, val){
+  const row = get(path)[idx];
+  if(val === '' || OR_TYPE_PRESETS.indexOf(val) !== -1){
+    setRepField(path, idx, 'type', val);
+  } else {
+    // "Other" chosen: only clear the field if it was previously a preset
+    // (switching away from a preset into free text); keep any existing
+    // custom text so re-selecting "Other" doesn't wipe what was typed.
+    if(OR_TYPE_PRESETS.indexOf(row.type) !== -1) setRepField(path, idx, 'type', '');
+  }
+  renderSection(sectionIdForPath(path));
+}
+function typeCell(path, row, i){
+  const isPreset = OR_TYPE_PRESETS.indexOf(row.type) !== -1;
+  const selectValue = row.type === '' ? '' : (isPreset ? row.type : 'Other');
+  let html = '<div class="er-type">'
+    + '<select class="input er-type-select" onchange="setEntryType(\''+path+'\','+i+',this.value)">'
+    + '<option value=""'+(selectValue===''?' selected':'')+'>Select type&hellip;</option>'
+    + OR_TYPE_PRESETS.map(t=>'<option value="'+escAttr(t)+'"'+(selectValue===t?' selected':'')+'>'+escHtml(t)+'</option>').join('')
+    + '<option value="Other"'+(selectValue==='Other'?' selected':'')+'>Other (type manually)</option>'
+    + '</select>';
+  if(selectValue==='Other'){
+    html += '<input class="input er-type-custom" type="text" placeholder="Type manually" value="'+escAttr(row.type)+'"'
+      + ' oninput="setRepField(\''+path+'\','+i+',\'type\',this.value)">';
+  }
+  html += '</div>';
+  return html;
+}
 function repeatableList(path, addLabel){
   const arr = get(path);
   const cell = (extraClass, value, field, i, placeholder) =>
@@ -787,7 +837,7 @@ function repeatableList(path, addLabel){
   let html = '';
   arr.forEach((row,i)=>{
     html += '<div class="entry-row-typed">'
-      + cell('er-type', row.type, 'type', i, 'Type')
+      + typeCell(path, row, i)
       + cell('er-series', row.seriesNo, 'seriesNo', i, 'Series No')
       + cell('er-remarks', row.remarks, 'remarks', i, 'Remarks')
       + '<button type="button" class="icon-btn" onclick="removeRep(\''+path+'\','+i+')">&times;</button>'
@@ -1372,6 +1422,14 @@ function buildReportHtml(h){
     html += '<div class="report-row"><div class="r-label">'+condLabels[p]
       + (c.remarks ? '<div class="r-remark">'+escHtml(c.remarks)+'</div>' : '')
       + '</div><span class="badge '+(condOk?'ok':condBad?'del':'')+'">'+escHtml(cond)+'</span></div>';
+  });
+  Object.keys(statusLabels).forEach(p=>{
+    const st = getFrom(s,p) || {};
+    const status = st.status || '\u2014';
+    const stOk = (status==='Complete'||status==='Good'), stBad = (status==='Missing'||status==='Poor');
+    html += '<div class="report-row"><div class="r-label">'+statusLabels[p]
+      + (st.remarks ? '<div class="r-remark">'+escHtml(st.remarks)+'</div>' : '')
+      + '</div><span class="badge '+(stOk?'ok':stBad?'del':'')+'">'+escHtml(status)+'</span></div>';
   });
 
   html += '<div class="report-section-title">Findings</div>';

@@ -221,6 +221,14 @@
     .preview-page{padding:32px 20px;}
     .preview-title{font-size:13px;}
     .preview-hint{display:none;}
+    .preview-toolbar{padding:10px 10px; gap:6px; flex-wrap:nowrap;}
+    .preview-actions{gap:6px;}
+    .preview-btn{padding:7px 9px; font-size:12px;}
+  }
+  @media (max-width:380px){
+    .preview-title{font-size:11.5px;}
+    .preview-btn{padding:6px 7px; font-size:10.5px; border-radius:7px;}
+    .preview-actions{gap:4px;}
   }
 
 
@@ -314,6 +322,24 @@
   .status-row{border:1px solid var(--line); border-radius:var(--radius-sm); padding:11px 12px; margin-bottom:8px; background:#fff;}
   .status-row .status-head{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:9px;}
   .status-row .status-head .cond-label{margin-bottom:0;}
+
+  /* ---------- inventory count rows (System vs Actual count, for
+     items that are physically counted during the audit: Oil, Promo,
+     Motorcycle Units, Service Units, Repair Units) ---------- */
+  .count-item{border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px; margin-bottom:9px; background:#fff;}
+  .count-item.mismatch{border-color:#F0C3CE; background:linear-gradient(180deg, var(--del-soft) 0%, #fff 46px);}
+  .count-item.matched{border-color:#B7E1CE;}
+  .count-item-label{font-size:13px; font-weight:600; color:var(--text); margin-bottom:9px;}
+  .count-grid{display:grid; grid-template-columns:1fr 1fr; gap:8px 10px; margin-bottom:8px;}
+  .count-field label{font-size:10px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.3px;
+    display:block; margin-bottom:4px;}
+  .count-result{grid-column:1/-1; display:flex; align-items:center; justify-content:space-between; gap:8px;
+    font-size:12px; padding:2px 1px 0;}
+  .count-variance{font-family:'JetBrains Mono',monospace; font-weight:700; color:var(--muted-2);}
+  .count-variance.matched{color:var(--ok);}
+  .count-variance.mismatch{color:var(--del);}
+  .badge.warn{background:var(--rstr-soft); color:var(--rstr);}
+  .inventory-subhead{display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 8px;}
 
   /* ---------- repeatable entry rows ---------- */
   .entry-row{display:flex; gap:8px; align-items:center; border:1px solid var(--line); border-radius:var(--radius-sm);
@@ -575,6 +601,7 @@ const defaultOrEntries = () => ([
 ]);
 const emptyDepositEntry = () => ({ amount:'', remarks:'' });
 const emptyStatusEntry = () => ({ status:'', remarks:'' });
+const emptyCountEntry = () => ({ systemCount:'', actualCount:'', remarks:'' });
 
 function freshState(){
   return {
@@ -590,17 +617,19 @@ function freshState(){
     notebooks:{ cashReceiptJournal:null, salesJournal:null, registrationNotebook:null,
       closedAccountNotebook:null, noPendingChattel:null },
     officialReceipts:{ allComplete:null, cutoffSigned:null, greenCopiesFiledSeries:null,
-      greenCopiesOrganized:null, entries: defaultOrEntries() },
+      greenCopiesOrganized:null, properlyValidated:null, entries: defaultOrEntries(), tableRemarks:'' },
     image:{
+      openedBefore8am:null, personnelPresent:null,
       cleanliness:{condition:'',remarks:''}, grooming:{condition:'',remarks:''},
       idUniforms:{condition:'',remarks:''}, signages:{condition:'',remarks:''},
       branchKey:{condition:'',remarks:''}, branchVaultKey:{condition:'',remarks:''},
       branchConcerns:''
     },
     inventory:{
-      oil:{condition:'',remarks:''}, promo:{condition:'',remarks:''},
-      mcUnits:{condition:'',remarks:''}, serviceUnits:{condition:'',remarks:''},
-      repairUnits:{condition:'',remarks:''},
+      oil: emptyCountEntry(), promo: emptyCountEntry(),
+      mcUnits: emptyCountEntry(), serviceUnits: emptyCountEntry(),
+      repairUnits: emptyCountEntry(),
+      brandNewCondition:{condition:'',remarks:''},
       tools: emptyStatusEntry(), spareparts: emptyStatusEntry(),
       platesOrCr: emptyStatusEntry(), assets: emptyStatusEntry()
     },
@@ -738,13 +767,14 @@ function refreshCashComputed(){
    SCORE
    ============================================================ */
 const ynPaths = [
+  'image.openedBefore8am','image.personnelPresent',
   'reportsAttachments.depositSlipReconciled','reportsAttachments.dailyPerfReconciled',
   'reportsAttachments.attachmentsComplete','reportsAttachments.vouchersSigned','reportsAttachments.last7DaysFiled',
   'fieldCollection.picturesOnTime','fieldCollection.copiesMonitored','fieldCollection.whiteCopiesArranged',
   'notebooks.cashReceiptJournal','notebooks.salesJournal','notebooks.registrationNotebook',
   'notebooks.closedAccountNotebook','notebooks.noPendingChattel',
   'officialReceipts.allComplete','officialReceipts.cutoffSigned',
-  'officialReceipts.greenCopiesFiledSeries','officialReceipts.greenCopiesOrganized'
+  'officialReceipts.greenCopiesFiledSeries','officialReceipts.greenCopiesOrganized','officialReceipts.properlyValidated'
 ];
 function getFrom(obj, path){
   return path.split('.').reduce((o,k)=> (o==null?o:o[k]), obj);
@@ -760,6 +790,8 @@ function computeScore(fromState){
 /* human-readable labels for the yes/no + condition checklist items,
    used to build the readable "previous audits" report */
 const ynLabels = {
+  'image.openedBefore8am':'Branch opened before 8:00 AM?',
+  'image.personnelPresent':'All personnel were present on the day of the audit?',
   'reportsAttachments.depositSlipReconciled':'Deposit slips reconciled to the report?',
   'reportsAttachments.dailyPerfReconciled':'Daily performance reconciled to the collection report?',
   'reportsAttachments.attachmentsComplete':'All attachments of the reports complete?',
@@ -776,11 +808,17 @@ const ynLabels = {
   'officialReceipts.allComplete':'All official receipts complete (per OR monitoring)?',
   'officialReceipts.cutoffSigned':'Collectors\u2019 receipts found with a cut-off signature by the cashier?',
   'officialReceipts.greenCopiesFiledSeries':'Green copies of used OR / SI / DR filed in series?',
-  'officialReceipts.greenCopiesOrganized':'Green copies filed & organized?'
+  'officialReceipts.greenCopiesOrganized':'Green copies filed & organized?',
+  'officialReceipts.properlyValidated':'Official receipts are properly used and validated?'
 };
 const condLabels = {
   'image.cleanliness':'Cleanliness', 'image.grooming':'Grooming', 'image.idUniforms':'I.D. & uniforms',
   'image.signages':'Signages', 'image.branchKey':'Branch key', 'image.branchVaultKey':'Branch vault key',
+  'inventory.brandNewCondition':'Brand-new units (free from scratches, with TBA\u2019s)'
+};
+/* Physically-counted inventory items (System vs Actual count), reported
+   separately from the plain Good/Fair/Poor condition checks above. */
+const countLabels = {
   'inventory.oil':'Oil', 'inventory.promo':'Promo', 'inventory.mcUnits':'Motorcycle units (repo & brand new)',
   'inventory.serviceUnits':'Service units', 'inventory.repairUnits':'Repair units (if any)'
 };
@@ -946,6 +984,78 @@ function statusRow(path){
     + '</div>';
 }
 
+/* ---------- inventory count rows (System vs Actual count) ----------
+   Used for the items an internal audit physically counts on-site:
+   Oil, Promo, Motorcycle Units, Service Units, Repair Units. Keeps a
+   System Count (what the records/system say) and an Actual Count
+   (what was physically counted), auto-computing the variance and a
+   Matched/Shortage/Overage status \u2014 rather than a subjective
+   Good/Fair/Poor rating \u2014 since that's what "reconciled with the
+   actual count" means. */
+function countVariance(obj){
+  if(!obj || obj.systemCount==='' || obj.systemCount==null || obj.actualCount==='' || obj.actualCount==null) return null;
+  const sys = Number(obj.systemCount)||0, act = Number(obj.actualCount)||0;
+  return act - sys;
+}
+function countStatus(obj){
+  const v = countVariance(obj);
+  if(v===null) return '';
+  return v===0 ? 'Matched' : (v>0 ? 'Overage' : 'Shortage');
+}
+function countMatched(path){ return countStatus(get(path)) === 'Matched'; }
+const INVENTORY_COUNT_ITEMS = [
+  ['oil','Oil'], ['promo','Promo'], ['mcUnits','Motorcycle units (repo &amp; brand new)'],
+  ['serviceUnits','Service units'], ['repairUnits','Repair units (if any)']
+];
+function inventoryReconciledStats(){
+  let matched=0;
+  INVENTORY_COUNT_ITEMS.forEach(([key])=>{
+    if(countStatus(state.inventory[key])==='Matched') matched++;
+  });
+  return matched+'/'+INVENTORY_COUNT_ITEMS.length+' matched';
+}
+function onCountInput(key, field, el){
+  state.inventory[key][field] = el.value;
+  const obj = state.inventory[key];
+  const variance = countVariance(obj);
+  const status = countStatus(obj);
+  const itemEl = document.getElementById('count-item-'+key);
+  const varEl = document.getElementById('count-var-'+key);
+  const badgeEl = document.getElementById('count-badge-'+key);
+  const cls = variance===null ? '' : (variance===0 ? 'matched' : 'mismatch');
+  if(itemEl) itemEl.className = 'count-item' + (cls ? ' '+cls : '');
+  if(varEl) varEl.textContent = variance===null ? '\u2014' : (variance>0 ? '+'+variance : String(variance));
+  if(varEl) varEl.className = 'count-variance' + (cls ? ' '+cls : '');
+  if(badgeEl){
+    badgeEl.textContent = status || '\u2014';
+    badgeEl.className = 'badge' + (status==='Matched' ? ' ok' : status ? ' del' : '');
+  }
+  const headerCountEl = document.querySelector('#sec-inventory .section-count');
+  const stats = inventoryReconciledStats();
+  if(headerCountEl) headerCountEl.textContent = stats || '';
+}
+function countRow(key, label){
+  const obj = state.inventory[key];
+  const variance = countVariance(obj);
+  const status = countStatus(obj);
+  const cls = variance===null ? '' : (variance===0 ? 'matched' : 'mismatch');
+  return '<div class="count-item'+(cls?' '+cls:'')+'" id="count-item-'+key+'">'
+    + '<div class="count-item-label">'+label+'</div>'
+    + '<div class="count-grid">'
+    + '<div class="count-field"><label>System count</label>'
+    + '<input class="input" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="'+escAttr(obj.systemCount)+'"'
+    + ' oninput="onCountInput(\''+key+'\',\'systemCount\',this)"></div>'
+    + '<div class="count-field"><label>Actual count</label>'
+    + '<input class="input" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="'+escAttr(obj.actualCount)+'"'
+    + ' oninput="onCountInput(\''+key+'\',\'actualCount\',this)"></div>'
+    + '<div class="count-result">'
+    + '<span class="count-variance'+(cls?' '+cls:'')+'" id="count-var-'+key+'">'+(variance===null?'\u2014':(variance>0?'+'+variance:String(variance)))+'</span>'
+    + '<span class="badge'+(status==='Matched'?' ok':status?' del':'')+'" id="count-badge-'+key+'">'+(status||'\u2014')+'</span>'
+    + '</div></div>'
+    + inputEl(obj.remarks, 'oninput="set(\'inventory.'+key+'.remarks\', this.value)"', 'text', 'placeholder="Remarks (optional)"')
+    + '</div>';
+}
+
 function addFinding(){ state.findings.push({text:'', severity:'Medium'}); renderSection('sec-findings'); refreshSummary(); }
 function removeFinding(i){ state.findings.splice(i,1); renderSection('sec-findings'); refreshSummary(); }
 function setFinding(i, field, val){
@@ -1100,20 +1210,28 @@ function renderNotebooks(){
 
 function renderOR(){
   const paths = ['officialReceipts.allComplete','officialReceipts.cutoffSigned',
-    'officialReceipts.greenCopiesFiledSeries','officialReceipts.greenCopiesOrganized'];
+    'officialReceipts.greenCopiesFiledSeries','officialReceipts.greenCopiesOrganized','officialReceipts.properlyValidated'];
   return card('sec-or','Official receipts, sales invoices &amp; delivery receipts', null, sectionYNStats(paths),
     '<div class="review-sub">Official Receipt / SI / DR</div>'
     + repeatableList('officialReceipts.entries','entry')
-    + '<div class="review-sub" style="margin-top:14px;">Checklist</div>'
+    + '<div class="field span2" style="margin:2px 0 14px;"><label>Additional remarks</label>'
+    + textareaEl(state.officialReceipts.tableRemarks, 'oninput="set(\'officialReceipts.tableRemarks\', this.value)"',
+        'Any additional notes on the OR / SI / DR entries above...')
+    + '</div>'
+    + '<div class="review-sub">Checklist</div>'
     + ynRow('officialReceipts.allComplete','All official receipts complete (per OR monitoring)?')
     + ynRow('officialReceipts.cutoffSigned','Collectors\u2019 receipts found with a cut-off signature by the cashier?')
     + ynRow('officialReceipts.greenCopiesFiledSeries','Green copies of used OR / SI / DR filed in series?')
-    + ynRow('officialReceipts.greenCopiesOrganized','Green copies filed &amp; organized?'));
+    + ynRow('officialReceipts.greenCopiesOrganized','Green copies filed &amp; organized?')
+    + ynRow('officialReceipts.properlyValidated','Official receipts are properly used and validated?'));
 }
 
 function renderImage(){
-  return card('sec-image','Image of the branch', null, null,
-    conditionRow('image.cleanliness','Cleanliness')
+  const paths = ['image.openedBefore8am','image.personnelPresent'];
+  return card('sec-image','Image of the branch', null, sectionYNStats(paths),
+    ynRow('image.openedBefore8am','Branch opened before 8:00 AM?')
+    + ynRow('image.personnelPresent','All personnel were present on the day of the audit?')
+    + conditionRow('image.cleanliness','Cleanliness')
     + conditionRow('image.grooming','Grooming')
     + conditionRow('image.idUniforms','I.D. &amp; uniforms')
     + conditionRow('image.signages','Signages')
@@ -1125,12 +1243,12 @@ function renderImage(){
 }
 
 function renderInventory(){
-  return card('sec-inventory','Inventories', null, null,
-    conditionRow('inventory.oil','Oil',['Complete','Incomplete'])
-    + conditionRow('inventory.promo','Promo')
-    + conditionRow('inventory.mcUnits','Motorcycle units (repo &amp; brand new)')
-    + conditionRow('inventory.serviceUnits','Service units')
-    + conditionRow('inventory.repairUnits','Repair units (if any)')
+  const stats = inventoryReconciledStats();
+  return card('sec-inventory','Inventories', 'Physically count each item and enter both the system record and what you actually counted \u2014 the variance and status are computed for you.', stats,
+    '<div class="review-sub">Stock &amp; unit counts (system vs. actual)</div>'
+    + INVENTORY_COUNT_ITEMS.map(([key,label])=>countRow(key,label)).join('')
+    + '<div class="review-sub" style="margin-top:14px;">Brand-new units</div>'
+    + conditionRow('inventory.brandNewCondition','Free from scratches, with TBA\u2019s')
     + '<div class="review-sub" style="margin-top:14px;">Tools (owned by company)</div>' + statusRow('inventory.tools')
     + '<div class="review-sub" style="margin-top:6px;">Spareparts (3S shop only)</div>' + statusRow('inventory.spareparts')
     + '<div class="review-sub" style="margin-top:6px;">Plates and OR-CR</div>' + statusRow('inventory.platesOrCr')
@@ -1342,38 +1460,45 @@ function ynTrue(path){ return get(path) === true; }
 /* Each rule becomes one bullet under BRANCH when its check passes.
    Order roughly follows the sections in the checklist. */
 const FINDINGS_RULES = [
-  { test:()=>condGood('image.signages'), pos:'Branch signage is visible and properly maintained.' },
+  { test:()=>condGood('image.signages'), pos:'Motorlandia signage is visible.' },
+  { test:()=>ynTrue('image.openedBefore8am'), pos:'The branch opened before 8:00 AM.' },
   { test:()=>condGood('image.cleanliness'), pos:'Cleanliness of the branch is well maintained.' },
+  { test:()=>ynTrue('image.personnelPresent'), pos:'All personnel were present on the day of the audit.' },
   { test:()=>condGood('image.idUniforms'), pos:'All personnel are wearing their prescribed uniforms and IDs.' },
   { test:()=>condGood('image.grooming'), pos:'Personnel grooming meets standards.' },
+  { test:()=>ynTrue('reportsAttachments.vouchersSigned'), pos:'Cash receipt vouchers are signed by designated personnel.' },
+  { test:()=>ynTrue('officialReceipts.cutoffSigned'), pos:'Collectors\u2019 receipts have cut-off signatures of the cashier.' },
+  { test:()=>ynTrue('officialReceipts.greenCopiesOrganized'), pos:'Green copies of official receipts are well organized.' },
+  { test:()=>ynTrue('fieldCollection.whiteCopiesArranged'), pos:'Online payments (white receipts) are filed alphabetically.' },
+  { test:()=>['notebooks.cashReceiptJournal','notebooks.salesJournal','notebooks.registrationNotebook','notebooks.closedAccountNotebook'].every(ynTrue),
+    pos:'All important notebooks (Sales, Cash, Registration, and Closed Accounts) are updated.' },
+  { test:()=>countMatched('inventory.mcUnits'), pos:'Brand-new and repossessed units were reconciled with the actual count.' },
+  { test:()=>condGood('inventory.brandNewCondition'), pos:'All brand-new units are free from scratches and with TBA\u2019s.' },
+  { test:()=>ynTrue('officialReceipts.allComplete'), pos:'OR, SI, and DR (used and unused) are complete based on Finance monitoring.' },
+  { test:()=>ynTrue('officialReceipts.properlyValidated'), pos:'Official receipts are properly used and validated.' },
+  { test:()=>countMatched('inventory.serviceUnits'), pos:'Issued service units are recorded in the system inventory.' },
+  { test:()=>countMatched('inventory.oil') && countMatched('inventory.promo'), pos:'Oil & Promo inventory is reconciled with the actual count.' },
+  { test:()=>condGood('image.branchKey'), pos:'The branch key is handled by the branch manager.' },
+  { test:()=>statusGood('inventory.assets'), pos:'All assets are recorded in the admin sheets.' },
   { test:()=>ynTrue('reportsAttachments.depositSlipReconciled'), pos:'Deposit slips are reconciled to the report.' },
   { test:()=>ynTrue('reportsAttachments.dailyPerfReconciled'), pos:'Daily performance is reconciled to the collection report.' },
   { test:()=>ynTrue('reportsAttachments.attachmentsComplete'), pos:'All attachments of the reports are complete.' },
-  { test:()=>ynTrue('reportsAttachments.vouchersSigned'), pos:'Cash receipt vouchers are signed by designated personnel.' },
   { test:()=>ynTrue('reportsAttachments.last7DaysFiled'), pos:'The last 7 days of transactions are filed with complete attachments.' },
-  { test:()=>ynTrue('officialReceipts.cutoffSigned'), pos:'Collectors\u2019 receipts have cut-off signatures of the cashier.' },
   { test:()=>ynTrue('officialReceipts.greenCopiesFiledSeries'), pos:'Green copies of used OR / SI / DR are filed in series.' },
-  { test:()=>ynTrue('officialReceipts.greenCopiesOrganized'), pos:'Green copies of official receipts are well organized.' },
   { test:()=>ynTrue('fieldCollection.picturesOnTime'), pos:'Collectors are submitting field collection pictures on time.' },
   { test:()=>ynTrue('fieldCollection.copiesMonitored'), pos:'Field picture copies are properly monitored by the cashier.' },
-  { test:()=>ynTrue('fieldCollection.whiteCopiesArranged'), pos:'Online payments (white receipts) are properly arranged and monitored.' },
-  { test:()=>['notebooks.cashReceiptJournal','notebooks.salesJournal','notebooks.registrationNotebook','notebooks.closedAccountNotebook'].every(ynTrue),
-    pos:'All important notebooks (Sales, Cash, Registration, and Closed Accounts) are updated.' },
   { test:()=>ynTrue('notebooks.noPendingChattel'), pos:'Branch is without pending chattel documents.' },
-  { test:()=>condGood('inventory.mcUnits'), pos:'Brand-new and repossessed units were reconciled with the actual count.' },
-  { test:()=>ynTrue('officialReceipts.allComplete'), pos:'OR, SI, and DR (used and unused) are complete based on Finance monitoring.' },
-  { test:()=>condGood('inventory.serviceUnits'), pos:'Issued service units are recorded in the system inventory.' },
-  { test:()=>condGood('inventory.oil', ['Complete']) && condGood('inventory.promo'), pos:'Oil & Promo inventory is reconciled with the actual count.' },
-  { test:()=>condGood('inventory.repairUnits'), pos:'Repair units (if any) are properly accounted for.' },
-  { test:()=>condGood('image.branchKey'), pos:'The branch key is handled by the branch manager.' },
+  { test:()=>countMatched('inventory.repairUnits'), pos:'Repair units (if any) are properly accounted for.' },
   { test:()=>condGood('image.branchVaultKey'), pos:'The branch vault key is properly secured.' },
   { test:()=>statusGood('inventory.tools'), pos:'Company-owned tools are complete.' },
   { test:()=>statusGood('inventory.spareparts'), pos:'Spareparts (3S shop) are complete.' },
-  { test:()=>statusGood('inventory.platesOrCr'), pos:'Plates and OR-CR are complete.' },
-  { test:()=>statusGood('inventory.assets'), pos:'All assets are recorded in the admin sheets.' }
+  { test:()=>statusGood('inventory.platesOrCr'), pos:'Plates and OR-CR are complete.' }
 ];
 function buildBranchBullets(){
-  return FINDINGS_RULES.filter(r=>{ try{ return !!r.test(); }catch(e){ return false; } }).map(r=>r.pos);
+  const bullets = FINDINGS_RULES.filter(r=>{ try{ return !!r.test(); }catch(e){ return false; } }).map(r=>r.pos);
+  const orRemarks = get('officialReceipts.tableRemarks');
+  if(orRemarks && String(orRemarks).trim()) bullets.push('OR / SI / DR remarks: ' + String(orRemarks).trim());
+  return bullets;
 }
 function buildIssuesBullets(){
   return (state.findings||[]).filter(f=>f && f.text && String(f.text).trim())
@@ -1412,6 +1537,34 @@ function buildPreviewHtml(){
     + '<div class="pv-sign"><div class="pv-sign-label">Acknowledged by:</div><div class="line">&nbsp;</div></div>'
     + '</div>';
   return html;
+}
+/* Plain-text version of the same narrative shown in the preview, used
+   so the Apps Script backend can save it straight into the sheet (an
+   "Audit Initial Report" tab) without having to re-implement the
+   findings rules on the backend side. */
+function buildPreviewPlainText(){
+  const branchBullets = buildBranchBullets();
+  const issues = buildIssuesBullets();
+  const fieldBullets = buildFieldBullets();
+  const dateStr = fmtLongDateUpper(state.auditDate);
+  const branchName = state.branch || 'BRANCH NAME';
+  const lines = [];
+  lines.push(branchName);
+  lines.push('AUDIT FINDINGS');
+  lines.push(dateStr || '\u2014');
+  lines.push('');
+  lines.push('BRANCH');
+  if(branchBullets.length) branchBullets.forEach(b=>lines.push('- '+b));
+  else lines.push('- (Fill in the checklist first, or type findings here.)');
+  if(issues.length){
+    lines.push('');
+    lines.push('ISSUES NOTED');
+    issues.forEach(b=>lines.push('- '+b));
+  }
+  lines.push('');
+  lines.push('FIELD');
+  fieldBullets.forEach(b=>lines.push('- '+b));
+  return lines.join('\n');
 }
 function openPreview(){
   document.getElementById('previewPage').innerHTML = buildPreviewHtml();
@@ -1493,6 +1646,10 @@ async function doSubmit(){
   const score = computeScore();
   const payload = JSON.parse(JSON.stringify(state));
   payload.score = score;
+  // Plain-text narrative (same content as the "Audit Findings" preview),
+  // sent so the backend can always save it into the "Audit Initial
+  // Report" tab on every submit — no need to remember to Download first.
+  payload.reportNarrative = buildPreviewPlainText();
 
   submitting = true; render();
   try{
@@ -1507,7 +1664,7 @@ async function doSubmit(){
     const result = await res.json();
     submitting = false;
     if(result && result.ok){
-      showToast('Audit submitted \u2014 saved as its own tab in the Sheet.');
+      showToast('Audit submitted \u2014 saved to its own tab and to Audit Initial Report.');
       saveHistoryEntry({
         branch: payload.branch, auditor: payload.auditor, auditDate: payload.auditDate,
         submittedAt: new Date().toISOString(), score: score, state: payload
@@ -1629,6 +1786,21 @@ function buildReportHtml(h){
   Object.keys(ynLabels).forEach(p=>{
     const v = getFrom(s,p);
     html += '<div class="report-row"><div class="r-label">'+ynLabels[p]+'</div>'+pillYN(v)+'</div>';
+  });
+
+  html += '<div class="report-section-title">Stock &amp; unit counts</div>';
+  Object.keys(countLabels).forEach(p=>{
+    const c = getFrom(s,p) || {};
+    const variance = countVariance(c);
+    const status = countStatus(c) || '\u2014';
+    const stOk = status==='Matched', stBad = status==='Shortage' || status==='Overage';
+    const countText = (c.systemCount!=='' && c.systemCount!=null) || (c.actualCount!=='' && c.actualCount!=null)
+      ? 'Sys '+(c.systemCount||0)+' &middot; Actual '+(c.actualCount||0)+(variance!==null ? ' &middot; Var '+(variance>0?'+'+variance:variance) : '')
+      : '';
+    html += '<div class="report-row"><div class="r-label">'+countLabels[p]
+      + (countText ? '<div class="r-remark">'+countText+'</div>' : '')
+      + (c.remarks ? '<div class="r-remark">'+escHtml(c.remarks)+'</div>' : '')
+      + '</div><span class="badge '+(stOk?'ok':stBad?'del':'')+'">'+escHtml(status)+'</span></div>';
   });
 
   html += '<div class="report-section-title">Condition checks</div>';

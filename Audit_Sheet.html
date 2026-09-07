@@ -282,12 +282,12 @@
   .entry-row{display:flex; gap:8px; align-items:center; border:1px solid var(--line); border-radius:var(--radius-sm);
     padding:8px; margin-bottom:8px; background:#fff;}
   .entry-row .input{flex:1; min-width:0;}
-  .entry-row-typed{display:flex; flex-direction:column; gap:6px; border:1px solid var(--line); border-radius:var(--radius-sm);
-    padding:8px; margin-bottom:8px; background:#fff;}
-  .entry-row-typed .er-main{display:flex; gap:8px; align-items:center;}
-  .entry-row-typed .er-main .input{flex:1; min-width:0; font-weight:700;}
-  .entry-row-typed .er-sub{display:flex; gap:8px;}
-  .entry-row-typed .er-sub .input{flex:1; min-width:0; font-weight:400;}
+  .entry-row-typed{display:flex; gap:6px; align-items:center; border:1px solid var(--line); border-radius:var(--radius-sm);
+    padding:7px 7px; margin-bottom:8px; background:#fff;}
+  .entry-row-typed .input{min-width:0; padding:7px 8px; font-size:12px;}
+  .entry-row-typed .er-type{flex:1 1 30%;}
+  .entry-row-typed .er-series{flex:1 1 24%;}
+  .entry-row-typed .er-remarks{flex:1 1 34%;}
   .icon-btn{border:1px solid #D9DDF0; background:#fff; border-radius:8px; width:32px; height:32px; flex-shrink:0;
     display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--del); font-size:16px; line-height:1;}
   .icon-btn:active{background:var(--del-soft);}
@@ -604,7 +604,14 @@ function setCond(path, val){
 }
 function setRepField(path, idx, field, val){ get(path)[idx][field] = val; }
 function addRep(path){ get(path).push(emptyEntry()); renderSection(sectionIdForPath(path)); }
-function removeRep(path, idx){ get(path).splice(idx,1); if(get(path).length===0) get(path).push(emptyEntry()); renderSection(sectionIdForPath(path)); }
+function removeRep(path, idx){
+  const row = get(path)[idx] || {};
+  const hasData = (row.seriesNo && String(row.seriesNo).trim()) || (row.remarks && String(row.remarks).trim());
+  if(hasData && !confirm('Remove this entry? The series no. and remarks you entered for it will be deleted.')) return;
+  get(path).splice(idx,1);
+  if(get(path).length===0) get(path).push(emptyEntry());
+  renderSection(sectionIdForPath(path));
+}
 
 /* ---------- cash: denomination breakdown + live totals ----------
    These run on every keystroke (oninput). They must NEVER call the
@@ -774,17 +781,16 @@ function conditionRow(path, label, opts){
 
 function repeatableList(path, addLabel){
   const arr = get(path);
+  const cell = (extraClass, value, field, i, placeholder) =>
+    '<input class="input '+extraClass+'" type="text" placeholder="'+escAttr(placeholder)+'" value="'+escAttr(value)+'"'
+    + ' oninput="setRepField(\''+path+'\','+i+',\''+field+'\',this.value)">';
   let html = '';
   arr.forEach((row,i)=>{
     html += '<div class="entry-row-typed">'
-      + '<div class="er-main">'
-      + inputEl(row.type, 'oninput="setRepField(\''+path+'\','+i+',\'type\',this.value)"', 'text', 'placeholder="Type (e.g. Sales Invoice)"')
+      + cell('er-type', row.type, 'type', i, 'Type')
+      + cell('er-series', row.seriesNo, 'seriesNo', i, 'Series No')
+      + cell('er-remarks', row.remarks, 'remarks', i, 'Remarks')
       + '<button type="button" class="icon-btn" onclick="removeRep(\''+path+'\','+i+')">&times;</button>'
-      + '</div>'
-      + '<div class="er-sub">'
-      + inputEl(row.seriesNo, 'oninput="setRepField(\''+path+'\','+i+',\'seriesNo\',this.value)"', 'text', 'placeholder="Series No"')
-      + inputEl(row.remarks, 'oninput="setRepField(\''+path+'\','+i+',\'remarks\',this.value)"', 'text', 'placeholder="Remarks"')
-      + '</div>'
       + '</div>';
   });
   html += '<button type="button" class="btn-add" onclick="addRep(\''+path+'\')">+ Add '+addLabel+'</button>';
@@ -966,7 +972,7 @@ function renderOR(){
   const paths = ['officialReceipts.allComplete','officialReceipts.cutoffSigned',
     'officialReceipts.greenCopiesFiledSeries','officialReceipts.greenCopiesOrganized'];
   return card('sec-or','Official receipts, sales invoices &amp; delivery receipts', null, sectionYNStats(paths),
-    '<div class="review-sub">Spot-checks</div>'
+    '<div class="review-sub">Official Receipt / SI / DR</div>'
     + repeatableList('officialReceipts.entries','entry')
     + '<div class="review-sub" style="margin-top:14px;">Checklist</div>'
     + ynRow('officialReceipts.allComplete','All official receipts complete (per OR monitoring)?')

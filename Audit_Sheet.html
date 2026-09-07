@@ -511,11 +511,11 @@ const backendConfigured = APPS_SCRIPT_URL && APPS_SCRIPT_URL.indexOf('PASTE_YOUR
    ============================================================ */
 const emptyEntry = () => ({ type:'', seriesNo:'', remarks:'' });
 const defaultOrEntries = () => ([
-  { type:'Use/Stock \u2013 Motowheels', seriesNo:'', remarks:'' },
-  { type:'Stock \u2013 Motofinance', seriesNo:'', remarks:'' },
-  { type:'Spareparts', seriesNo:'', remarks:'' },
-  { type:'Sales Invoice', seriesNo:'', remarks:'' },
-  { type:'Delivery Receipt', seriesNo:'', remarks:'' }
+  { type:'Stock - Motowheels', seriesNo:'', remarks:'' },
+  { type:'Stock - Motofinance', seriesNo:'', remarks:'' },
+  { type:'Stock - Spareparts', seriesNo:'', remarks:'' },
+  { type:'Stock - Sales Invoice', seriesNo:'', remarks:'' },
+  { type:'Stock - Delivery Receipt', seriesNo:'', remarks:'' }
 ]);
 const emptyDepositEntry = () => ({ amount:'', remarks:'' });
 const emptyStatusEntry = () => ({ status:'', remarks:'' });
@@ -801,11 +801,16 @@ function conditionRow(path, label, opts){
    Selecting "Other (type manually)" reveals a free-text input so the
    type field still ends up as a plain string either way. */
 const OR_TYPE_PRESETS = [
-  'Use/Stock \u2013 Motowheels',
-  'Stock \u2013 Motofinance',
-  'Spareparts',
-  'Sales Invoice',
-  'Delivery Receipt'
+  'Used - Motofinance',
+  'Used - Motowheels',
+  'Used - Spareparts',
+  'Used - Sales Invoice',
+  'Used - Delivery Receipt',
+  'Stock - Motowheels',
+  'Stock - Motofinance',
+  'Stock - Spareparts',
+  'Stock - Sales Invoice',
+  'Stock - Delivery Receipt'
 ];
 /* Tracks which OR entry rows currently have "Other" selected in the
    Type dropdown, keyed by "path::idx". This is UI-only state (kept

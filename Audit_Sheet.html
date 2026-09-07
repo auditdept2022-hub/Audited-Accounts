@@ -59,12 +59,13 @@
   ::-webkit-scrollbar-thumb{background:#C7CEEE;border-radius:8px;}
 
   /* ---------- header ---------- */
+  .app-toolbar{position:sticky; top:0; z-index:30;}
   .topband{
     background:
       radial-gradient(900px 200px at 10% -60%, rgba(90,110,220,.30), transparent 60%),
       linear-gradient(120deg, var(--panel-2) 0%, var(--panel) 55%, var(--panel-3) 100%);
     color:#EDEFF9; padding:calc(10px + var(--safe-t)) 10px 10px;
-    box-shadow:0 2px 20px rgba(4,8,32,.35); position:sticky; top:0; z-index:30;
+    box-shadow:0 2px 20px rgba(4,8,32,.35);
     border-bottom:1px solid rgba(255,255,255,.08);
   }
   .topband-inner{max-width:640px; margin:0 auto; display:flex; align-items:center; gap:8px; transition:max-width .15s;}
@@ -110,9 +111,10 @@
 
   /* ---------- jump nav ---------- */
   .jumpnav{display:flex; overflow-x:auto; padding:10px 14px; background:#fff;
-    border-bottom:1px solid var(--line); -webkit-overflow-scrolling:touch;}
+    border-bottom:1px solid var(--line); -webkit-overflow-scrolling:touch;
+    box-shadow:0 4px 10px rgba(16,22,60,.05);}
   .jumpnav::-webkit-scrollbar{display:none;}
-  .jumpnav-inner{display:flex; gap:6px;}
+  .jumpnav-inner{display:flex; gap:6px; flex-shrink:0; width:max-content;}
   .jump-chip{flex-shrink:0; border:1px solid var(--line); background:#F8F9FD; color:var(--muted);
     font-size:11.5px; font-weight:600; padding:7px 12px; border-radius:999px; text-decoration:none; white-space:nowrap;
     transition:background .15s, color .15s, border-color .15s;}
@@ -295,6 +297,7 @@
 </head>
 <body>
 
+<div class="app-toolbar">
 <header class="topband">
   <div class="topband-inner">
     <button class="hdr-icon-btn" id="backBtn" aria-label="Back to dashboard" onclick="goToDashboard()">
@@ -314,6 +317,7 @@
 </header>
 
 <nav class="jumpnav" id="jumpnav"></nav>
+</div>
 
 <main class="wrap">
   <div id="main"></div>

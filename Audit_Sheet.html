@@ -311,6 +311,22 @@
   .cash-variance.ok{background:var(--ok-soft); color:var(--ok);}
   .cash-variance.warn{background:var(--del-soft); color:var(--del);}
 
+  /* ---------- deposits: compact, minimalist single-line rows ---------- */
+  .deposit-list{display:flex; flex-direction:column; gap:5px; margin-bottom:4px;}
+  .deposit-row{display:flex; align-items:center; gap:5px;}
+  .deposit-row .dep-amt, .deposit-row .dep-remarks{
+    border:1px solid #D7DCF0; background:#F8F9FD; border-radius:7px; font-family:inherit;
+    color:var(--text); outline:none; padding:5px 7px; font-size:12px; min-width:0;}
+  .deposit-row .dep-amt{width:84px; flex:0 0 84px; text-align:right;}
+  .deposit-row .dep-remarks{flex:1;}
+  .deposit-row .dep-amt:focus, .deposit-row .dep-remarks:focus{border-color:var(--accent); box-shadow:0 0 0 2px rgba(42,61,154,.10);}
+  .deposit-row .dep-remove{flex-shrink:0; border:none; background:transparent; color:var(--muted-2);
+    width:20px; height:20px; border-radius:50%; font-size:14px; line-height:1; cursor:pointer; padding:0;}
+  .deposit-row .dep-remove:active{background:var(--del-soft); color:var(--del);}
+  .deposit-add{border:none; background:transparent; color:var(--accent-dark); font-family:inherit;
+    font-size:11.5px; font-weight:700; padding:2px; cursor:pointer;}
+  .deposit-add:active{text-decoration:underline;}
+
   /* ---------- findings ---------- */
   .finding-card{border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:10px; background:#fff;}
   .finding-foot{display:flex; gap:8px; margin-top:8px;}
@@ -889,6 +905,7 @@ function findingsList(){
    ============================================================ */
 const sections = [
   { id:'sec-basics', navLabel:'Basics', render: renderBasics },
+  { id:'sec-changefund', navLabel:'Change Fund', render: renderChangeFund },
   { id:'sec-cash', navLabel:'Cash', render: renderCash },
   { id:'sec-reports', navLabel:'Reports', render: renderReports },
   { id:'sec-field', navLabel:'Field', render: renderField },
@@ -923,16 +940,17 @@ function denomRows(group){
 }
 function depositsList(){
   const arr = state.cash.deposits;
-  let html = '<div class="field span2"><label>Less: deposits</label>';
+  let html = '<div class="field span2"><label>Less: deposits</label><div class="deposit-list">';
   arr.forEach((row,i)=>{
-    html += '<div class="entry-row">'
-      + '<input class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Amount"'
+    html += '<div class="deposit-row">'
+      + '<input class="dep-amt" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Amount"'
       + ' value="'+escAttr(row.amount)+'" oninput="setDepositField('+i+',\'amount\',this.value)">'
-      + inputEl(row.remarks, 'oninput="setDepositField('+i+',\'remarks\',this.value)"', 'text', 'placeholder="Remarks"')
-      + '<button type="button" class="icon-btn" onclick="removeDeposit('+i+')">&times;</button>'
+      + '<input class="dep-remarks" type="text" placeholder="Remarks"'
+      + ' value="'+escAttr(row.remarks)+'" oninput="setDepositField('+i+',\'remarks\',this.value)">'
+      + '<button type="button" class="dep-remove" onclick="removeDeposit('+i+')" aria-label="Remove deposit">&times;</button>'
       + '</div>';
   });
-  html += '<button type="button" class="btn-add" onclick="addDeposit()">+ Add deposit</button></div>';
+  html += '</div><button type="button" class="deposit-add" onclick="addDeposit()">+ Add deposit</button></div>';
   return html;
 }
 function denomTable(group, title){
@@ -946,6 +964,14 @@ function denomTable(group, title){
     + '</div></div>';
 }
 
+function renderChangeFund(){
+  return card('sec-changefund','Change fund breakdown',
+    'Enter how many bills/coins of each denomination in the change fund \u2014 subtotals and total are calculated for you as you type.', null,
+    '<div class="field-grid">'
+    + denomTable('changeFund','Change fund breakdown')
+    + '</div>', true);
+}
+
 function renderCash(){
   const c = state.cash;
   return card('sec-cash','Cash count &amp; documents',
@@ -955,18 +981,15 @@ function renderCash(){
     + field('Time printed report', inputEl(c.timePrintedReport, 'oninput="set(\'cash.timePrintedReport\', this.value)"', 'time'))
     + '</div>'
     + '<div class="field-grid" style="margin-top:14px;">'
-    + denomTable('changeFund','Change fund breakdown')
     + denomTable('cashCount','Cash count breakdown')
     + '</div>'
     + '<div class="field-grid" style="margin-top:14px;">'
     + field('Total collection', inputEl(c.totalCollection, 'oninput="onCashFieldInput(\'totalCollection\', this.value)"', 'number', 'inputmode="decimal"'))
     + field('Gcash collection', inputEl(c.gcashCollection, 'oninput="onCashFieldInput(\'gcashCollection\', this.value)"', 'number', 'inputmode="decimal"'))
     + field('Less: expenses', inputEl(c.lessExpenses, 'oninput="onCashFieldInput(\'lessExpenses\', this.value)"', 'number', 'inputmode="decimal"'))
+    + depositsList()
     + field('Net collection', '<input class="input locked" id="cashNetDisplay" type="text" value="'+escAttr(c.netCollection)+'" disabled>')
     + field('Cash on hand', '<input class="input locked" id="cashOnHandDisplay" type="text" value="'+escAttr(c.cashOnHand)+'" disabled>')
-    + '</div>'
-    + '<div class="field-grid" style="margin-top:14px;">'
-    + depositsList()
     + '</div>'
     + '<div class="cash-variance ok" id="cashVarianceDisplay" style="display:none;"></div>', true);
 }

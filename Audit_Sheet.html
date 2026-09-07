@@ -211,7 +211,8 @@
     #main{column-count:3;}
   }
   .section-title{display:flex; align-items:center; gap:10px; margin:0 0 4px;}
-  .section-title .st-text{font-family:'Spectral',serif; font-size:16.5px; font-weight:600; color:var(--ink); white-space:nowrap;}
+  .section-title .st-text{font-family:'Spectral',serif; font-size:16.5px; font-weight:600; color:var(--ink);
+    white-space:normal; overflow-wrap:anywhere; word-break:break-word; min-width:0;}
   .section-title::after{content:''; flex:1; height:1px; background:var(--line);}
   .section-count{font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:600; color:var(--muted);
     background:#F1F3FB; border:1px solid var(--line); border-radius:20px; padding:2px 9px; flex-shrink:0;}
@@ -270,6 +271,11 @@
   .cond-seg button.active.good{background:var(--ok-soft); color:var(--ok); border-color:#B7E1CE;}
   .cond-seg button.active.fair{background:var(--rstr-soft); color:var(--rstr); border-color:#E6D6A0;}
   .cond-seg button.active.poor{background:var(--del-soft); color:var(--del); border-color:#F0C3CE;}
+  .cond-seg button.active.complete{background:var(--ok-soft); color:var(--ok); border-color:#B7E1CE;}
+  .cond-seg button.active.missing{background:var(--del-soft); color:var(--del); border-color:#F0C3CE;}
+  .status-row{border:1px solid var(--line); border-radius:var(--radius-sm); padding:11px 12px; margin-bottom:8px; background:#fff;}
+  .status-row .status-head{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:9px;}
+  .status-row .status-head .cond-label{margin-bottom:0;}
 
   /* ---------- repeatable entry rows ---------- */
   .entry-row{display:flex; gap:8px; align-items:center; border:1px solid var(--line); border-radius:var(--radius-sm);
@@ -436,7 +442,6 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
       Hard reload &middot; reset app
     </button>
-    <div class="drawer-reset-hint">Clears the cached version and reloads the latest app from GitHub. Your previous audit reports on this device are kept.</div>
   </div>
 </aside>
 
@@ -475,6 +480,9 @@ const backendConfigured = APPS_SCRIPT_URL && APPS_SCRIPT_URL.indexOf('PASTE_YOUR
    ============================================================ */
 const emptyEntry = () => ({ seriesNo:'', remarks:'' });
 const emptyPairEntry = () => ({ label:'', siSeriesNo:'', siRemarks:'', drSeriesNo:'', drRemarks:'' });
+const emptyDepositEntry = () => ({ amount:'', remarks:'' });
+const emptyStatusEntry = () => ({ status:'', remarks:'' });
+const emptyLabeledStatus = () => ({ label:'', status:'', remarks:'' });
 
 function freshState(){
   return {
@@ -483,7 +491,7 @@ function freshState(){
       cashCount:{ d1000:'', d500:'', d200:'', d100:'', d50:'', d20:'', d10:'', d5:'', d1:'' },
       changeFund:{ d1000:'', d500:'', d200:'', d100:'', d50:'', d20:'', d10:'', d5:'', d1:'' },
       totalCollection:'', gcashCollection:'', lessExpenses:'', netCollection:'',
-      lessDeposits:'', cashOnHand:'' },
+      deposits:[ emptyDepositEntry() ], cashOnHand:'' },
     reportsAttachments:{ depositSlipReconciled:null, dailyPerfReconciled:null,
       attachmentsComplete:null, vouchersSigned:null, last7DaysFiled:null },
     fieldCollection:{ picturesOnTime:null, copiesMonitored:null, whiteCopiesArranged:null },
@@ -501,11 +509,11 @@ function freshState(){
       oil:{condition:'',remarks:''}, promo:{condition:'',remarks:''},
       mcUnits:{condition:'',remarks:''}, serviceUnits:{condition:'',remarks:''},
       repairUnits:{condition:'',remarks:''},
-      tools:[ emptyEntry() ], spareparts:[ emptyEntry() ],
-      platesOrCr:[ emptyEntry() ], assets:[ emptyEntry() ]
+      tools:[ emptyStatusEntry() ], spareparts:[ emptyStatusEntry() ],
+      platesOrCr:[ emptyStatusEntry() ], assets:[ emptyStatusEntry() ]
     },
     confirmation:{
-      officePayors:[ emptyPairEntry() ], ciCollectorCollections:[ emptyPairEntry() ],
+      officePayors:[ emptyPairEntry() ], ciCollectorCollections:[ emptyLabeledStatus() ],
       currentPayor:[ emptyPairEntry() ],
       overdue:{ noIncentive100:null, noIncentiveRemarks:'', randomSample15:null, randomSampleRemarks:'' },
       delinquent:{ always100:null, remarks:'' },
@@ -603,11 +611,21 @@ function onCashFieldInput(field, val){
   state.cash[field] = val;
   refreshCashComputed();
 }
+function depositsTotal(list){
+  return (list||[]).reduce((sum,row)=> sum + (parseFloat(row.amount)||0), 0);
+}
+function setDepositField(idx, field, val){ state.cash.deposits[idx][field] = val; if(field==='amount') refreshCashComputed(); }
+function addDeposit(){ state.cash.deposits.push(emptyDepositEntry()); renderSection('sec-cash'); refreshCashComputed(); }
+function removeDeposit(idx){
+  state.cash.deposits.splice(idx,1);
+  if(state.cash.deposits.length===0) state.cash.deposits.push(emptyDepositEntry());
+  renderSection('sec-cash'); refreshCashComputed();
+}
 function refreshCashComputed(){
   const c = state.cash;
   const n = v => parseFloat(v)||0;
   const total = n(c.totalCollection), gcash = n(c.gcashCollection),
-        exp = n(c.lessExpenses), dep = n(c.lessDeposits);
+        exp = n(c.lessExpenses), dep = depositsTotal(c.deposits);
   const net = total + gcash - exp;
   const onHand = net - dep;
   c.netCollection = net ? net.toFixed(2) : '';
@@ -756,6 +774,68 @@ function repeatableList(path, addLabel){
   return html;
 }
 
+const STATUS_OPTS = ['Complete','Missing','Good','Poor'];
+function setEntryStatus(path, idx, val){
+  const cur = get(path)[idx].status;
+  get(path)[idx].status = cur===val ? '' : val;
+  renderSection(sectionIdForPath(path));
+}
+function setEntryStatusField(path, idx, field, val){ get(path)[idx][field] = val; }
+function addStatusEntry(path){ get(path).push(emptyStatusEntry()); renderSection(sectionIdForPath(path)); }
+function removeStatusEntry(path, idx){
+  get(path).splice(idx,1);
+  if(get(path).length===0) get(path).push(emptyStatusEntry());
+  renderSection(sectionIdForPath(path));
+}
+function statusEntryList(path, addLabel){
+  const arr = get(path);
+  let html = '';
+  arr.forEach((row,i)=>{
+    html += '<div class="status-row">'
+      + '<div class="status-head"><div class="cond-label">'+addLabel+' '+(i+1)+'</div>'
+      + '<button type="button" class="icon-btn" onclick="removeStatusEntry(\''+path+'\','+i+')">&times;</button></div>'
+      + '<div class="cond-seg">' + STATUS_OPTS.map(opt =>
+          '<button type="button" class="'+(row.status===opt?'active '+opt.toLowerCase():'')+'" onclick="setEntryStatus(\''+path+'\','+i+',\''+opt+'\')">'+opt+'</button>'
+        ).join('') + '</div>'
+      + inputEl(row.remarks, 'oninput="setEntryStatusField(\''+path+'\','+i+',\'remarks\',this.value)"', 'text', 'placeholder="Remarks (optional)"')
+      + '</div>';
+  });
+  html += '<button type="button" class="btn-add" onclick="addStatusEntry(\''+path+'\')">+ Add '+addLabel+'</button>';
+  return html;
+}
+
+const STATUS2_OPTS = ['Good','Poor'];
+function setLabeledStatus(path, idx, val){
+  const cur = get(path)[idx].status;
+  get(path)[idx].status = cur===val ? '' : val;
+  renderSection(sectionIdForPath(path));
+}
+function setLabeledStatusField(path, idx, field, val){ get(path)[idx][field] = val; }
+function addLabeledStatus(path){ get(path).push(emptyLabeledStatus()); renderSection(sectionIdForPath(path)); }
+function removeLabeledStatus(path, idx){
+  get(path).splice(idx,1);
+  if(get(path).length===0) get(path).push(emptyLabeledStatus());
+  renderSection(sectionIdForPath(path));
+}
+function labeledStatusList(path, sampleLabel){
+  const arr = get(path);
+  let html = '';
+  arr.forEach((row,i)=>{
+    html += '<div class="pair-card">'
+      + '<div class="pair-card-head">'
+      + inputEl(row.label, 'oninput="setLabeledStatusField(\''+path+'\','+i+',\'label\',this.value)"', 'text', 'placeholder="'+sampleLabel+' name"')
+      + '<button type="button" class="icon-btn" onclick="removeLabeledStatus(\''+path+'\','+i+')">&times;</button>'
+      + '</div>'
+      + '<div class="cond-seg">' + STATUS2_OPTS.map(opt =>
+          '<button type="button" class="'+(row.status===opt?'active '+opt.toLowerCase():'')+'" onclick="setLabeledStatus(\''+path+'\','+i+',\''+opt+'\')">'+opt+'</button>'
+        ).join('') + '</div>'
+      + inputEl(row.remarks, 'oninput="setLabeledStatusField(\''+path+'\','+i+',\'remarks\',this.value)"', 'text', 'placeholder="Remarks (optional)"', false)
+      + '</div>';
+  });
+  html += '<button type="button" class="btn-add" onclick="addLabeledStatus(\''+path+'\')">+ Add '+sampleLabel+' sample</button>';
+  return html;
+}
+
 function pairList(path, sampleLabel){
   const arr = get(path);
   let html = '';
@@ -841,6 +921,20 @@ function denomRows(group){
       + '</div>';
   }).join('');
 }
+function depositsList(){
+  const arr = state.cash.deposits;
+  let html = '<div class="field span2"><label>Less: deposits</label>';
+  arr.forEach((row,i)=>{
+    html += '<div class="entry-row">'
+      + '<input class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Amount"'
+      + ' value="'+escAttr(row.amount)+'" oninput="setDepositField('+i+',\'amount\',this.value)">'
+      + inputEl(row.remarks, 'oninput="setDepositField('+i+',\'remarks\',this.value)"', 'text', 'placeholder="Remarks"')
+      + '<button type="button" class="icon-btn" onclick="removeDeposit('+i+')">&times;</button>'
+      + '</div>';
+  });
+  html += '<button type="button" class="btn-add" onclick="addDeposit()">+ Add deposit</button></div>';
+  return html;
+}
 function denomTable(group, title){
   return '<div class="field span2">'
     + '<label>'+title+'</label>'
@@ -861,16 +955,18 @@ function renderCash(){
     + field('Time printed report', inputEl(c.timePrintedReport, 'oninput="set(\'cash.timePrintedReport\', this.value)"', 'time'))
     + '</div>'
     + '<div class="field-grid" style="margin-top:14px;">'
-    + denomTable('cashCount','Cash count breakdown')
     + denomTable('changeFund','Change fund breakdown')
+    + denomTable('cashCount','Cash count breakdown')
     + '</div>'
     + '<div class="field-grid" style="margin-top:14px;">'
     + field('Total collection', inputEl(c.totalCollection, 'oninput="onCashFieldInput(\'totalCollection\', this.value)"', 'number', 'inputmode="decimal"'))
     + field('Gcash collection', inputEl(c.gcashCollection, 'oninput="onCashFieldInput(\'gcashCollection\', this.value)"', 'number', 'inputmode="decimal"'))
     + field('Less: expenses', inputEl(c.lessExpenses, 'oninput="onCashFieldInput(\'lessExpenses\', this.value)"', 'number', 'inputmode="decimal"'))
-    + field('Less: deposits', inputEl(c.lessDeposits, 'oninput="onCashFieldInput(\'lessDeposits\', this.value)"', 'number', 'inputmode="decimal"'))
     + field('Net collection', '<input class="input locked" id="cashNetDisplay" type="text" value="'+escAttr(c.netCollection)+'" disabled>')
     + field('Cash on hand', '<input class="input locked" id="cashOnHandDisplay" type="text" value="'+escAttr(c.cashOnHand)+'" disabled>')
+    + '</div>'
+    + '<div class="field-grid" style="margin-top:14px;">'
+    + depositsList()
     + '</div>'
     + '<div class="cash-variance ok" id="cashVarianceDisplay" style="display:none;"></div>', true);
 }
@@ -937,16 +1033,16 @@ function renderInventory(){
     + conditionRow('inventory.mcUnits','Motorcycle units (repo &amp; brand new)')
     + conditionRow('inventory.serviceUnits','Service units')
     + conditionRow('inventory.repairUnits','Repair units (if any)')
-    + '<div class="review-sub" style="margin-top:14px;">Tools (owned by company)</div>' + repeatableList('inventory.tools','tool')
-    + '<div class="review-sub" style="margin-top:6px;">Spareparts (3S shop only)</div>' + repeatableList('inventory.spareparts','sparepart')
-    + '<div class="review-sub" style="margin-top:6px;">Plates and OR-CR</div>' + repeatableList('inventory.platesOrCr','entry')
-    + '<div class="review-sub" style="margin-top:6px;">Assets</div>' + repeatableList('inventory.assets','asset'));
+    + '<div class="review-sub" style="margin-top:14px;">Tools (owned by company)</div>' + statusEntryList('inventory.tools','tool')
+    + '<div class="review-sub" style="margin-top:6px;">Spareparts (3S shop only)</div>' + statusEntryList('inventory.spareparts','sparepart')
+    + '<div class="review-sub" style="margin-top:6px;">Plates and OR-CR</div>' + statusEntryList('inventory.platesOrCr','entry')
+    + '<div class="review-sub" style="margin-top:6px;">Assets</div>' + statusEntryList('inventory.assets','asset'));
 }
 
 function renderConfirmation(){
   return card('sec-confirmation','Confirmation of accounts', null, null,
     '<div class="review-sub">Sampling &mdash; office payors</div>' + pairList('confirmation.officePayors','Office payor')
-    + '<div class="review-sub" style="margin-top:6px;">Sampling &mdash; CI/collector collections</div>' + pairList('confirmation.ciCollectorCollections','CI/collector')
+    + '<div class="review-sub" style="margin-top:6px;">Sampling &mdash; CI/collector collections</div>' + labeledStatusList('confirmation.ciCollectorCollections','CI/collector')
     + '<div class="review-sub" style="margin-top:6px;">Sampling &mdash; current payor</div>' + pairList('confirmation.currentPayor','Current payor')
     + '<div class="review-sub" style="margin-top:14px;">Overdue accounts</div>'
     + ynRow('confirmation.overdue.noIncentive100','100% confirmed for CI/Collectors not receiving incentive (past 3 months)?')
@@ -1244,8 +1340,7 @@ function fmtDate(iso){
 function renderHistorySection(){
   const list = loadHistory();
   if(list.length === 0){
-    return '<div class="drawer-section-title">Previous audits</div>'
-      + '<div class="empty-hint">No submitted audits saved on this device yet.</div>';
+    return '<div class="drawer-section-title">Previous audits</div>';
   }
   return '<div class="drawer-section-title">Previous audits</div>'
     + '<div class="drawer-hint">Tap an audit to view its summary report.</div>'
@@ -1269,8 +1364,7 @@ function renderBranchSection(){
       + '<div class="empty-hint">Backend not configured yet, so the branch list isn\'t available.</div>';
   }
   if(knownBranches.length === 0){
-    return '<div class="drawer-section-title">Start new audit for branch</div>'
-      + '<div class="empty-hint">No branches found yet. You can still type a new branch name in the Basics section.</div>';
+    return '<div class="drawer-section-title">Start new audit for branch</div>';
   }
   return '<div class="drawer-section-title">Start new audit for branch</div>'
     + '<div class="drawer-hint">Tap a branch to start this audit for it.</div>'

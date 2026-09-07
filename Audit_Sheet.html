@@ -57,15 +57,47 @@
     background:
       radial-gradient(900px 200px at 10% -60%, rgba(90,110,220,.30), transparent 60%),
       linear-gradient(120deg, var(--panel-2) 0%, var(--panel) 55%, var(--panel-3) 100%);
-    color:#EDEFF9; padding:calc(14px + var(--safe-t)) 18px 14px;
-    display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex-wrap:wrap;
+    color:#EDEFF9; padding:calc(10px + var(--safe-t)) 10px 10px;
+    display:flex; align-items:center; justify-content:flex-start; gap:8px;
     box-shadow:0 2px 20px rgba(4,8,32,.35); position:sticky; top:0; z-index:30;
     border-bottom:1px solid rgba(255,255,255,.08);
   }
-  .brand .mark{font-family:'Spectral',serif; font-weight:700; font-size:20px; letter-spacing:.3px; color:#fff; line-height:1.2;}
-  .brand .sub{font-size:12.5px; color:#B7C0E8; margin-top:3px;}
-  .hdr-chip{font-size:10.5px; font-weight:700; letter-spacing:.3px; padding:5px 11px; border-radius:20px;
-    background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.16); white-space:nowrap; color:#fff; align-self:flex-start;}
+  .hdr-icon-btn{flex-shrink:0; width:36px; height:36px; border-radius:10px; border:1px solid rgba(255,255,255,.16);
+    background:rgba(255,255,255,.08); color:#fff; display:flex; align-items:center; justify-content:center;
+    cursor:pointer; padding:0; -webkit-tap-highlight-color:transparent;}
+  .hdr-icon-btn:active{background:rgba(255,255,255,.18);}
+  .hdr-icon-btn svg{width:18px; height:18px; display:block;}
+  .brand{flex:1; min-width:0; overflow:hidden;}
+  .brand .mark{font-family:'Spectral',serif; font-weight:700; font-size:18px; letter-spacing:.3px; color:#fff; line-height:1.2;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .brand .sub{font-size:12px; color:#B7C0E8; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .hdr-right{display:flex; align-items:center; gap:8px; flex-shrink:0;}
+  .hdr-chip{font-size:10.5px; font-weight:700; letter-spacing:.3px; padding:5px 10px; border-radius:20px;
+    background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.16); white-space:nowrap; color:#fff;}
+  @media (max-width:360px){ .hdr-chip{display:none;} }
+
+  /* ---------- branch drawer (hamburger menu) ---------- */
+  .drawer-overlay{position:fixed; inset:0; background:rgba(10,14,40,.45); z-index:39;
+    opacity:0; pointer-events:none; transition:opacity .2s;}
+  .drawer-overlay.open{opacity:1; pointer-events:auto;}
+  .drawer{position:fixed; top:0; right:0; bottom:0; width:min(84vw,340px); background:#fff; z-index:40;
+    box-shadow:-8px 0 30px rgba(10,14,40,.25); transform:translateX(100%); transition:transform .22s ease;
+    display:flex; flex-direction:column; padding-top:var(--safe-t);}
+  .drawer.open{transform:translateX(0);}
+  .drawer-head{display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:16px 16px 12px; border-bottom:1px solid var(--line);}
+  .drawer-title{font-family:'Spectral',serif; font-weight:600; font-size:16px; color:var(--ink);}
+  .drawer-close{border:none; background:#F1F3FB; color:var(--muted); width:30px; height:30px; border-radius:50%;
+    font-size:16px; line-height:1; cursor:pointer;}
+  .drawer-body{flex:1; overflow-y:auto; padding:10px 10px calc(16px + var(--safe-b));}
+  .drawer-hint{font-size:11.5px; color:var(--muted); padding:2px 8px 10px;}
+  .branch-item{display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%;
+    text-align:left; border:1px solid var(--line); background:#fff; border-radius:10px;
+    padding:11px 12px; margin-bottom:8px; font-family:inherit; font-size:13px; color:var(--text);
+    cursor:pointer;}
+  .branch-item:active{background:var(--accent-soft); border-color:#C9D1EE;}
+  .branch-item.current{background:var(--accent-soft); border-color:#C9D1EE; color:var(--accent-dark); font-weight:700;}
+  .branch-item .chev{color:var(--muted-2); flex-shrink:0;}
 
   /* ---------- jump nav ---------- */
   .jumpnav{display:flex; gap:6px; overflow-x:auto; padding:10px 14px; background:#fff;
@@ -250,11 +282,19 @@
 <body>
 
 <header class="topband">
+  <button class="hdr-icon-btn" id="backBtn" aria-label="Back to dashboard" onclick="goToDashboard()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+  </button>
   <div class="brand">
     <div class="mark">Audit Sheet</div>
     <div class="sub" id="headSub">New audit &middot; not yet submitted</div>
   </div>
-  <div class="hdr-chip" id="draftBadge">Draft saved</div>
+  <div class="hdr-right">
+    <div class="hdr-chip" id="draftBadge">Draft saved</div>
+    <button class="hdr-icon-btn" id="menuBtn" aria-label="Previous branches" onclick="openBranchMenu()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+    </button>
+  </div>
 </header>
 
 <nav class="jumpnav" id="jumpnav"></nav>
@@ -265,6 +305,17 @@
 </main>
 
 <datalist id="branchList"></datalist>
+
+<div class="drawer-overlay" id="drawerOverlay" onclick="closeBranchMenu()"></div>
+<aside class="drawer" id="branchDrawer" aria-hidden="true">
+  <div class="drawer-head">
+    <div class="drawer-title">Previous branches</div>
+    <button class="drawer-close" aria-label="Close" onclick="closeBranchMenu()">&times;</button>
+  </div>
+  <div class="drawer-body" id="branchDrawerBody">
+    <div class="empty-hint">Loading&hellip;</div>
+  </div>
+</aside>
 
 <footer class="nav-bar">
   <div class="nav-bar-inner">
@@ -777,16 +828,67 @@ async function doSubmit(){
 }
 
 /* branch list (optional) — GET request, also a "simple" request so no preflight */
+let knownBranches = [];
+
 async function loadBranches(){
-  if(!backendConfigured) return;
+  if(!backendConfigured){ renderBranchDrawer(); return; }
   try{
     const res = await fetch(APPS_SCRIPT_URL + '?action=branches');
     const result = await res.json();
     const dl = document.getElementById('branchList');
-    if(dl && result && Array.isArray(result.branches)){
-      dl.innerHTML = result.branches.map(b=>'<option value="'+escAttr(b)+'"></option>').join('');
+    if(result && Array.isArray(result.branches)){
+      knownBranches = result.branches;
+      if(dl) dl.innerHTML = knownBranches.map(b=>'<option value="'+escAttr(b)+'"></option>').join('');
     }
   }catch(e){ /* non-fatal — free text still works */ }
+  renderBranchDrawer();
+}
+
+/* ============================================================
+   HEADER — back to dashboard + hamburger branch menu
+   ============================================================ */
+function goToDashboard(){
+  window.location.href = 'index.html';
+}
+
+function renderBranchDrawer(){
+  const body = document.getElementById('branchDrawerBody');
+  if(!body) return;
+  if(!backendConfigured){
+    body.innerHTML = '<div class="empty-hint">Backend not configured yet, so the branch list isn\'t available.</div>';
+    return;
+  }
+  if(knownBranches.length === 0){
+    body.innerHTML = '<div class="empty-hint">No branches found yet. You can still type a new branch name in the Basics section.</div>';
+    return;
+  }
+  body.innerHTML = '<div class="drawer-hint">Tap a branch to start this audit for it.</div>'
+    + knownBranches.map(b => {
+        const isCurrent = state.branch === b;
+        return '<button class="branch-item'+(isCurrent?' current':'')+'" onclick="selectBranch(\''+escAttr(b).replace(/'/g,"\\'")+'\')">'
+          + '<span>'+escHtml(b)+'</span>'
+          + (isCurrent ? '<span class="chev">&#10003;</span>' : '<span class="chev">&rsaquo;</span>')
+          + '</button>';
+      }).join('');
+}
+
+function selectBranch(name){
+  set('branch', name);
+  closeBranchMenu();
+  render();
+}
+
+function openBranchMenu(){
+  renderBranchDrawer();
+  document.getElementById('branchDrawer').classList.add('open');
+  document.getElementById('drawerOverlay').classList.add('open');
+  document.getElementById('branchDrawer').setAttribute('aria-hidden','false');
+}
+
+function closeBranchMenu(){
+  document.getElementById('branchDrawer').classList.remove('open');
+  document.getElementById('drawerOverlay').classList.remove('open');
+  document.getElementById('branchDrawer').setAttribute('aria-hidden','true');
 }
 
 loadInitial();

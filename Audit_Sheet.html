@@ -495,10 +495,8 @@ const backendConfigured = APPS_SCRIPT_URL && APPS_SCRIPT_URL.indexOf('PASTE_YOUR
    STATE
    ============================================================ */
 const emptyEntry = () => ({ seriesNo:'', remarks:'' });
-const emptyPairEntry = () => ({ label:'', siSeriesNo:'', siRemarks:'', drSeriesNo:'', drRemarks:'' });
 const emptyDepositEntry = () => ({ amount:'', remarks:'' });
 const emptyStatusEntry = () => ({ status:'', remarks:'' });
-const emptyLabeledStatus = () => ({ label:'', status:'', remarks:'' });
 
 function freshState(){
   return {
@@ -529,8 +527,7 @@ function freshState(){
       platesOrCr:[ emptyStatusEntry() ], assets:[ emptyStatusEntry() ]
     },
     confirmation:{
-      officePayors:[ emptyPairEntry() ], ciCollectorCollections:[ emptyLabeledStatus() ],
-      currentPayor:[ emptyPairEntry() ],
+      sampling:{ status:'', remarks:'' },
       overdue:{ noIncentive100:null, noIncentiveRemarks:'', randomSample15:null, randomSampleRemarks:'' },
       delinquent:{ always100:null, remarks:'' },
       risk:{ repoRateOver5:null, repoRateRemarks:'', inventoryAging90:null, inventoryAgingRemarks:'' }
@@ -593,9 +590,6 @@ function setCond(path, val){
 function setRepField(path, idx, field, val){ get(path)[idx][field] = val; }
 function addRep(path){ get(path).push(emptyEntry()); renderSection(sectionIdForPath(path)); }
 function removeRep(path, idx){ get(path).splice(idx,1); if(get(path).length===0) get(path).push(emptyEntry()); renderSection(sectionIdForPath(path)); }
-function setPairField(path, idx, field, val){ get(path)[idx][field] = val; }
-function addPair(path){ get(path).push(emptyPairEntry()); renderSection(sectionIdForPath(path)); }
-function removePair(path, idx){ get(path).splice(idx,1); if(get(path).length===0) get(path).push(emptyPairEntry()); renderSection(sectionIdForPath(path)); }
 
 /* ---------- cash: denomination breakdown + live totals ----------
    These run on every keystroke (oninput). They must NEVER call the
@@ -820,56 +814,21 @@ function statusEntryList(path, addLabel){
   return html;
 }
 
-const STATUS2_OPTS = ['Good','Poor'];
-function setLabeledStatus(path, idx, val){
-  const cur = get(path)[idx].status;
-  get(path)[idx].status = cur===val ? '' : val;
-  renderSection(sectionIdForPath(path));
+/** Single overall status + remarks (no repeatable entries) — used for
+ *  the Confirmation of Accounts sampling summary. */
+function setSamplingStatus(val){
+  const cur = state.confirmation.sampling.status;
+  state.confirmation.sampling.status = cur===val ? '' : val;
+  renderSection('sec-confirmation');
 }
-function setLabeledStatusField(path, idx, field, val){ get(path)[idx][field] = val; }
-function addLabeledStatus(path){ get(path).push(emptyLabeledStatus()); renderSection(sectionIdForPath(path)); }
-function removeLabeledStatus(path, idx){
-  get(path).splice(idx,1);
-  if(get(path).length===0) get(path).push(emptyLabeledStatus());
-  renderSection(sectionIdForPath(path));
-}
-function labeledStatusList(path, sampleLabel){
-  const arr = get(path);
-  let html = '';
-  arr.forEach((row,i)=>{
-    html += '<div class="pair-card">'
-      + '<div class="pair-card-head">'
-      + inputEl(row.label, 'oninput="setLabeledStatusField(\''+path+'\','+i+',\'label\',this.value)"', 'text', 'placeholder="'+sampleLabel+' name"')
-      + '<button type="button" class="icon-btn" onclick="removeLabeledStatus(\''+path+'\','+i+')">&times;</button>'
-      + '</div>'
-      + '<div class="cond-seg">' + STATUS2_OPTS.map(opt =>
-          '<button type="button" class="'+(row.status===opt?'active '+opt.toLowerCase():'')+'" onclick="setLabeledStatus(\''+path+'\','+i+',\''+opt+'\')">'+opt+'</button>'
-        ).join('') + '</div>'
-      + inputEl(row.remarks, 'oninput="setLabeledStatusField(\''+path+'\','+i+',\'remarks\',this.value)"', 'text', 'placeholder="Remarks (optional)"', false)
-      + '</div>';
-  });
-  html += '<button type="button" class="btn-add" onclick="addLabeledStatus(\''+path+'\')">+ Add '+sampleLabel+' sample</button>';
-  return html;
-}
-
-function pairList(path, sampleLabel){
-  const arr = get(path);
-  let html = '';
-  arr.forEach((row,i)=>{
-    html += '<div class="pair-card">'
-      + '<div class="pair-card-head">'
-      + inputEl(row.label, 'oninput="setPairField(\''+path+'\','+i+',\'label\',this.value)"', 'text', 'placeholder="'+sampleLabel+' name"')
-      + '<button type="button" class="icon-btn" onclick="removePair(\''+path+'\','+i+')">&times;</button>'
-      + '</div>'
-      + '<div class="field-grid">'
-      + field('SI series no', inputEl(row.siSeriesNo, 'oninput="setPairField(\''+path+'\','+i+',\'siSeriesNo\',this.value)"'))
-      + field('DR series no', inputEl(row.drSeriesNo, 'oninput="setPairField(\''+path+'\','+i+',\'drSeriesNo\',this.value)"'))
-      + field('SI remarks', inputEl(row.siRemarks, 'oninput="setPairField(\''+path+'\','+i+',\'siRemarks\',this.value)"'))
-      + field('DR remarks', inputEl(row.drRemarks, 'oninput="setPairField(\''+path+'\','+i+',\'drRemarks\',this.value)"'))
-      + '</div></div>';
-  });
-  html += '<button type="button" class="btn-add" onclick="addPair(\''+path+'\')">+ Add '+sampleLabel+' sample</button>';
-  return html;
+function singleStatusRow(){
+  const s = state.confirmation.sampling;
+  return '<div class="status-row">'
+    + '<div class="cond-seg">' + STATUS_OPTS.map(opt =>
+        '<button type="button" class="'+(s.status===opt?'active '+opt.toLowerCase():'')+'" onclick="setSamplingStatus(\''+opt+'\')">'+opt+'</button>'
+      ).join('') + '</div>'
+    + inputEl(s.remarks, 'oninput="set(\'confirmation.sampling.remarks\', this.value)"', 'text', 'placeholder="Remarks (optional)"')
+    + '</div>';
 }
 
 function addFinding(){ state.findings.push({text:'', severity:'Medium'}); renderSection('sec-findings'); refreshSummary(); }
@@ -918,7 +877,7 @@ const sections = [
 ];
 
 function renderBasics(){
-  return card('sec-basics','Branch &amp; auditor', 'Who audited which branch, and when.', null,
+  return card('sec-basics','Branch &amp; auditor', null, null,
     '<div class="field-grid">'
     + field('Branch', inputEl(state.branch, 'list="branchList" oninput="set(\'branch\', this.value)"', 'text', 'placeholder="e.g. Branch 12 - Cabanatuan"'), true)
     + field('Auditor', inputEl(state.auditor, 'oninput="set(\'auditor\', this.value)"', 'text', 'placeholder="Your name"'))
@@ -965,8 +924,7 @@ function denomTable(group, title){
 }
 
 function renderChangeFund(){
-  return card('sec-changefund','Change fund breakdown',
-    'Enter how many bills/coins of each denomination in the change fund \u2014 subtotals and total are calculated for you as you type.', null,
+  return card('sec-changefund','Change fund breakdown', null, null,
     '<div class="field-grid">'
     + denomTable('changeFund','Change fund breakdown')
     + '</div>', true);
@@ -974,8 +932,7 @@ function renderChangeFund(){
 
 function renderCash(){
   const c = state.cash;
-  return card('sec-cash','Cash count &amp; documents',
-    'Enter how many bills/coins of each denomination \u2014 subtotals and totals are calculated for you as you type.', null,
+  return card('sec-cash','Cash count &amp; documents', null, null,
     '<div class="field-grid">'
     + field('Date of daily report', inputEl(c.dateOfDailyReport, 'oninput="set(\'cash.dateOfDailyReport\', this.value)"', 'date'))
     + field('Time printed report', inputEl(c.timePrintedReport, 'oninput="set(\'cash.timePrintedReport\', this.value)"', 'time'))
@@ -1007,7 +964,7 @@ function renderReports(){
 
 function renderField(){
   const paths = ['fieldCollection.picturesOnTime','fieldCollection.copiesMonitored','fieldCollection.whiteCopiesArranged'];
-  return card('sec-field','Field collection &amp; white copies', 'Field pictures and online-payment white copies.', sectionYNStats(paths),
+  return card('sec-field','Field collection &amp; white copies', null, sectionYNStats(paths),
     ynRow('fieldCollection.picturesOnTime','Collectors submitting field collection pictures on time?')
     + ynRow('fieldCollection.copiesMonitored','Field picture copies monitored by the cashier properly?')
     + ynRow('fieldCollection.whiteCopiesArranged','White copies of online-payment receipts properly arranged & monitored?'));
@@ -1064,9 +1021,7 @@ function renderInventory(){
 
 function renderConfirmation(){
   return card('sec-confirmation','Confirmation of accounts', null, null,
-    '<div class="review-sub">Sampling &mdash; office payors</div>' + pairList('confirmation.officePayors','Office payor')
-    + '<div class="review-sub" style="margin-top:6px;">Sampling &mdash; CI/collector collections</div>' + labeledStatusList('confirmation.ciCollectorCollections','CI/collector')
-    + '<div class="review-sub" style="margin-top:6px;">Sampling &mdash; current payor</div>' + pairList('confirmation.currentPayor','Current payor')
+    '<div class="review-sub">Sampling</div>' + singleStatusRow()
     + '<div class="review-sub" style="margin-top:14px;">Overdue accounts</div>'
     + ynRow('confirmation.overdue.noIncentive100','100% confirmed for CI/Collectors not receiving incentive (past 3 months)?')
     + remarksInline('confirmation.overdue.noIncentiveRemarks')
@@ -1083,7 +1038,7 @@ function renderConfirmation(){
 }
 
 function renderFindings(){
-  return card('sec-findings','Audit findings / remarks', 'Log anything that needs follow-up.', String(state.findings.length),
+  return card('sec-findings','Audit findings / remarks', null, String(state.findings.length),
     findingsList(), true);
 }
 

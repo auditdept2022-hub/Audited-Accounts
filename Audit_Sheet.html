@@ -287,6 +287,24 @@
   .pair-card-head .input{flex:1; background:#fff;}
   .pair-sub{font-size:10.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin:2px 0 10px;}
 
+  /* ---------- cash denomination breakdown ---------- */
+  .denom-table{border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; background:#fff;}
+  .denom-head{display:grid; grid-template-columns:1fr 78px 92px; gap:8px; padding:7px 10px; background:#F1F3FB;
+    font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.3px;}
+  .denom-row{display:grid; grid-template-columns:1fr 78px 92px; gap:8px; align-items:center; padding:6px 10px;
+    border-top:1px solid var(--line);}
+  .denom-row .denom-label{font-family:'JetBrains Mono',monospace; font-weight:700; color:var(--text); font-size:12.5px;}
+  .denom-row .input{padding:6px 7px; font-size:13px; text-align:center;}
+  .denom-sub{font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--muted); text-align:right; padding-right:2px;}
+  .denom-total{display:grid; grid-template-columns:1fr 78px 92px; gap:8px; align-items:center; padding:8px 10px;
+    border-top:1.5px solid var(--accent); background:var(--accent-soft);}
+  .denom-total .denom-label{font-size:12px; font-weight:700; color:var(--accent-dark);}
+  .denom-total .denom-sub{font-size:13px; font-weight:800; color:var(--accent-dark);}
+  .cash-variance{display:flex; justify-content:space-between; align-items:center; gap:8px;
+    padding:9px 12px; border-radius:var(--radius-sm); font-size:12px; font-weight:700; margin-top:12px;}
+  .cash-variance.ok{background:var(--ok-soft); color:var(--ok);}
+  .cash-variance.warn{background:var(--del-soft); color:var(--del);}
+
   /* ---------- findings ---------- */
   .finding-card{border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:10px; background:#fff;}
   .finding-foot{display:flex; gap:8px; margin-top:8px;}
@@ -461,7 +479,9 @@ const emptyPairEntry = () => ({ label:'', siSeriesNo:'', siRemarks:'', drSeriesN
 function freshState(){
   return {
     branch:'', auditor:'', auditDate: new Date().toISOString().slice(0,10),
-    cash:{ dateOfDailyReport:'', timePrintedReport:'', breakdown:'',
+    cash:{ dateOfDailyReport:'', timePrintedReport:'',
+      cashCount:{ d1000:'', d500:'', d200:'', d100:'', d50:'', d20:'', d10:'', d5:'', d1:'' },
+      changeFund:{ d1000:'', d500:'', d200:'', d100:'', d50:'', d20:'', d10:'', d5:'', d1:'' },
       totalCollection:'', gcashCollection:'', lessExpenses:'', netCollection:'',
       lessDeposits:'', cashOnHand:'' },
     reportsAttachments:{ depositSlipReconciled:null, dailyPerfReconciled:null,
@@ -536,29 +556,77 @@ function set(path, value){
 function escAttr(s){ return (s==null?'':String(s)).replace(/"/g,'&quot;'); }
 function escHtml(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
 
-function setYN(path, val){ const cur=get(path); set(path, cur===val?null:val); render(); }
+function setYN(path, val){
+  const cur=get(path); set(path, cur===val?null:val);
+  renderSection(sectionIdForPath(path));
+  refreshSummary();
+}
 function setCond(path, val){
   const cur = get(path+'.condition');
   set(path+'.condition', cur===val ? '' : val);
-  render();
+  renderSection(sectionIdForPath(path));
 }
 function setRepField(path, idx, field, val){ get(path)[idx][field] = val; }
-function addRep(path){ get(path).push(emptyEntry()); render(); }
-function removeRep(path, idx){ get(path).splice(idx,1); if(get(path).length===0) get(path).push(emptyEntry()); render(); }
+function addRep(path){ get(path).push(emptyEntry()); renderSection(sectionIdForPath(path)); }
+function removeRep(path, idx){ get(path).splice(idx,1); if(get(path).length===0) get(path).push(emptyEntry()); renderSection(sectionIdForPath(path)); }
 function setPairField(path, idx, field, val){ get(path)[idx][field] = val; }
-function addPair(path){ get(path).push(emptyPairEntry()); render(); }
-function removePair(path, idx){ get(path).splice(idx,1); if(get(path).length===0) get(path).push(emptyPairEntry()); render(); }
+function addPair(path){ get(path).push(emptyPairEntry()); renderSection(sectionIdForPath(path)); }
+function removePair(path, idx){ get(path).splice(idx,1); if(get(path).length===0) get(path).push(emptyPairEntry()); renderSection(sectionIdForPath(path)); }
 
-/* auto-calc cash figures */
-function setCash(field, val){ state.cash[field] = val; recalcCash(); render(); }
-function recalcCash(){
-  const n = (v)=> parseFloat(v)||0;
-  const total = n(state.cash.totalCollection), gcash = n(state.cash.gcashCollection),
-        exp = n(state.cash.lessExpenses), dep = n(state.cash.lessDeposits);
+/* ---------- cash: denomination breakdown + live totals ----------
+   These run on every keystroke (oninput). They must NEVER call the
+   full render() — replacing the whole form's HTML while a number
+   field is focused is exactly what was kicking the on-screen
+   keyboard closed after every digit. Instead they patch only the
+   handful of read-only totals that actually changed, straight
+   through the DOM, so the field you're typing in is never touched. */
+const CASH_DENOMS = [1000,500,200,100,50,20,10,5,1];
+function fmtMoney(n){
+  n = Number(n)||0;
+  return n.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function denomGroupTotal(group){
+  let total = 0;
+  CASH_DENOMS.forEach(d => { total += (parseFloat(group['d'+d])||0) * d; });
+  return total;
+}
+function onDenomInput(group, denom, el){
+  state.cash[group]['d'+denom] = el.value;
+  const qty = parseFloat(el.value)||0;
+  const sub = document.getElementById('denom-'+group+'-'+denom+'-sub');
+  if(sub) sub.textContent = fmtMoney(qty*denom);
+  const totalEl = document.getElementById('denom-'+group+'-total');
+  if(totalEl) totalEl.textContent = fmtMoney(denomGroupTotal(state.cash[group]));
+  refreshCashComputed();
+}
+function onCashFieldInput(field, val){
+  state.cash[field] = val;
+  refreshCashComputed();
+}
+function refreshCashComputed(){
+  const c = state.cash;
+  const n = v => parseFloat(v)||0;
+  const total = n(c.totalCollection), gcash = n(c.gcashCollection),
+        exp = n(c.lessExpenses), dep = n(c.lessDeposits);
   const net = total + gcash - exp;
   const onHand = net - dep;
-  state.cash.netCollection = net ? net.toFixed(2) : '';
-  state.cash.cashOnHand = onHand ? onHand.toFixed(2) : '';
+  c.netCollection = net ? net.toFixed(2) : '';
+  c.cashOnHand = onHand ? onHand.toFixed(2) : '';
+
+  const netEl = document.getElementById('cashNetDisplay');
+  if(netEl) netEl.value = c.netCollection;
+  const onHandEl = document.getElementById('cashOnHandDisplay');
+  if(onHandEl) onHandEl.value = c.cashOnHand;
+
+  const cashCountTotal = denomGroupTotal(c.cashCount);
+  const variance = cashCountTotal - onHand;
+  const varEl = document.getElementById('cashVarianceDisplay');
+  if(varEl){
+    const show = cashCountTotal > 0 || onHand !== 0;
+    varEl.style.display = show ? 'flex' : 'none';
+    varEl.className = 'cash-variance ' + (Math.abs(variance) < 0.01 ? 'ok' : 'warn');
+    varEl.innerHTML = '<span>Variance (cash count \u2212 cash on hand)</span><span>\u20b1'+fmtMoney(variance)+'</span>';
+  }
 }
 
 /* ============================================================
@@ -708,9 +776,12 @@ function pairList(path, sampleLabel){
   return html;
 }
 
-function addFinding(){ state.findings.push({text:'', severity:'Medium'}); render(); }
-function removeFinding(i){ state.findings.splice(i,1); render(); }
-function setFinding(i, field, val){ state.findings[i][field]=val; if(field!=='text') render(); }
+function addFinding(){ state.findings.push({text:'', severity:'Medium'}); renderSection('sec-findings'); refreshSummary(); }
+function removeFinding(i){ state.findings.splice(i,1); renderSection('sec-findings'); refreshSummary(); }
+function setFinding(i, field, val){
+  state.findings[i][field]=val;
+  if(field!=='text'){ renderSection('sec-findings'); refreshSummary(); }
+}
 
 function findingsList(){
   let html = '';
@@ -758,20 +829,50 @@ function renderBasics(){
     + '</div>', true);
 }
 
+function denomRows(group){
+  return CASH_DENOMS.map(d => {
+    const val = state.cash[group]['d'+d];
+    const qty = parseFloat(val)||0;
+    return '<div class="denom-row">'
+      + '<div class="denom-label">\u20b1'+d.toLocaleString()+'</div>'
+      + '<input class="input" type="number" min="0" step="1" inputmode="numeric" placeholder="0"'
+      + ' value="'+escAttr(val)+'" oninput="onDenomInput(\''+group+'\','+d+',this)">'
+      + '<div class="denom-sub" id="denom-'+group+'-'+d+'-sub">'+fmtMoney(qty*d)+'</div>'
+      + '</div>';
+  }).join('');
+}
+function denomTable(group, title){
+  return '<div class="field span2">'
+    + '<label>'+title+'</label>'
+    + '<div class="denom-table">'
+    + '<div class="denom-head"><span>Denom.</span><span>Qty</span><span>Subtotal</span></div>'
+    + denomRows(group)
+    + '<div class="denom-total"><span class="denom-label">Total</span><span></span>'
+    + '<span class="denom-sub" id="denom-'+group+'-total">'+fmtMoney(denomGroupTotal(state.cash[group]))+'</span></div>'
+    + '</div></div>';
+}
+
 function renderCash(){
   const c = state.cash;
-  return card('sec-cash','Cash count &amp; documents', null, null,
+  return card('sec-cash','Cash count &amp; documents',
+    'Enter how many bills/coins of each denomination \u2014 subtotals and totals are calculated for you as you type.', null,
     '<div class="field-grid">'
     + field('Date of daily report', inputEl(c.dateOfDailyReport, 'oninput="set(\'cash.dateOfDailyReport\', this.value)"', 'date'))
     + field('Time printed report', inputEl(c.timePrintedReport, 'oninput="set(\'cash.timePrintedReport\', this.value)"', 'time'))
-    + field('Cash / change fund breakdown', textareaEl(c.breakdown, 'oninput="set(\'cash.breakdown\', this.value)"', 'Denomination breakdown...'), true)
-    + field('Total collection', inputEl(c.totalCollection, 'oninput="setCash(\'totalCollection\', this.value)"', 'number', 'inputmode="decimal"'))
-    + field('Gcash collection', inputEl(c.gcashCollection, 'oninput="setCash(\'gcashCollection\', this.value)"', 'number', 'inputmode="decimal"'))
-    + field('Less: expenses', inputEl(c.lessExpenses, 'oninput="setCash(\'lessExpenses\', this.value)"', 'number', 'inputmode="decimal"'))
-    + field('Less: deposits', inputEl(c.lessDeposits, 'oninput="setCash(\'lessDeposits\', this.value)"', 'number', 'inputmode="decimal"'))
-    + field('Net collection', inputEl(c.netCollection, 'disabled', 'text', '', true))
-    + field('Cash on hand', inputEl(c.cashOnHand, 'disabled', 'text', '', true))
-    + '</div>', true);
+    + '</div>'
+    + '<div class="field-grid" style="margin-top:14px;">'
+    + denomTable('cashCount','Cash count breakdown')
+    + denomTable('changeFund','Change fund breakdown')
+    + '</div>'
+    + '<div class="field-grid" style="margin-top:14px;">'
+    + field('Total collection', inputEl(c.totalCollection, 'oninput="onCashFieldInput(\'totalCollection\', this.value)"', 'number', 'inputmode="decimal"'))
+    + field('Gcash collection', inputEl(c.gcashCollection, 'oninput="onCashFieldInput(\'gcashCollection\', this.value)"', 'number', 'inputmode="decimal"'))
+    + field('Less: expenses', inputEl(c.lessExpenses, 'oninput="onCashFieldInput(\'lessExpenses\', this.value)"', 'number', 'inputmode="decimal"'))
+    + field('Less: deposits', inputEl(c.lessDeposits, 'oninput="onCashFieldInput(\'lessDeposits\', this.value)"', 'number', 'inputmode="decimal"'))
+    + field('Net collection', '<input class="input locked" id="cashNetDisplay" type="text" value="'+escAttr(c.netCollection)+'" disabled>')
+    + field('Cash on hand', '<input class="input locked" id="cashOnHandDisplay" type="text" value="'+escAttr(c.cashOnHand)+'" disabled>')
+    + '</div>'
+    + '<div class="cash-variance ok" id="cashVarianceDisplay" style="display:none;"></div>', true);
 }
 
 function renderReports(){
@@ -891,6 +992,43 @@ function renderReview(){
     + (!state.branch ? '<div class="banner" style="margin-top:10px;">Branch is required before you can submit.</div>' : '')
     + (!backendConfigured ? '<div class="banner" style="margin-top:10px;">Backend not configured yet: set APPS_SCRIPT_URL near the top of the script to your deployed Apps Script Web app URL so Submit can save to your Sheet.</div>' : '')
     + '</div></section>';
+}
+
+/* ============================================================
+   LIGHTWEIGHT REFRESH
+   ------------------------------------------------------------
+   Yes/No taps, condition taps, and add/remove-row buttons used to
+   call the full render(), which rebuilds EVERY card in the form
+   (10 sections' worth of HTML) just to reflect one toggle. That's
+   what made the dashboard feel slow. These only rebuild the one
+   card that actually changed.
+   ============================================================ */
+function sectionIdForPath(path){
+  if(path.indexOf('reportsAttachments.')===0) return 'sec-reports';
+  if(path.indexOf('fieldCollection.')===0) return 'sec-field';
+  if(path.indexOf('notebooks.')===0) return 'sec-notebooks';
+  if(path.indexOf('officialReceipts.')===0) return 'sec-or';
+  if(path.indexOf('confirmation.')===0) return 'sec-confirmation';
+  if(path.indexOf('image.')===0) return 'sec-image';
+  if(path.indexOf('inventory.')===0) return 'sec-inventory';
+  if(path.indexOf('cash.')===0) return 'sec-cash';
+  return null;
+}
+function renderSection(sectionId){
+  if(!sectionId) return;
+  const s = sections.find(x => x.id === sectionId);
+  const el = document.getElementById(sectionId);
+  if(s && el) el.outerHTML = s.render();
+}
+function refreshSummary(){
+  const reviewWrap = document.getElementById('reviewWrap');
+  if(reviewWrap) reviewWrap.innerHTML = renderReview();
+  const sc = computeScore();
+  const footerStatus = document.getElementById('footerStatus');
+  if(footerStatus){
+    footerStatus.innerHTML = (state.branch ? escHtml(state.branch)+' &middot; ' : '')
+      + '<strong>'+sc.pct+'%</strong> checklist compliance so far ('+sc.yes+' yes, '+sc.no+' no)';
+  }
 }
 
 /* ============================================================

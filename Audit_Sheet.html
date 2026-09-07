@@ -47,7 +47,7 @@
   *{box-sizing:border-box;}
   html{-webkit-text-size-adjust:100%; background:var(--panel-2); overscroll-behavior-y:none; height:100%;}
   body{margin:0;background:var(--paper);color:var(--text);font-size:14px;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;
-    padding-bottom:calc(84px + var(--safe-b)); overscroll-behavior-y:none; min-height:100%;}
+    padding-bottom:calc(var(--footer-h, 84px) + 10px + var(--safe-b)); overscroll-behavior-y:none; min-height:100%;}
   *{scrollbar-width:thin;scrollbar-color:#C7CEEE var(--line);}
   ::-webkit-scrollbar{height:8px;width:8px;}
   ::-webkit-scrollbar-thumb{background:#C7CEEE;border-radius:8px;}
@@ -100,6 +100,7 @@
   .branch-item:active{background:var(--accent-soft); border-color:#C9D1EE;}
   .branch-item.current{background:var(--accent-soft); border-color:#C9D1EE; color:var(--accent-dark); font-weight:700;}
   .branch-item .chev{color:var(--muted-2); flex-shrink:0;}
+  .branch-item .b-name{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 
   /* ---------- jump nav ---------- */
   .jumpnav{display:flex; overflow-x:auto; padding:10px 14px; background:#fff;
@@ -251,7 +252,8 @@
 
   /* ---------- footer / submit ---------- */
   footer.nav-bar{position:fixed; left:0; right:0; bottom:0; z-index:20; background:#fff;
-    border-top:1px solid var(--line); padding:10px 14px calc(10px + var(--safe-b)); box-shadow:0 -8px 24px rgba(16,22,60,.08);}
+    border-top:1px solid var(--line); padding:10px 14px calc(10px + var(--safe-b)); box-shadow:0 -8px 24px rgba(16,22,60,.08);
+    transform:translateZ(0); -webkit-transform:translateZ(0); will-change:transform; backface-visibility:hidden;}
   .nav-bar-inner{max-width:640px; margin:0 auto; display:flex; align-items:center; gap:14px;}
   .footer-status{display:none; font-size:12.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   .footer-status strong{color:var(--text); font-family:'JetBrains Mono',monospace;}
@@ -875,7 +877,7 @@ function renderBranchDrawer(){
     + knownBranches.map(b => {
         const isCurrent = state.branch === b;
         return '<button class="branch-item'+(isCurrent?' current':'')+'" onclick="selectBranch(\''+escAttr(b).replace(/'/g,"\\'")+'\')">'
-          + '<span>'+escHtml(b)+'</span>'
+          + '<span class="b-name">'+escHtml(b)+'</span>'
           + (isCurrent ? '<span class="chev">&#10003;</span>' : '<span class="chev">&rsaquo;</span>')
           + '</button>';
       }).join('');
@@ -899,6 +901,21 @@ function closeBranchMenu(){
   document.getElementById('drawerOverlay').classList.remove('open');
   document.getElementById('branchDrawer').setAttribute('aria-hidden','true');
 }
+
+/* Keep the space reserved above the fixed Submit bar in exact sync with
+   its real rendered height, instead of a guessed pixel value — avoids
+   a visible blank strip if the bar's height ever differs by device/font. */
+function syncFooterHeight(){
+  const el = document.querySelector('footer.nav-bar');
+  if(!el) return;
+  document.documentElement.style.setProperty('--footer-h', el.offsetHeight + 'px');
+}
+window.addEventListener('resize', syncFooterHeight);
+window.addEventListener('orientationchange', syncFooterHeight);
+if(window.ResizeObserver){
+  new ResizeObserver(syncFooterHeight).observe(document.querySelector('footer.nav-bar'));
+}
+syncFooterHeight();
 
 loadInitial();
 render();

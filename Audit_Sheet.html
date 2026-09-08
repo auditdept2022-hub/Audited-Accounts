@@ -212,19 +212,29 @@
     padding:26px 14px 60px; display:flex; justify-content:center; align-items:flex-start; touch-action:pan-y;}
   .preview-page{background:#fff; width:100%; max-width:816px; aspect-ratio:8.5/11; padding:11.7647%;
     box-shadow:0 8px 28px rgba(0,0,0,.28); border-radius:2px; font-family:Calibri,'Segoe UI',Arial,sans-serif;
-    color:#111; font-size:14px; line-height:1.55; outline:none; flex-shrink:0; box-sizing:border-box;}
+    color:#111; font-size:12pt; line-height:1.55; outline:none; flex-shrink:0; box-sizing:border-box;
+    widows:3; orphans:3;}
   .preview-page:focus{box-shadow:0 8px 28px rgba(0,0,0,.28), 0 0 0 3px rgba(42,61,154,.3);}
-  .pv-branch{font-weight:400; text-align:left; font-size:14px;}
-  .pv-title{font-weight:400; text-align:left; font-size:14px;}
-  .pv-date{text-align:left; font-size:14px; margin-bottom:20px;}
-  .pv-section{font-weight:700; margin:18px 0 6px;}
+  .pv-branch{font-weight:400; text-align:left; font-size:12pt;}
+  .pv-title{font-weight:400; text-align:left; font-size:12pt;}
+  .pv-date{text-align:left; font-size:12pt; margin-bottom:20px; break-after:avoid;}
+  .pv-branch,.pv-title{break-inside:avoid; break-after:avoid;}
+  /* A thin rule under each section heading (BRANCH / Field / etc.) makes
+     it read as a proper document section divider instead of plain bold
+     text, and break-after/break-inside keep a heading from ever being
+     stranded alone at the bottom of a printed page, separated from the
+     list that follows it. */
+  .pv-section{font-weight:700; margin:18px 0 6px; padding-bottom:3px; border-bottom:1px solid #ccc;
+    break-after:avoid; break-inside:avoid;}
   .pv-list{margin:0 0 4px; padding-left:34px;}
-  .pv-list li{margin-bottom:6px; padding-left:2px;}
-  .pv-footer{margin-top:56px; width:100%;}
+  /* break-inside:avoid on each item stops a single numbered finding from
+     being split across two pages mid-sentence when printed. */
+  .pv-list li{margin-bottom:6px; padding-left:2px; break-inside:avoid;}
+  .pv-footer{margin-top:56px; width:100%; break-inside:avoid;}
   .pv-sign{display:inline-block; width:45%; vertical-align:top;}
   .pv-sign + .pv-sign{margin-left:8%;}
-  .pv-sign-label{font-size:14px;}
-  .pv-sign .line{border-top:1px solid #111; margin-top:44px; padding-top:4px; font-size:12px; min-height:14px;}
+  .pv-sign-label{font-size:12pt;}
+  .pv-sign .line{border-top:1px solid #111; margin-top:44px; padding-top:4px; font-size:12pt; min-height:14px;}
   @media (max-width:640px){
     .preview-title{font-size:13px;}
     .preview-hint{display:none;}
@@ -1649,16 +1659,16 @@ function downloadPreviewDoc(){
   // Page Setup needed by whoever you send it to.
   const style = '@page WordSection1{size:8.5in 11.0in; margin:1.0in 1.0in 1.0in 1.0in; mso-page-orientation:portrait;}'
     + 'div.WordSection1{page:WordSection1;}'
-    + 'body{font-family:Calibri,"Segoe UI",Arial,sans-serif; font-size:14px; line-height:1.55; color:#111;}'
-    + '.pv-branch,.pv-title,.pv-date{font-weight:normal; text-align:left; font-size:14px;}'
+    + 'body{font-family:Calibri,"Segoe UI",Arial,sans-serif; font-size:12pt; line-height:1.55; color:#111;}'
+    + '.pv-branch,.pv-title,.pv-date{font-weight:normal; text-align:left; font-size:12pt;}'
     + '.pv-date{margin-bottom:20px;}'
-    + '.pv-section{font-weight:bold; margin:18px 0 6px;}'
+    + '.pv-section{font-weight:bold; margin:18px 0 6px; padding-bottom:3px; border-bottom:1px solid #ccc;}'
     + '.pv-list{margin:0 0 4px; padding-left:34px;}'
     + '.pv-list li{margin-bottom:6px;}'
     + '.pv-footer{width:100%; margin-top:56px;}'
     + '.pv-sign{display:inline-block; width:45%; vertical-align:top;}'
-    + '.pv-sign-label{font-size:14px;}'
-    + '.pv-sign .line{border-top:1px solid #111; margin-top:44px; padding-top:4px; font-size:12px;}';
+    + '.pv-sign-label{font-size:12pt;}'
+    + '.pv-sign .line{border-top:1px solid #111; margin-top:44px; padding-top:4px; font-size:12pt;}';
   const doc = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
     + '<head><meta charset="utf-8"><title>Audit Findings</title><style>'+style+'</style></head>'
     + '<body><div class="WordSection1">'+content+'</div></body></html>';

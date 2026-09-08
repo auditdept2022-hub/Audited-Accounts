@@ -121,6 +121,13 @@
     font-size:13px; font-weight:700; padding:11px 12px; border-radius:10px; cursor:pointer;}
   .drawer-reset-btn:active{background:#F3CBD5;}
   .drawer-reset-btn svg{width:15px; height:15px; flex-shrink:0;}
+  .new-audit-btn{display:inline-flex; align-items:center; gap:6px; width:auto;
+    border:1px solid var(--accent-soft); background:var(--accent-soft); color:var(--accent-dark);
+    font-family:inherit; font-size:12px; font-weight:700; padding:6px 10px; border-radius:8px; cursor:pointer;
+    margin-bottom:10px;}
+  .new-audit-btn:active{background:#DCE1F7;}
+  .new-audit-btn svg{width:13px; height:13px; flex-shrink:0;}
+  .new-audit-btn:disabled{opacity:.55; cursor:not-allowed;}
   .drawer-reset-hint{font-size:10.5px; color:var(--muted); text-align:center; margin-top:7px;}
   .branch-item{display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%;
     text-align:left; border:1px solid var(--line); background:#fff; border-radius:10px;
@@ -653,7 +660,7 @@
     <div class="empty-hint">Loading&hellip;</div>
   </div>
   <div class="drawer-foot">
-    <button class="btn primary" id="newAuditBtn" style="width:100%; margin-bottom:8px;" onclick="newAudit()">
+    <button class="new-audit-btn" id="newAuditBtn" onclick="newAudit()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       New audit
     </button>

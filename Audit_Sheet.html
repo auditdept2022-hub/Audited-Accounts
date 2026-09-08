@@ -179,6 +179,7 @@
 
   /* ---------- print ---------- */
   @media print{
+    @page{ margin:1in; }
     .app-toolbar, footer.nav-bar, .drawer-overlay, .drawer, .toast{display:none !important;}
     #scrollArea{overflow:visible !important; height:auto !important; padding-bottom:0 !important;}
     body{overflow:visible !important; height:auto !important; display:block !important;}
@@ -495,7 +496,7 @@
   <button class="tb-icon-btn" aria-label="Preview audit findings report" onclick="openPreview()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
   </button>
-  <button class="tb-icon-btn" aria-label="Print this audit" onclick="window.print()">
+  <button class="tb-icon-btn" aria-label="Print this audit" onclick="printFindings()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
   </button>
   <button class="tb-icon-btn" aria-label="Share this audit" onclick="shareCurrentAudit()">
@@ -634,21 +635,50 @@ let searchMatches = [];
 let searchIndex = -1;
 
 /* ============================================================
-   PERSISTENCE (previous submitted audits, kept on this device)
+   PERSISTENCE (previous submitted audits)
+   ------------------------------------------------------------
+   "Previous audits" now comes from the shared Google Sheet (via
+   ?action=history on the Apps Script backend) so every device sees
+   the SAME list. localStorage is kept only as an offline fallback/
+   cache — it is no longer the source of truth, which is what used
+   to make phone and desktop disagree.
    ============================================================ */
 const HISTORY_KEY = 'branchAuditHistory_v1';
+let historyCache = null; // last list actually shown (server, or local fallback)
 
-function loadHistory(){
+function loadLocalHistory(){
   try{ const raw = localStorage.getItem(HISTORY_KEY); return raw ? JSON.parse(raw) : []; }
   catch(e){ return []; }
 }
+function saveLocalHistoryCache(list){
+  try{ localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); }catch(e){}
+}
+/* Optimistic local echo right after this device submits, so the
+   audit just sent shows up immediately even before the next server
+   fetch completes. It gets replaced by the server's copy on the next
+   successful fetchHistory() call. */
 function saveHistoryEntry(entry){
   try{
-    const list = loadHistory();
+    const list = loadLocalHistory();
     list.unshift(entry);
     if(list.length > 30) list.length = 30;
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+    saveLocalHistoryCache(list);
   }catch(e){}
+}
+/* Fetches the shared history from the backend. Falls back to whatever
+   was last cached locally if offline or the backend isn't configured,
+   so the drawer still shows something useful without a connection. */
+async function fetchHistory(){
+  if(!backendConfigured) return loadLocalHistory();
+  try{
+    const res = await fetch(APPS_SCRIPT_URL + '?action=history');
+    const result = await res.json();
+    if(result && Array.isArray(result.history)){
+      saveLocalHistoryCache(result.history);
+      return result.history;
+    }
+  }catch(e){ /* offline/unreachable — use local cache below */ }
+  return loadLocalHistory();
 }
 
 /* ============================================================
@@ -1492,6 +1522,16 @@ function closePreview(){
   document.getElementById('previewOverlay').setAttribute('aria-hidden','true');
   document.body.classList.remove('previewing');
 }
+/* The toolbar's Print icon used to call window.print() straight on
+   the checklist screen, which is why printing didn't look like the
+   Word doc — it was printing the wrong view. It now opens the same
+   Word-style "AUDIT FINDINGS" preview first (same one the Preview
+   button and Download use) and prints THAT, so print, preview, and
+   the downloaded file all match the exact same document. */
+function printFindings(){
+  openPreview();
+  setTimeout(()=>window.print(), 60);
+}
 function downloadPreviewDoc(){
   const pageEl = document.getElementById('previewPage');
   const content = pageEl.innerHTML;
@@ -1654,8 +1694,8 @@ function fmtDate(iso){
   }catch(e){ return iso; }
 }
 
-function renderHistorySection(){
-  const list = loadHistory();
+function renderHistorySection(list){
+  list = list || [];
   if(list.length === 0){
     return '<div class="drawer-section-title">Previous audits</div>';
   }
@@ -1675,10 +1715,17 @@ function renderHistorySection(){
       }).join('');
 }
 
-function renderBranchDrawer(){
+async function renderBranchDrawer(){
   const body = document.getElementById('branchDrawerBody');
   if(!body) return;
-  body.innerHTML = renderHistorySection();
+  // Show cached/local list right away (no blank flash), then refresh
+  // with the shared server copy once it arrives — that refreshed copy
+  // is what keeps phone and desktop in sync with each other.
+  historyCache = historyCache || loadLocalHistory();
+  body.innerHTML = renderHistorySection(historyCache);
+  const fresh = await fetchHistory();
+  historyCache = fresh;
+  body.innerHTML = renderHistorySection(historyCache);
 }
 
 /* ---------- report viewer (read-only summary of a past audit) ---------- */
@@ -1745,7 +1792,7 @@ function buildReportHtml(h){
 }
 
 function openReport(idx){
-  const list = loadHistory();
+  const list = historyCache || loadLocalHistory();
   const h = list[idx];
   if(!h) return;
   document.getElementById('reportTitle').textContent = h.branch || 'Audit report';

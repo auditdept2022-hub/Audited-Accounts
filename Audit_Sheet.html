@@ -589,6 +589,7 @@
 
   .spinner{width:15px; height:15px; border-radius:50%; border:2.5px solid rgba(255,255,255,.4);
     border-top-color:#fff; animation:spin .7s linear infinite; flex-shrink:0;}
+  .spinner.spinner-danger{border-color:rgba(176,48,74,.3); border-top-color:var(--del);}
   @keyframes spin{to{transform:rotate(360deg);}}
 
   @media (max-width:420px){
@@ -652,6 +653,10 @@
     <div class="empty-hint">Loading&hellip;</div>
   </div>
   <div class="drawer-foot">
+    <button class="btn primary" id="newAuditBtn" style="width:100%; margin-bottom:8px;" onclick="newAudit()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      New audit
+    </button>
     <button class="drawer-reset-btn" id="hardResetBtn" onclick="hardResetApp()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
       Hard reload &middot; reset app
@@ -690,7 +695,6 @@
 <footer class="nav-bar">
   <div class="nav-bar-inner">
     <div class="footer-status" id="footerStatus"></div>
-    <button class="btn" id="newAuditBtn" title="Start a new blank audit">New audit</button>
     <button class="btn primary" id="submitBtn">Submit audit</button>
   </div>
 </footer>
@@ -1643,16 +1647,24 @@ function refreshSummary(){
  *  state stays accurate without needing a full re-render on every tap. */
 function updateSubmitBtnState(){
   const submitBtn = document.getElementById('submitBtn');
+  const newBtn = document.getElementById('newAuditBtn');
   if(!submitBtn) return;
   if(submitting){
     submitBtn.innerHTML = '<span class="spinner"></span> '+(editingSubmissionId ? 'Saving...' : 'Submitting...');
     submitBtn.disabled = true;
+    // Don't let "New audit" wipe the form out from under an in-flight
+    // save — the payload was already snapshotted before the request
+    // went out, so it's not at risk, but resetting mid-request would
+    // be a confusing thing to watch happen.
+    if(newBtn) newBtn.disabled = true;
   } else if(editingSubmissionId != null && !hasEditChanges()){
     submitBtn.textContent = 'No changes to save';
     submitBtn.disabled = true;
+    if(newBtn) newBtn.disabled = false;
   } else {
     submitBtn.textContent = editingSubmissionId ? 'Save changes' : 'Submit audit';
     submitBtn.disabled = false;
+    if(newBtn) newBtn.disabled = false;
   }
 }
 
@@ -1673,7 +1685,6 @@ function render(){
 }
 
 document.getElementById('submitBtn').addEventListener('click', doSubmit);
-document.getElementById('newAuditBtn').addEventListener('click', newAudit);
 
 function showToast(msg){
   const t = document.getElementById('toast');
@@ -2069,6 +2080,7 @@ async function shareAuditDoc(){
 }
 
 async function doSubmit(){
+  if(submitting) return; // already in flight — ignore a stray double-tap
   if(!state.branch){
     showToast('Please enter the branch name first.');
     document.getElementById('sec-basics').scrollIntoView({behavior:'smooth', block:'start'});
@@ -2138,6 +2150,7 @@ async function doSubmit(){
    so it can be edited, then saved with "Save changes" (which updates
    the existing sheet tab/index row instead of creating a new one). */
 function editAuditFromReport(){
+  if(deleteInFlight) return;
   const list = historyCache || loadLocalHistory();
   const h = list[openReportIdx];
   if(!h || !h.state){ showToast('Full data for this audit isn\u2019t available on this device \u2014 open it on the device that submitted it, or check the shared Sheet directly.'); return; }
@@ -2204,15 +2217,43 @@ function newAudit(){
   state = freshState();
   previewEditedHtml = null;
   clearDraft();
+  closeBranchMenu();
   render();
   window.scrollTo({top:0, behavior:'smooth'});
   showToast('Started a new audit.');
 }
 
+/** Toggles the Print/Edit/Delete row (in the report drawer) between
+ *  normal and "a request is in flight" states. busy=true disables all
+ *  three buttons and swaps Delete's label for a spinner, without
+ *  losing track of which one is Edit vs Delete. busy=false rebuilds
+ *  the row from scratch via reportActionsHtml() so Edit's disabled/
+ *  title state is recomputed correctly (e.g. if canEdit changed)
+ *  rather than just blindly re-enabling everything. */
+function setReportActionsBusy_(busy){
+  const wrap = document.getElementById('reportActionsWrap');
+  if(!wrap) return;
+  if(busy){
+    wrap.querySelectorAll('button').forEach(function(b){ b.disabled = true; });
+    const delBtn = wrap.querySelector('.btn.danger');
+    if(delBtn) delBtn.innerHTML = '<span class="spinner spinner-danger"></span><span>Deleting\u2026</span>';
+  } else {
+    const list = historyCache || loadLocalHistory();
+    const h = list[openReportIdx];
+    if(h) wrap.innerHTML = reportActionsHtml(h);
+  }
+}
+
 /* Permanently deletes a submitted audit: its detail sheet tab, its
    "Audit Index" row, and its "Audit Initial Report" row. Always asks
-   for confirmation first, since this can't be undone. */
+   for confirmation first, since this can't be undone. Guarded against
+   double-taps (deleteInFlight) and disables Print/Edit alongside
+   Delete for the duration of the request, since editing or re-opening
+   the print view of an audit that might be mid-deletion would be
+   confusing at best. */
+let deleteInFlight = false;
 async function deleteAuditFromReport(){
+  if(deleteInFlight) return;
   const list = historyCache || loadLocalHistory();
   const h = list[openReportIdx];
   if(!h) return;
@@ -2220,6 +2261,8 @@ async function deleteAuditFromReport(){
   if(!confirm('Delete this audit permanently?\n\n' + label + '\n\nThis removes its sheet tab from the spreadsheet and cannot be undone.')) return;
   if(!backendConfigured){ showToast('Backend not configured yet \u2014 cannot delete.'); return; }
   if(!h.submissionId){ showToast('This audit has no submission ID on record, so it can\u2019t be deleted remotely \u2014 remove its tab directly in the Sheet instead.'); return; }
+  deleteInFlight = true;
+  setReportActionsBusy_(true);
   try{
     const res = await fetch(APPS_SCRIPT_URL, {
       method: 'POST',
@@ -2235,9 +2278,13 @@ async function deleteAuditFromReport(){
       renderBranchDrawer();
     } else {
       showToast('Could not delete: ' + (result && result.error ? result.error : 'unknown error'));
+      setReportActionsBusy_(false);
     }
   } catch(err){
     showToast('Could not reach the server: ' + err.message);
+    setReportActionsBusy_(false);
+  } finally {
+    deleteInFlight = false;
   }
 }
 
@@ -2284,6 +2331,7 @@ document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) loadBra
    HEADER — back to dashboard + hamburger branch menu
    ============================================================ */
 function goToDashboard(){
+  if(submitting){ showToast('Please wait for the current submission to finish before leaving.'); return; }
   window.location.href = 'index.html';
 }
 
@@ -2325,7 +2373,12 @@ function renderHistorySection(list, status, detail){
   list = list || [];
   const banner = syncStatusBanner_(status, detail);
   if(list.length === 0){
-    return '<div class="drawer-section-title">Previous audits</div>' + banner;
+    // Only show the "nothing here yet" hint once we've actually heard
+    // back from somewhere (local cache or server) — while still
+    // "checking" for the first time, an empty list doesn't yet mean
+    // there's truly nothing, so don't say so.
+    const emptyHint = status === 'checking' ? '' : '<div class="empty-hint">No previous audits yet \u2014 submit your first one and it\u2019ll show up here.</div>';
+    return '<div class="drawer-section-title">Previous audits</div>' + banner + emptyHint;
   }
   return '<div class="drawer-section-title">Previous audits</div>'
     + banner
@@ -2526,7 +2579,7 @@ function openReport(idx){
   if(!h) return;
   openReportIdx = idx;
   document.getElementById('reportTitle').textContent = h.branch || 'Audit report';
-  document.getElementById('reportBody').innerHTML = reportActionsHtml(h) + buildReportHtml(h);
+  document.getElementById('reportBody').innerHTML = '<div id="reportActionsWrap">' + reportActionsHtml(h) + '</div>' + buildReportHtml(h);
   document.getElementById('reportDrawer').classList.add('open');
   document.getElementById('reportOverlay').classList.add('open');
   document.getElementById('reportDrawer').setAttribute('aria-hidden','false');
@@ -2569,6 +2622,7 @@ function closeBranchMenu(){
    alone so they aren't lost on reset.
    ============================================================ */
 async function hardResetApp(){
+  if(submitting){ showToast('Please wait for the current submission to finish before resetting.'); return; }
   const btn = document.getElementById('hardResetBtn');
   if(!confirm('This reloads the latest version of the app from GitHub. Your previous audit reports on this device are kept. Continue?')) return;
   if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Resetting\u2026'; }

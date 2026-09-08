@@ -79,8 +79,8 @@
     border-bottom:1px solid rgba(255,255,255,.08);
   }
   .topband-inner{max-width:640px; margin:0 auto; display:flex; align-items:center; gap:8px; transition:max-width .15s;}
-  @media (min-width:860px){ .topband-inner{max-width:1120px;} .topband{padding-left:24px; padding-right:24px;} }
-  @media (min-width:1440px){ .topband-inner{max-width:1360px;} }
+  @media (min-width:860px){ .topband-inner{max-width:none;} .topband{padding-left:24px; padding-right:24px;} }
+  @media (min-width:1440px){ .topband{padding-left:32px; padding-right:32px;} }
   .hdr-icon-btn{flex-shrink:0; width:36px; height:36px; border-radius:10px; border:1px solid rgba(255,255,255,.16);
     background:rgba(255,255,255,.08); color:#fff; display:flex; align-items:center; justify-content:center;
     cursor:pointer; padding:0; -webkit-tap-highlight-color:transparent;}
@@ -323,23 +323,6 @@
   .status-row .status-head{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:9px;}
   .status-row .status-head .cond-label{margin-bottom:0;}
 
-  /* ---------- inventory count rows (System vs Actual count, for
-     items that are physically counted during the audit: Oil, Promo,
-     Motorcycle Units, Service Units, Repair Units) ---------- */
-  .count-item{border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px; margin-bottom:9px; background:#fff;}
-  .count-item.mismatch{border-color:#F0C3CE; background:linear-gradient(180deg, var(--del-soft) 0%, #fff 46px);}
-  .count-item.matched{border-color:#B7E1CE;}
-  .count-item-label{font-size:13px; font-weight:600; color:var(--text); margin-bottom:9px;}
-  .count-grid{display:grid; grid-template-columns:1fr 1fr; gap:8px 10px; margin-bottom:8px;}
-  .count-field label{font-size:10px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.3px;
-    display:block; margin-bottom:4px;}
-  .count-result{grid-column:1/-1; display:flex; align-items:center; justify-content:space-between; gap:8px;
-    font-size:12px; padding:2px 1px 0;}
-  .count-variance{font-family:'JetBrains Mono',monospace; font-weight:700; color:var(--muted-2);}
-  .count-variance.matched{color:var(--ok);}
-  .count-variance.mismatch{color:var(--del);}
-  .badge.warn{background:var(--rstr-soft); color:var(--rstr);}
-  .inventory-subhead{display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 8px;}
 
   /* ---------- repeatable entry rows ---------- */
   .entry-row{display:flex; gap:8px; align-items:center; border:1px solid var(--line); border-radius:var(--radius-sm);
@@ -392,18 +375,23 @@
   /* ---------- deposits: compact, minimalist single-line rows ---------- */
   .deposit-list{display:flex; flex-direction:column; gap:5px; margin-bottom:4px;}
   .deposit-row{display:flex; align-items:center; gap:5px;}
-  .deposit-row .dep-amt, .deposit-row .dep-remarks{
+  .deposit-row .dep-amt, .deposit-row .dep-time, .deposit-row .dep-remarks{
     border:1px solid #D7DCF0; background:#F8F9FD; border-radius:7px; font-family:inherit;
     color:var(--text); outline:none; padding:5px 7px; font-size:12px; min-width:0;}
   .deposit-row .dep-amt{width:84px; flex:0 0 84px; text-align:left;}
+  .deposit-row .dep-time{width:98px; flex:0 0 98px;}
   .deposit-row .dep-remarks{flex:1;}
-  .deposit-row .dep-amt:focus, .deposit-row .dep-remarks:focus{border-color:var(--accent); box-shadow:0 0 0 2px rgba(42,61,154,.10);}
+  .deposit-row .dep-amt:focus, .deposit-row .dep-time:focus, .deposit-row .dep-remarks:focus{border-color:var(--accent); box-shadow:0 0 0 2px rgba(42,61,154,.10);}
   .deposit-row .dep-remove{flex-shrink:0; border:none; background:transparent; color:var(--muted-2);
     width:20px; height:20px; border-radius:50%; font-size:14px; line-height:1; cursor:pointer; padding:0;}
   .deposit-row .dep-remove:active{background:var(--del-soft); color:var(--del);}
   .deposit-add{border:none; background:transparent; color:var(--accent-dark); font-family:inherit;
     font-size:11.5px; font-weight:700; padding:2px; cursor:pointer;}
   .deposit-add:active{text-decoration:underline;}
+  @media (max-width:380px){
+    .deposit-row .dep-amt{width:64px; flex:0 0 64px;}
+    .deposit-row .dep-time{width:78px; flex:0 0 78px;}
+  }
 
   /* ---------- findings ---------- */
   .finding-card{border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:10px; background:#fff;}
@@ -599,9 +587,8 @@ const defaultOrEntries = () => ([
   { type:'Stock - Sales Invoice', seriesNo:'', remarks:'' },
   { type:'Stock - Delivery Receipt', seriesNo:'', remarks:'' }
 ]);
-const emptyDepositEntry = () => ({ amount:'', remarks:'' });
+const emptyDepositEntry = () => ({ amount:'', time:'', remarks:'' });
 const emptyStatusEntry = () => ({ status:'', remarks:'' });
-const emptyCountEntry = () => ({ systemCount:'', actualCount:'', remarks:'' });
 
 function freshState(){
   return {
@@ -626,9 +613,9 @@ function freshState(){
       branchConcerns:''
     },
     inventory:{
-      oil: emptyCountEntry(), promo: emptyCountEntry(),
-      mcUnits: emptyCountEntry(), serviceUnits: emptyCountEntry(),
-      repairUnits: emptyCountEntry(),
+      oil:{condition:'',remarks:''}, promo:{condition:'',remarks:''},
+      mcUnits:{condition:'',remarks:''}, serviceUnits:{condition:'',remarks:''},
+      repairUnits:{condition:'',remarks:''},
       brandNewCondition:{condition:'',remarks:''},
       tools: emptyStatusEntry(), spareparts: emptyStatusEntry(),
       platesOrCr: emptyStatusEntry(), assets: emptyStatusEntry()
@@ -815,13 +802,9 @@ const ynLabels = {
 const condLabels = {
   'image.cleanliness':'Cleanliness', 'image.grooming':'Grooming', 'image.idUniforms':'I.D. & uniforms',
   'image.signages':'Signages', 'image.branchKey':'Branch key', 'image.branchVaultKey':'Branch vault key',
-  'inventory.brandNewCondition':'Brand-new units (free from scratches, with TBA\u2019s)'
-};
-/* Physically-counted inventory items (System vs Actual count), reported
-   separately from the plain Good/Fair/Poor condition checks above. */
-const countLabels = {
   'inventory.oil':'Oil', 'inventory.promo':'Promo', 'inventory.mcUnits':'Motorcycle units (repo & brand new)',
-  'inventory.serviceUnits':'Service units', 'inventory.repairUnits':'Repair units (if any)'
+  'inventory.serviceUnits':'Service units', 'inventory.repairUnits':'Repair units (if any)',
+  'inventory.brandNewCondition':'Brand-new units (free from scratches, with TBA\u2019s)'
 };
 /* Tools/Spareparts/Plates & OR-CR/Assets use a { status, remarks } shape
    (STATUS_OPTS: Complete/Missing/Good/Poor), not { condition, remarks }
@@ -985,78 +968,6 @@ function statusRow(path){
     + '</div>';
 }
 
-/* ---------- inventory count rows (System vs Actual count) ----------
-   Used for the items an internal audit physically counts on-site:
-   Oil, Promo, Motorcycle Units, Service Units, Repair Units. Keeps a
-   System Count (what the records/system say) and an Actual Count
-   (what was physically counted), auto-computing the variance and a
-   Matched/Shortage/Overage status \u2014 rather than a subjective
-   Good/Fair/Poor rating \u2014 since that's what "reconciled with the
-   actual count" means. */
-function countVariance(obj){
-  if(!obj || obj.systemCount==='' || obj.systemCount==null || obj.actualCount==='' || obj.actualCount==null) return null;
-  const sys = Number(obj.systemCount)||0, act = Number(obj.actualCount)||0;
-  return act - sys;
-}
-function countStatus(obj){
-  const v = countVariance(obj);
-  if(v===null) return '';
-  return v===0 ? 'Matched' : (v>0 ? 'Overage' : 'Shortage');
-}
-function countMatched(path){ return countStatus(get(path)) === 'Matched'; }
-const INVENTORY_COUNT_ITEMS = [
-  ['oil','Oil'], ['promo','Promo'], ['mcUnits','Motorcycle units (repo &amp; brand new)'],
-  ['serviceUnits','Service units'], ['repairUnits','Repair units (if any)']
-];
-function inventoryReconciledStats(){
-  let matched=0;
-  INVENTORY_COUNT_ITEMS.forEach(([key])=>{
-    if(countStatus(state.inventory[key])==='Matched') matched++;
-  });
-  return matched+'/'+INVENTORY_COUNT_ITEMS.length+' matched';
-}
-function onCountInput(key, field, el){
-  state.inventory[key][field] = el.value;
-  const obj = state.inventory[key];
-  const variance = countVariance(obj);
-  const status = countStatus(obj);
-  const itemEl = document.getElementById('count-item-'+key);
-  const varEl = document.getElementById('count-var-'+key);
-  const badgeEl = document.getElementById('count-badge-'+key);
-  const cls = variance===null ? '' : (variance===0 ? 'matched' : 'mismatch');
-  if(itemEl) itemEl.className = 'count-item' + (cls ? ' '+cls : '');
-  if(varEl) varEl.textContent = variance===null ? '\u2014' : (variance>0 ? '+'+variance : String(variance));
-  if(varEl) varEl.className = 'count-variance' + (cls ? ' '+cls : '');
-  if(badgeEl){
-    badgeEl.textContent = status || '\u2014';
-    badgeEl.className = 'badge' + (status==='Matched' ? ' ok' : status ? ' del' : '');
-  }
-  const headerCountEl = document.querySelector('#sec-inventory .section-count');
-  const stats = inventoryReconciledStats();
-  if(headerCountEl) headerCountEl.textContent = stats || '';
-}
-function countRow(key, label){
-  const obj = state.inventory[key];
-  const variance = countVariance(obj);
-  const status = countStatus(obj);
-  const cls = variance===null ? '' : (variance===0 ? 'matched' : 'mismatch');
-  return '<div class="count-item'+(cls?' '+cls:'')+'" id="count-item-'+key+'">'
-    + '<div class="count-item-label">'+label+'</div>'
-    + '<div class="count-grid">'
-    + '<div class="count-field"><label>System count</label>'
-    + '<input class="input" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="'+escAttr(obj.systemCount)+'"'
-    + ' oninput="onCountInput(\''+key+'\',\'systemCount\',this)"></div>'
-    + '<div class="count-field"><label>Actual count</label>'
-    + '<input class="input" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="'+escAttr(obj.actualCount)+'"'
-    + ' oninput="onCountInput(\''+key+'\',\'actualCount\',this)"></div>'
-    + '<div class="count-result">'
-    + '<span class="count-variance'+(cls?' '+cls:'')+'" id="count-var-'+key+'">'+(variance===null?'\u2014':(variance>0?'+'+variance:String(variance)))+'</span>'
-    + '<span class="badge'+(status==='Matched'?' ok':status?' del':'')+'" id="count-badge-'+key+'">'+(status||'\u2014')+'</span>'
-    + '</div></div>'
-    + inputEl(obj.remarks, 'oninput="set(\'inventory.'+key+'.remarks\', this.value)"', 'text', 'placeholder="Remarks (optional)"')
-    + '</div>';
-}
-
 function addFinding(){ state.findings.push({text:'', severity:'Medium'}); renderSection('sec-findings'); refreshSummary(); }
 function removeFinding(i){ state.findings.splice(i,1); renderSection('sec-findings'); refreshSummary(); }
 function setFinding(i, field, val){
@@ -1130,6 +1041,8 @@ function depositsList(){
     html += '<div class="deposit-row">'
       + '<input class="dep-amt" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Amount"'
       + ' value="'+escAttr(row.amount)+'" oninput="setDepositField('+i+',\'amount\',this.value)">'
+      + '<input class="dep-time" type="time"'
+      + ' value="'+escAttr(row.time)+'" oninput="setDepositField('+i+',\'time\',this.value)">'
       + '<input class="dep-remarks" type="text" placeholder="Remarks"'
       + ' value="'+escAttr(row.remarks)+'" oninput="setDepositField('+i+',\'remarks\',this.value)">'
       + '<button type="button" class="dep-remove" onclick="removeDeposit('+i+')" aria-label="Remove deposit">&times;</button>'
@@ -1244,12 +1157,13 @@ function renderImage(){
 }
 
 function renderInventory(){
-  const stats = inventoryReconciledStats();
-  return card('sec-inventory','Inventories', 'Physically count each item and enter both the system record and what you actually counted \u2014 the variance and status are computed for you.', stats,
-    '<div class="review-sub">Stock &amp; unit counts (system vs. actual)</div>'
-    + INVENTORY_COUNT_ITEMS.map(([key,label])=>countRow(key,label)).join('')
-    + '<div class="review-sub" style="margin-top:14px;">Brand-new units</div>'
-    + conditionRow('inventory.brandNewCondition','Free from scratches, with TBA\u2019s')
+  return card('sec-inventory','Inventories', null, null,
+    conditionRow('inventory.oil','Oil',['Complete','Incomplete'])
+    + conditionRow('inventory.promo','Promo')
+    + conditionRow('inventory.mcUnits','Motorcycle units (repo &amp; brand new)')
+    + conditionRow('inventory.serviceUnits','Service units')
+    + conditionRow('inventory.repairUnits','Repair units (if any)')
+    + conditionRow('inventory.brandNewCondition','Brand-new units \u2014 free from scratches, with TBA\u2019s')
     + '<div class="review-sub" style="margin-top:14px;">Tools (owned by company)</div>' + statusRow('inventory.tools')
     + '<div class="review-sub" style="margin-top:6px;">Spareparts (3S shop only)</div>' + statusRow('inventory.spareparts')
     + '<div class="review-sub" style="margin-top:6px;">Plates and OR-CR</div>' + statusRow('inventory.platesOrCr')
@@ -1473,12 +1387,12 @@ const FINDINGS_RULES = [
   { test:()=>ynTrue('fieldCollection.whiteCopiesArranged'), pos:'Online payments (white receipts) are filed alphabetically.' },
   { test:()=>['notebooks.cashReceiptJournal','notebooks.salesJournal','notebooks.registrationNotebook','notebooks.closedAccountNotebook'].every(ynTrue),
     pos:'All important notebooks (Sales, Cash, Registration, and Closed Accounts) are updated.' },
-  { test:()=>countMatched('inventory.mcUnits'), pos:'Brand-new and repossessed units were reconciled with the actual count.' },
+  { test:()=>condGood('inventory.mcUnits'), pos:'Brand-new and repossessed units were reconciled with the actual count.' },
   { test:()=>condGood('inventory.brandNewCondition'), pos:'All brand-new units are free from scratches and with TBA\u2019s.' },
   { test:()=>ynTrue('officialReceipts.allComplete'), pos:'OR, SI, and DR (used and unused) are complete based on Finance monitoring.' },
   { test:()=>ynTrue('officialReceipts.properlyValidated'), pos:'Official receipts are properly used and validated.' },
-  { test:()=>countMatched('inventory.serviceUnits'), pos:'Issued service units are recorded in the system inventory.' },
-  { test:()=>countMatched('inventory.oil') && countMatched('inventory.promo'), pos:'Oil & Promo inventory is reconciled with the actual count.' },
+  { test:()=>condGood('inventory.serviceUnits'), pos:'Issued service units are recorded in the system inventory.' },
+  { test:()=>condGood('inventory.oil', ['Complete']) && condGood('inventory.promo'), pos:'Oil & Promo inventory is reconciled with the actual count.' },
   { test:()=>condGood('image.branchKey'), pos:'The branch key is handled by the branch manager.' },
   { test:()=>statusGood('inventory.assets'), pos:'All assets are recorded in the admin sheets.' },
   { test:()=>ynTrue('reportsAttachments.depositSlipReconciled'), pos:'Deposit slips are reconciled to the report.' },
@@ -1489,7 +1403,7 @@ const FINDINGS_RULES = [
   { test:()=>ynTrue('fieldCollection.picturesOnTime'), pos:'Collectors are submitting field collection pictures on time.' },
   { test:()=>ynTrue('fieldCollection.copiesMonitored'), pos:'Field picture copies are properly monitored by the cashier.' },
   { test:()=>ynTrue('notebooks.noPendingChattel'), pos:'Branch is without pending chattel documents.' },
-  { test:()=>countMatched('inventory.repairUnits'), pos:'Repair units (if any) are properly accounted for.' },
+  { test:()=>condGood('inventory.repairUnits'), pos:'Repair units (if any) are properly accounted for.' },
   { test:()=>condGood('image.branchVaultKey'), pos:'The branch vault key is properly secured.' },
   { test:()=>statusGood('inventory.tools'), pos:'Company-owned tools are complete.' },
   { test:()=>statusGood('inventory.spareparts'), pos:'Spareparts (3S shop) are complete.' },
@@ -1764,11 +1678,11 @@ function buildReportHtml(h){
               + '<div class="info-row"><span>Cash on hand</span><span>'+(escHtml(s.cash.cashOnHand)||'&mdash;')+'</span></div>' : '')
     + '</div>';
 
-  const depositRows = (s.cash && s.cash.deposits || []).filter(d => d && ((d.amount!=='' && d.amount!=null) || (d.remarks && String(d.remarks).trim())));
+  const depositRows = (s.cash && s.cash.deposits || []).filter(d => d && ((d.amount!=='' && d.amount!=null) || (d.time && String(d.time).trim()) || (d.remarks && String(d.remarks).trim())));
   if(depositRows.length){
     html += '<div class="report-section-title">Deposits</div>';
     html += depositRows.map(d =>
-      '<div class="report-row"><div class="r-label">'+fmtMoney(parseFloat(d.amount)||0)
+      '<div class="report-row"><div class="r-label">'+fmtMoney(parseFloat(d.amount)||0) + (d.time ? ' &middot; '+escHtml(d.time) : '')
         + (d.remarks ? '<div class="r-remark">'+escHtml(d.remarks)+'</div>' : '')
         + '</div></div>'
     ).join('');
@@ -1779,21 +1693,6 @@ function buildReportHtml(h){
   Object.keys(ynLabels).forEach(p=>{
     const v = getFrom(s,p);
     html += '<div class="report-row"><div class="r-label">'+ynLabels[p]+'</div>'+pillYN(v)+'</div>';
-  });
-
-  html += '<div class="report-section-title">Stock &amp; unit counts</div>';
-  Object.keys(countLabels).forEach(p=>{
-    const c = getFrom(s,p) || {};
-    const variance = countVariance(c);
-    const status = countStatus(c) || '\u2014';
-    const stOk = status==='Matched', stBad = status==='Shortage' || status==='Overage';
-    const countText = (c.systemCount!=='' && c.systemCount!=null) || (c.actualCount!=='' && c.actualCount!=null)
-      ? 'Sys '+(c.systemCount||0)+' &middot; Actual '+(c.actualCount||0)+(variance!==null ? ' &middot; Var '+(variance>0?'+'+variance:variance) : '')
-      : '';
-    html += '<div class="report-row"><div class="r-label">'+countLabels[p]
-      + (countText ? '<div class="r-remark">'+countText+'</div>' : '')
-      + (c.remarks ? '<div class="r-remark">'+escHtml(c.remarks)+'</div>' : '')
-      + '</div><span class="badge '+(stOk?'ok':stBad?'del':'')+'">'+escHtml(status)+'</span></div>';
   });
 
   html += '<div class="report-section-title">Condition checks</div>';

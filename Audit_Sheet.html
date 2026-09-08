@@ -347,6 +347,29 @@
   .btn-add{width:100%; border:1.5px dashed #C3CAE6; background:#F8F9FD; color:var(--accent-dark);
     border-radius:var(--radius-sm); padding:10px; font-size:12.5px; font-weight:700; font-family:inherit; cursor:pointer;}
 
+  /* ---------- minimalist entry rows (Official Receipt / SI / DR groups) ----------
+     Stacked instead of squeezed into a grid: a slim header (type picker or a plain
+     index label, plus the delete button) on top, then Series No and Remarks each
+     get their own full-width row so neither field's text is ever clipped. */
+  .entry-row-simple{border:1px solid var(--line); border-radius:var(--radius-sm); padding:10px; margin-bottom:8px; background:#fff;}
+  .entry-row-simple .er-row-head{display:flex; align-items:center; justify-content:space-between; gap:8px;}
+  .entry-row-simple .er-type-select{flex:1; min-width:0; padding:7px 8px; font-size:12px; border:1px solid #D9DDF0;
+    border-radius:8px; background:#fff; font-family:inherit; color:var(--text);}
+  .entry-row-simple .er-row-head .icon-btn{width:28px; height:28px; flex-shrink:0;}
+  .entry-row-simple .input{width:100%; box-sizing:border-box; padding:8px 9px; font-size:12.5px; margin-top:6px;}
+  .er-row-index{font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.4px;}
+  .or-group-title{font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.4px;
+    margin:14px 0 8px;}
+  .or-group-title:first-child{margin-top:0;}
+
+  /* ---------- findings card header ---------- */
+  .finding-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;}
+
+  /* ---------- report drawer actions (edit / delete a submitted audit) ---------- */
+  .report-actions{display:flex; gap:8px; margin-bottom:14px;}
+  .report-actions .btn{flex:1; text-align:center; padding:9px 10px; font-size:12.5px;}
+  .report-actions .btn.danger{color:var(--del); border-color:#F0C3CE; background:var(--del-soft);}
+
   /* ---------- pair (confirmation sampling) cards ---------- */
   .pair-card{border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:10px; background:#F8F9FD;}
   .pair-card-head{display:flex; gap:8px; margin-bottom:10px;}
@@ -585,13 +608,6 @@ const backendConfigured = APPS_SCRIPT_URL && APPS_SCRIPT_URL.indexOf('PASTE_YOUR
    STATE
    ============================================================ */
 const emptyEntry = () => ({ type:'', seriesNo:'', remarks:'' });
-const defaultOrEntries = () => ([
-  { type:'Stock - Motowheels', seriesNo:'', remarks:'' },
-  { type:'Stock - Motofinance', seriesNo:'', remarks:'' },
-  { type:'Stock - Spareparts', seriesNo:'', remarks:'' },
-  { type:'Stock - Sales Invoice', seriesNo:'', remarks:'' },
-  { type:'Stock - Delivery Receipt', seriesNo:'', remarks:'' }
-]);
 const emptyDepositEntry = () => ({ amount:'', time:'', remarks:'' });
 const emptyStatusEntry = () => ({ status:'', remarks:'' });
 
@@ -609,7 +625,9 @@ function freshState(){
     notebooks:{ cashReceiptJournal:null, salesJournal:null, registrationNotebook:null,
       closedAccountNotebook:null, noPendingChattel:null },
     officialReceipts:{ allComplete:null, cutoffSigned:null, greenCopiesFiledSeries:null,
-      greenCopiesOrganized:null, properlyValidated:null, entries: defaultOrEntries(), tableRemarks:'' },
+      greenCopiesOrganized:null, properlyValidated:null,
+      orEntries:[], sparepartsEntries:[], salesDrEntries:[], stockEntries:[],
+      tableRemarks:'' },
     image:{
       openedBefore8am:null, personnelPresent:null,
       cleanliness:{condition:'',remarks:''}, grooming:{condition:'',remarks:''},
@@ -632,6 +650,14 @@ function freshState(){
 
 let state = freshState();
 let submitting = false;
+/* Non-null while the form is editing a previously-submitted audit
+   (holds that audit's submissionId) instead of drafting a brand-new
+   one. Submit becomes "Save changes" and updates the existing sheet
+   tab/index row in place rather than creating a new one. */
+let editingSubmissionId = null;
+/* Index into historyCache of whichever audit is currently open in the
+   report drawer, so the Edit/Delete buttons there know what to act on. */
+let openReportIdx = -1;
 
 /* search state (toolbar below header) */
 let searchQuery = '';
@@ -734,12 +760,6 @@ function removeRep(path, idx){
   const hasData = (row.seriesNo && String(row.seriesNo).trim()) || (row.remarks && String(row.remarks).trim());
   if(hasData && !confirm('Remove this entry? The series no. and remarks you entered for it will be deleted.')) return;
   get(path).splice(idx,1);
-  if(get(path).length===0) get(path).push(emptyEntry());
-  // Row indices just shifted, so any remembered "Other" dropdown
-  // selections for this path are no longer trustworthy — clear them.
-  // typeCell() will still correctly re-detect "Other" for any row
-  // that already has real custom text stored in it.
-  Object.keys(orOtherFlags).forEach(k=>{ if(k.indexOf(path+'::')===0) delete orOtherFlags[k]; });
   renderSection(sectionIdForPath(path));
 }
 
@@ -926,77 +946,47 @@ function conditionRow(path, label, opts){
     + '</div>';
 }
 
-/* Preset Type options for the Official Receipt / SI / DR entry table.
-   Selecting "Other (type manually)" reveals a free-text input so the
-   type field still ends up as a plain string either way. */
-const OR_TYPE_PRESETS = [
-  'Used - Motofinance',
-  'Used - Motowheels',
-  'Used - Spareparts',
-  'Used - Sales Invoice',
-  'Used - Delivery Receipt',
-  'Stock - Motowheels',
-  'Stock - Motofinance',
-  'Stock - Spareparts',
-  'Stock - Sales Invoice',
-  'Stock - Delivery Receipt'
+/* Official Receipt / SI / DR entries used to be one flat list with a
+   10-option "Used/Stock - <doc type>" dropdown crammed next to Series
+   No in a tight grid — hard to read and easy to squeeze on a phone.
+   They're now four separate, clearly headered groups (Official
+   Receipt, Spareparts Invoice, Sales Invoice & Delivery Receipt,
+   Stock Receipt), each its own repeatable list, so nothing has to
+   share a row with a dropdown it doesn't need. Series No and Remarks
+   each get their own full-width line so long values (e.g. a series
+   range like "10050 - 10051") are always fully visible, not clipped. */
+const OR_GROUPS = [
+  { path:'officialReceipts.orEntries', title:'Official Receipt', addLabel:'OR entry', presets:['Motofinance','Motowheels'] },
+  { path:'officialReceipts.sparepartsEntries', title:'Spareparts Invoice', addLabel:'spareparts invoice', presets:null },
+  { path:'officialReceipts.salesDrEntries', title:'Sales Invoice & Delivery Receipt', addLabel:'entry', presets:['Sales Invoice','Delivery Receipt'] },
+  { path:'officialReceipts.stockEntries', title:'Stock Receipt', addLabel:'stock entry', presets:['Motofinance','Motowheels','Spareparts','Sales Invoice','Delivery Receipt'] }
 ];
-/* Tracks which OR entry rows currently have "Other" selected in the
-   Type dropdown, keyed by "path::idx". This is UI-only state (kept
-   outside `state`, so it never gets submitted) — it exists because an
-   empty custom-type field can't otherwise be told apart from "nothing
-   selected yet", which was causing the row to snap back to the
-   placeholder and hide the text box before anything was typed. Reset
-   per-path whenever a row is removed, since indices shift. */
-const orOtherFlags = {};
-function setEntryType(path, idx, val){
-  const row = get(path)[idx];
-  const key = path+'::'+idx;
-  if(val === '' || OR_TYPE_PRESETS.indexOf(val) !== -1){
-    delete orOtherFlags[key];
-    setRepField(path, idx, 'type', val);
+function orEntryRow(path, row, i, presets){
+  const head = presets
+    ? '<select class="er-type-select" onchange="setRepField(\''+path+'\','+i+',\'type\',this.value)">'
+      + '<option value=""'+(row.type?'':' selected')+'>Select type&hellip;</option>'
+      + presets.map(t=>'<option value="'+escAttr(t)+'"'+(row.type===t?' selected':'')+'>'+escHtml(t)+'</option>').join('')
+      + '</select>'
+    : '<span class="er-row-index">Entry '+(i+1)+'</span>';
+  return '<div class="entry-row-simple">'
+    + '<div class="er-row-head">' + head
+    + '<button type="button" class="icon-btn" onclick="removeRep(\''+path+'\','+i+')">&times;</button>'
+    + '</div>'
+    + '<input class="input" type="text" placeholder="Series No (e.g. 10050 - 10051)" value="'+escAttr(row.seriesNo)+'"'
+    + ' oninput="setRepField(\''+path+'\','+i+',\'seriesNo\',this.value)">'
+    + '<input class="input" type="text" placeholder="Remarks (optional)" value="'+escAttr(row.remarks)+'"'
+    + ' oninput="setRepField(\''+path+'\','+i+',\'remarks\',this.value)">'
+    + '</div>';
+}
+function orGroupList(g){
+  const arr = get(g.path);
+  let html = '<div class="or-group-title">'+escHtml(g.title)+'</div>';
+  if(!arr.length){
+    html += '<div class="empty-hint">No entries logged yet.</div>';
   } else {
-    // "Other" chosen: remember it explicitly so it survives re-render
-    // even while the custom text field is still empty. Only clear the
-    // underlying value if it was previously a preset (switching away
-    // from a preset into free text) — keep any existing custom text.
-    orOtherFlags[key] = true;
-    if(OR_TYPE_PRESETS.indexOf(row.type) !== -1) setRepField(path, idx, 'type', '');
+    arr.forEach((row,i)=>{ html += orEntryRow(g.path, row, i, g.presets); });
   }
-  renderSection(sectionIdForPath(path));
-}
-function typeCell(path, row, i){
-  const isPreset = OR_TYPE_PRESETS.indexOf(row.type) !== -1;
-  const isOther = orOtherFlags[path+'::'+i] || (row.type !== '' && !isPreset);
-  const selectValue = isOther ? 'Other' : (isPreset ? row.type : '');
-  let html = '<div class="er-type">'
-    + '<select class="input er-type-select" onchange="setEntryType(\''+path+'\','+i+',this.value)">'
-    + '<option value=""'+(selectValue===''?' selected':'')+'>Select type&hellip;</option>'
-    + OR_TYPE_PRESETS.map(t=>'<option value="'+escAttr(t)+'"'+(selectValue===t?' selected':'')+'>'+escHtml(t)+'</option>').join('')
-    + '<option value="Other"'+(selectValue==='Other'?' selected':'')+'>Other (type manually)</option>'
-    + '</select>';
-  if(selectValue==='Other'){
-    html += '<input class="input er-type-custom" type="text" placeholder="Type manually" value="'+escAttr(row.type)+'"'
-      + ' oninput="setRepField(\''+path+'\','+i+',\'type\',this.value)">';
-  }
-  html += '</div>';
-  return html;
-}
-function repeatableList(path, addLabel){
-  const arr = get(path);
-  const cell = (extraClass, value, field, i, placeholder) =>
-    '<input class="input '+extraClass+'" type="text" placeholder="'+escAttr(placeholder)+'" value="'+escAttr(value)+'"'
-    + ' oninput="setRepField(\''+path+'\','+i+',\''+field+'\',this.value)">';
-  let html = '';
-  arr.forEach((row,i)=>{
-    html += '<div class="entry-row-typed">'
-      + typeCell(path, row, i)
-      + cell('er-series', row.seriesNo, 'seriesNo', i, 'Series No')
-      + cell('er-remarks', row.remarks, 'remarks', i, 'Remarks')
-      + '<button type="button" class="icon-btn" onclick="removeRep(\''+path+'\','+i+')">&times;</button>'
-      + '</div>';
-  });
-  html += '<button type="button" class="btn-add" onclick="addRep(\''+path+'\')">+ Add '+addLabel+'</button>';
+  html += '<button type="button" class="btn-add" onclick="addRep(\''+g.path+'\')">+ Add '+g.addLabel+'</button>';
   return html;
 }
 
@@ -1033,14 +1023,13 @@ function findingsList(){
   }
   state.findings.forEach((f,i)=>{
     html += '<div class="finding-card">'
+      + '<div class="finding-head"><span class="er-row-index">Finding '+(i+1)+'</span>'
+      + '<button type="button" class="icon-btn" onclick="removeFinding('+i+')">&times;</button></div>'
       + textareaEl(f.text, 'oninput="setFinding('+i+',\'text\',this.value)"', 'Describe finding #'+(i+1)+'...')
-      + '<div class="finding-foot">'
-      + '<div class="sev-seg">'
+      + '<div class="sev-seg" style="margin-top:8px;">'
       + '<button type="button" class="'+(f.severity==='Low'?'active low':'')+'" onclick="setFinding('+i+',\'severity\',\'Low\')">Low</button>'
       + '<button type="button" class="'+(f.severity==='Medium'?'active medium':'')+'" onclick="setFinding('+i+',\'severity\',\'Medium\')">Medium</button>'
       + '<button type="button" class="'+(f.severity==='High'?'active high':'')+'" onclick="setFinding('+i+',\'severity\',\'High\')">High</button>'
-      + '</div>'
-      + '<button type="button" class="icon-btn" onclick="removeFinding('+i+')">&times;</button>'
       + '</div></div>';
   });
   html += '<button type="button" class="btn-add" onclick="addFinding()">+ Add finding</button>';
@@ -1177,8 +1166,7 @@ function renderOR(){
   const paths = ['officialReceipts.allComplete','officialReceipts.cutoffSigned',
     'officialReceipts.greenCopiesFiledSeries','officialReceipts.greenCopiesOrganized','officialReceipts.properlyValidated'];
   return card('sec-or','Official receipts, sales invoices &amp; delivery receipts', null, sectionYNStats(paths),
-    '<div class="review-sub">Official Receipt / SI / DR</div>'
-    + repeatableList('officialReceipts.entries','entry')
+    OR_GROUPS.map(orGroupList).join('')
     + '<div class="field span2" style="margin:2px 0 14px;"><label>Additional remarks</label>'
     + textareaEl(state.officialReceipts.tableRemarks, 'oninput="set(\'officialReceipts.tableRemarks\', this.value)"',
         'Any additional notes on the OR / SI / DR entries above...')
@@ -1210,7 +1198,7 @@ function renderImage(){
 function renderInventory(){
   return card('sec-inventory','Inventories', null, null,
     conditionRow('inventory.oil','Oil',['Complete','Incomplete'])
-    + conditionRow('inventory.promo','Promo')
+    + conditionRow('inventory.promo','Promo',['Complete','Incomplete'])
     + conditionRow('inventory.mcUnits','Motorcycle units (repo &amp; brand new)')
     + conditionRow('inventory.serviceUnits','Service units')
     + conditionRow('inventory.repairUnits','Repair units (if any)')
@@ -1241,6 +1229,7 @@ function renderReview(){
   return '<section class="card card-wide" id="sec-review">'
     + '<div class="section-title"><span class="st-text">Review before submitting</span></div>'
     + '<div class="card-body">'
+    + (editingSubmissionId!=null ? '<div class="banner" style="margin-bottom:10px;">Editing a previously submitted audit. Tap <strong>Save changes</strong> to update it, or <a href="#" onclick="cancelEdit();return false;" style="color:inherit;text-decoration:underline;">cancel editing</a>.</div>' : '')
     + '<div class="score-hero">'
     + '<div class="score-num">'+s.pct+'%</div>'
     + '<div class="score-meta">Checklist compliance<br><strong>'+s.yes+'</strong> yes &middot; <strong>'+s.no+'</strong> no &middot; '+s.total+' items scored</div>'
@@ -1311,10 +1300,10 @@ function render(){
     + '<strong>'+s.pct+'%</strong> checklist compliance so far ('+s.yes+' yes, '+s.no+' no)';
   const submitBtn = document.getElementById('submitBtn');
   if(submitting){
-    submitBtn.innerHTML = '<span class="spinner"></span> Submitting...';
+    submitBtn.innerHTML = '<span class="spinner"></span> '+(editingSubmissionId ? 'Saving...' : 'Submitting...');
     submitBtn.disabled = true;
   } else {
-    submitBtn.textContent = 'Submit audit';
+    submitBtn.textContent = editingSubmissionId ? 'Save changes' : 'Submit audit';
     submitBtn.disabled = false;
   }
   applySearchHighlight(); // re-apply since #main was just rebuilt
@@ -1443,7 +1432,7 @@ const FINDINGS_RULES = [
   { test:()=>ynTrue('officialReceipts.allComplete'), pos:'OR, SI, and DR (used and unused) are complete based on Finance monitoring.' },
   { test:()=>ynTrue('officialReceipts.properlyValidated'), pos:'Official receipts are properly used and validated.' },
   { test:()=>condGood('inventory.serviceUnits'), pos:'Issued service units are recorded in the system inventory.' },
-  { test:()=>condGood('inventory.oil', ['Complete']) && condGood('inventory.promo'), pos:'Oil & Promo inventory is reconciled with the actual count.' },
+  { test:()=>condGood('inventory.oil', ['Complete']) && condGood('inventory.promo', ['Complete']), pos:'Oil & Promo inventory is reconciled with the actual count.' },
   { test:()=>condGood('image.branchKey'), pos:'The branch key is handled by the branch manager.' },
   { test:()=>statusGood('inventory.assets'), pos:'All assets are recorded in the admin sheets.' },
   { test:()=>ynTrue('reportsAttachments.depositSlipReconciled'), pos:'Deposit slips are reconciled to the report.' },
@@ -1619,9 +1608,11 @@ async function doSubmit(){
     showToast('Backend not configured yet \u2014 see the note in the review card.');
     return;
   }
+  const isEdit = !!editingSubmissionId;
   const score = computeScore();
   const payload = JSON.parse(JSON.stringify(state));
   payload.score = score;
+  if(isEdit) payload.submissionId = editingSubmissionId;
   // Plain-text narrative (same content as the "Audit Findings" preview),
   // sent so the backend can always save it into the "Audit Initial
   // Report" tab on every submit — no need to remember to Download first.
@@ -1635,26 +1626,89 @@ async function doSubmit(){
     const res = await fetch(APPS_SCRIPT_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action:'submit', data: payload })
+      body: JSON.stringify({ action: isEdit ? 'update' : 'submit', data: payload })
     });
     const result = await res.json();
     submitting = false;
     if(result && result.ok){
-      showToast('Audit submitted \u2014 saved to its own tab and to Audit Initial Report.');
+      showToast(isEdit ? 'Audit updated \u2014 changes saved.' : 'Audit submitted \u2014 saved to its own tab and to Audit Initial Report.');
       saveHistoryEntry({
+        submissionId: result.submissionId || editingSubmissionId || null,
         branch: payload.branch, auditor: payload.auditor, auditDate: payload.auditDate,
         submittedAt: new Date().toISOString(), score: score, state: payload
       });
+      editingSubmissionId = null;
       state = freshState();
       render();
       window.scrollTo({top:0, behavior:'smooth'});
+      renderBranchDrawer();
     } else {
       render();
-      showToast('Could not submit: ' + (result && result.error ? result.error : 'unknown error'));
+      showToast('Could not '+(isEdit?'save changes':'submit')+': ' + (result && result.error ? result.error : 'unknown error'));
     }
   } catch(err){
     submitting = false;
     render();
+    showToast('Could not reach the server: ' + err.message);
+  }
+}
+
+/* Loads a previously-submitted audit's full state back into the form
+   so it can be edited, then saved with "Save changes" (which updates
+   the existing sheet tab/index row instead of creating a new one). */
+function editAuditFromReport(){
+  const list = historyCache || loadLocalHistory();
+  const h = list[openReportIdx];
+  if(!h || !h.state){ showToast('Full data for this audit isn\u2019t available on this device \u2014 open it on the device that submitted it, or check the shared Sheet directly.'); return; }
+  if((state.branch || editingSubmissionId) && !confirm('Discard the audit currently on screen and load this one for editing?')) return;
+  state = JSON.parse(JSON.stringify(h.state));
+  editingSubmissionId = h.submissionId || null;
+  closeReport();
+  closeBranchMenu();
+  render();
+  window.scrollTo({top:0, behavior:'smooth'});
+  showToast(editingSubmissionId
+    ? 'Editing this audit \u2014 make your changes, then tap Save changes.'
+    : 'Editing this audit \u2014 it has no submission ID on record, so saving will create a new tab instead of updating the old one.');
+}
+
+/** Stops editing and clears the form, after a confirmation. */
+function cancelEdit(){
+  if(!confirm('Discard changes and stop editing this audit?')) return;
+  editingSubmissionId = null;
+  state = freshState();
+  render();
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+
+/* Permanently deletes a submitted audit: its detail sheet tab, its
+   "Audit Index" row, and its "Audit Initial Report" row. Always asks
+   for confirmation first, since this can't be undone. */
+async function deleteAuditFromReport(){
+  const list = historyCache || loadLocalHistory();
+  const h = list[openReportIdx];
+  if(!h) return;
+  const label = (h.branch || 'This audit') + (h.auditDate ? ' \u2014 ' + h.auditDate : '');
+  if(!confirm('Delete this audit permanently?\n\n' + label + '\n\nThis removes its sheet tab from the spreadsheet and cannot be undone.')) return;
+  if(!backendConfigured){ showToast('Backend not configured yet \u2014 cannot delete.'); return; }
+  if(!h.submissionId){ showToast('This audit has no submission ID on record, so it can\u2019t be deleted remotely \u2014 remove its tab directly in the Sheet instead.'); return; }
+  try{
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'delete', data:{ submissionId: h.submissionId } })
+    });
+    const result = await res.json();
+    if(result && result.ok){
+      showToast('Audit deleted.');
+      closeReport();
+      historyCache = (historyCache || []).filter(x => x.submissionId !== h.submissionId);
+      saveLocalHistoryCache(historyCache);
+      renderBranchDrawer();
+    } else {
+      showToast('Could not delete: ' + (result && result.error ? result.error : 'unknown error'));
+    }
+  } catch(err){
     showToast('Could not reach the server: ' + err.message);
   }
 }
@@ -1826,18 +1880,31 @@ function buildReportHtml(h){
   return html;
 }
 
+/* Edit/Delete buttons shown at the top of the report drawer for a
+   past audit. Edit is disabled (with an explanatory title) when this
+   device doesn't have the audit's full state cached locally. */
+function reportActionsHtml(h){
+  const canEdit = !!h.state;
+  return '<div class="report-actions">'
+    + '<button type="button" class="btn"'+(canEdit?' onclick="editAuditFromReport()"':' disabled title="Full data not available on this device"')+'>Edit</button>'
+    + '<button type="button" class="btn danger" onclick="deleteAuditFromReport()">Delete</button>'
+    + '</div>';
+}
+
 function openReport(idx){
   const list = historyCache || loadLocalHistory();
   const h = list[idx];
   if(!h) return;
+  openReportIdx = idx;
   document.getElementById('reportTitle').textContent = h.branch || 'Audit report';
-  document.getElementById('reportBody').innerHTML = buildReportHtml(h);
+  document.getElementById('reportBody').innerHTML = reportActionsHtml(h) + buildReportHtml(h);
   document.getElementById('reportDrawer').classList.add('open');
   document.getElementById('reportOverlay').classList.add('open');
   document.getElementById('reportDrawer').setAttribute('aria-hidden','false');
 }
 
 function closeReport(){
+  openReportIdx = -1;
   document.getElementById('reportDrawer').classList.remove('open');
   document.getElementById('reportOverlay').classList.remove('open');
   document.getElementById('reportDrawer').setAttribute('aria-hidden','true');

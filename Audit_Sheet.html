@@ -212,24 +212,24 @@
     padding:26px 14px 60px; display:flex; justify-content:center; align-items:flex-start; touch-action:pan-y;}
   .preview-page{background:#fff; width:100%; max-width:816px; aspect-ratio:8.5/11; padding:11.7647%;
     box-shadow:0 8px 28px rgba(0,0,0,.28); border-radius:2px; font-family:Calibri,'Segoe UI',Arial,sans-serif;
-    color:#111; font-size:12pt; line-height:1.55; outline:none; flex-shrink:0; box-sizing:border-box;
+    color:#111; font-size:12pt; line-height:1.15; outline:none; flex-shrink:0; box-sizing:border-box;
     widows:3; orphans:3;}
   .preview-page:focus{box-shadow:0 8px 28px rgba(0,0,0,.28), 0 0 0 3px rgba(42,61,154,.3);}
   .pv-branch{font-weight:400; text-align:left; font-size:12pt;}
   .pv-title{font-weight:400; text-align:left; font-size:12pt;}
   .pv-date{text-align:left; font-size:12pt; margin-bottom:20px; break-after:avoid;}
   .pv-branch,.pv-title{break-inside:avoid; break-after:avoid;}
-  /* A thin rule under each section heading (BRANCH / Field / etc.) makes
-     it read as a proper document section divider instead of plain bold
-     text, and break-after/break-inside keep a heading from ever being
+  /* Plain bold section labels (BRANCH / Field), no underline — matches
+     the plain-document look of the reference report, not a styled
+     divider. break-after/break-inside keep a heading from ever being
      stranded alone at the bottom of a printed page, separated from the
      list that follows it. */
-  .pv-section{font-weight:700; margin:18px 0 6px; padding-bottom:3px; border-bottom:1px solid #ccc;
+  .pv-section{font-weight:700; margin:16px 0 2px;
     break-after:avoid; break-inside:avoid;}
   .pv-list{margin:0 0 4px; padding-left:34px;}
   /* break-inside:avoid on each item stops a single numbered finding from
      being split across two pages mid-sentence when printed. */
-  .pv-list li{margin-bottom:6px; padding-left:2px; break-inside:avoid;}
+  .pv-list li{margin-bottom:2px; padding-left:2px; break-inside:avoid;}
   .pv-footer{margin-top:56px; width:100%; break-inside:avoid;}
   .pv-sign{display:inline-block; width:45%; vertical-align:top;}
   .pv-sign + .pv-sign{margin-left:8%;}
@@ -326,6 +326,12 @@
   /* ---------- condition rows (Good/Fair/Poor) ---------- */
   .cond-row{border:1px solid var(--line); border-radius:var(--radius-sm); padding:11px 12px; margin-bottom:8px; background:#fff;}
   .cond-row .cond-label{font-size:13px; font-weight:600; color:var(--text); margin-bottom:9px;}
+  .cond-label-row{display:flex; align-items:center; justify-content:space-between; gap:10px;}
+  .cond-label-row .cond-label{flex:1; min-width:0;}
+  .cond-count{width:64px; flex-shrink:0; border:1px solid var(--line); background:#F8F9FD; border-radius:8px;
+    font-family:inherit; font-size:12.5px; color:var(--text); padding:6px 8px; text-align:center;
+    margin-bottom:9px; box-sizing:border-box;}
+  .cond-count::placeholder{color:var(--muted-2);}
   .cond-seg{display:flex; gap:6px; margin-bottom:8px;}
   .cond-seg button{flex:1; border:1px solid var(--line); background:#F8F9FD; color:var(--muted);
     font-family:inherit; font-size:11.5px; font-weight:700; padding:7px 0; border-radius:8px; cursor:pointer;
@@ -650,9 +656,9 @@ function freshState(){
     },
     inventory:{
       oil:{condition:'',remarks:''}, promo:{condition:'',remarks:''},
-      mcUnits:{condition:'',remarks:''}, serviceUnits:{condition:'',remarks:''},
-      repairUnits:{condition:'',remarks:''},
-      brandNewCondition:{condition:'',remarks:''},
+      repoUnits:{condition:'',remarks:'',count:''}, serviceUnits:{condition:'',remarks:'',count:''},
+      repairUnits:{condition:'',remarks:'',count:''},
+      brandNewCondition:{condition:'',remarks:'',count:''},
       tools: emptyStatusEntry(), spareparts: emptyStatusEntry(),
       platesOrCr: emptyStatusEntry(), assets: emptyStatusEntry()
     },
@@ -900,7 +906,7 @@ const ynLabels = {
 const condLabels = {
   'image.cleanliness':'Cleanliness', 'image.grooming':'Grooming', 'image.idUniforms':'I.D. & uniforms',
   'image.signages':'Signages', 'image.branchKey':'Branch key', 'image.branchVaultKey':'Branch vault key',
-  'inventory.oil':'Oil', 'inventory.promo':'Promo', 'inventory.mcUnits':'Motorcycle units (repo & brand new)',
+  'inventory.oil':'Oil', 'inventory.promo':'Promo', 'inventory.repoUnits':'Repossessed (Repo) units',
   'inventory.serviceUnits':'Service units', 'inventory.repairUnits':'Repair units (if any)',
   'inventory.brandNewCondition':'Brand-new units (free from scratches, with TBA\u2019s)'
 };
@@ -959,15 +965,19 @@ function remarksInline(path, placeholder){
   return '<div class="remarks-inline">'+inputEl(get(path), 'oninput="set(\''+path+'\', this.value)"', 'text', 'placeholder="'+escAttr(placeholder||'Remarks (optional)')+'"')+'</div>';
 }
 
-function conditionRow(path, label, opts){
+function conditionRow(path, label, opts, withCount){
   opts = opts || ['Good','Fair','Poor'];
   const v = get(path+'.condition');
   const r = get(path+'.remarks');
   const seg = opts.map(function(o){
     return '<button type="button" class="'+(v===o?'active '+o.toLowerCase():'')+'" onclick="setCond(\''+path+'\',\''+o+'\')">'+o+'</button>';
   }).join('');
+  const countHtml = withCount
+    ? '<input class="cond-count" type="number" inputmode="numeric" min="0" placeholder="Count" value="'
+      + escAttr(get(path+'.count')) + '" oninput="set(\''+path+'.count\', this.value)">'
+    : '';
   return '<div class="cond-row">'
-    + '<div class="cond-label">'+label+'</div>'
+    + '<div class="cond-label-row"><div class="cond-label">'+label+'</div>'+countHtml+'</div>'
     + '<div class="cond-seg">'+seg+'</div>'
     + inputEl(r, 'oninput="set(\''+path+'.remarks\', this.value)"', 'text', 'placeholder="Remarks (optional)"')
     + '</div>';
@@ -1226,10 +1236,10 @@ function renderInventory(){
   return card('sec-inventory','Inventories', null, null,
     conditionRow('inventory.oil','Oil',['Complete','Incomplete'])
     + conditionRow('inventory.promo','Promo',['Complete','Incomplete'])
-    + conditionRow('inventory.mcUnits','Motorcycle units (repo &amp; brand new)')
-    + conditionRow('inventory.serviceUnits','Service units')
-    + conditionRow('inventory.repairUnits','Repair units (if any)')
-    + conditionRow('inventory.brandNewCondition','Brand-new units \u2014 free from scratches, with TBA\u2019s')
+    + conditionRow('inventory.repoUnits','Repossessed (Repo) units', null, true)
+    + conditionRow('inventory.brandNewCondition','Brand-new (BN) units \u2014 free from scratches, with TBA\u2019s', null, true)
+    + conditionRow('inventory.serviceUnits','Service units', null, true)
+    + conditionRow('inventory.repairUnits','Repair units (if any)', null, true)
     + '<div class="review-sub" style="margin-top:14px;">Tools (owned by company)</div>' + statusRow('inventory.tools')
     + '<div class="review-sub" style="margin-top:6px;">Spareparts (3S shop only)</div>' + statusRow('inventory.spareparts')
     + '<div class="review-sub" style="margin-top:6px;">Plates and OR-CR</div>' + statusRow('inventory.platesOrCr')
@@ -1438,6 +1448,17 @@ function statusGood(path){
   return s === 'Complete' || s === 'Good';
 }
 function ynTrue(path){ return get(path) === true; }
+/* Appends "(N unit/s)" to a finding sentence when a count was logged
+   for that inventory row, so the auto-drafted narrative and the
+   detail-tab sheet both surface how many units were actually counted,
+   not just a Good/Fair/Poor rating. */
+function countSuffix(path){
+  const n = get(path+'.count');
+  if(n === '' || n == null) return '';
+  const num = Number(n);
+  if(isNaN(num)) return '';
+  return ' (' + num + ' unit' + (num===1?'':'s') + ')';
+}
 
 /* Each rule becomes one bullet under BRANCH when its check passes.
    Order roughly follows the sections in the checklist. */
@@ -1454,11 +1475,11 @@ const FINDINGS_RULES = [
   { test:()=>ynTrue('fieldCollection.whiteCopiesArranged'), pos:'Online payments (white receipts) are filed alphabetically.' },
   { test:()=>['notebooks.cashReceiptJournal','notebooks.salesJournal','notebooks.registrationNotebook','notebooks.closedAccountNotebook'].every(ynTrue),
     pos:'All important notebooks (Sales, Cash, Registration, and Closed Accounts) are updated.' },
-  { test:()=>condGood('inventory.mcUnits'), pos:'Brand-new and repossessed units were reconciled with the actual count.' },
-  { test:()=>condGood('inventory.brandNewCondition'), pos:'All brand-new units are free from scratches and with TBA\u2019s.' },
+  { test:()=>condGood('inventory.repoUnits'), pos:()=>'Repossessed units were reconciled with the actual count'+countSuffix('inventory.repoUnits')+'.' },
+  { test:()=>condGood('inventory.brandNewCondition'), pos:()=>'All brand-new units are free from scratches and with TBA\u2019s'+countSuffix('inventory.brandNewCondition')+'.' },
   { test:()=>ynTrue('officialReceipts.allComplete'), pos:'OR, SI, and DR (used and unused) are complete based on Finance monitoring.' },
   { test:()=>ynTrue('officialReceipts.properlyValidated'), pos:'Official receipts are properly used and validated.' },
-  { test:()=>condGood('inventory.serviceUnits'), pos:'Issued service units are recorded in the system inventory.' },
+  { test:()=>condGood('inventory.serviceUnits'), pos:()=>'Issued service units are recorded in the system inventory'+countSuffix('inventory.serviceUnits')+'.' },
   { test:()=>condGood('inventory.oil', ['Complete']) && condGood('inventory.promo', ['Complete']), pos:'Oil & Promo inventory is reconciled with the actual count.' },
   { test:()=>condGood('image.branchKey'), pos:'The branch key is handled by the branch manager.' },
   { test:()=>statusGood('inventory.assets'), pos:'All assets are recorded in the admin sheets.' },
@@ -1470,14 +1491,15 @@ const FINDINGS_RULES = [
   { test:()=>ynTrue('fieldCollection.picturesOnTime'), pos:'Collectors are submitting field collection pictures on time.' },
   { test:()=>ynTrue('fieldCollection.copiesMonitored'), pos:'Field picture copies are properly monitored by the cashier.' },
   { test:()=>ynTrue('notebooks.noPendingChattel'), pos:'Branch is without pending chattel documents.' },
-  { test:()=>condGood('inventory.repairUnits'), pos:'Repair units (if any) are properly accounted for.' },
+  { test:()=>condGood('inventory.repairUnits'), pos:()=>'Repair units (if any) are properly accounted for'+countSuffix('inventory.repairUnits')+'.' },
   { test:()=>condGood('image.branchVaultKey'), pos:'The branch vault key is properly secured.' },
   { test:()=>statusGood('inventory.tools'), pos:'Company-owned tools are complete.' },
   { test:()=>statusGood('inventory.spareparts'), pos:'Spareparts (3S shop) are complete.' },
   { test:()=>statusGood('inventory.platesOrCr'), pos:'Plates and OR-CR are complete.' }
 ];
 function buildBranchBullets(){
-  const bullets = FINDINGS_RULES.filter(r=>{ try{ return !!r.test(); }catch(e){ return false; } }).map(r=>r.pos);
+  const bullets = FINDINGS_RULES.filter(r=>{ try{ return !!r.test(); }catch(e){ return false; } })
+    .map(r=> typeof r.pos === 'function' ? r.pos() : r.pos);
   const orRemarks = get('officialReceipts.tableRemarks');
   if(orRemarks && String(orRemarks).trim()) bullets.push('OR / SI / DR remarks: ' + String(orRemarks).trim());
   return bullets;
@@ -1659,12 +1681,12 @@ function downloadPreviewDoc(){
   // Page Setup needed by whoever you send it to.
   const style = '@page WordSection1{size:8.5in 11.0in; margin:1.0in 1.0in 1.0in 1.0in; mso-page-orientation:portrait;}'
     + 'div.WordSection1{page:WordSection1;}'
-    + 'body{font-family:Calibri,"Segoe UI",Arial,sans-serif; font-size:12pt; line-height:1.55; color:#111;}'
+    + 'body{font-family:Calibri,"Segoe UI",Arial,sans-serif; font-size:12pt; line-height:1.15; color:#111;}'
     + '.pv-branch,.pv-title,.pv-date{font-weight:normal; text-align:left; font-size:12pt;}'
     + '.pv-date{margin-bottom:20px;}'
-    + '.pv-section{font-weight:bold; margin:18px 0 6px; padding-bottom:3px; border-bottom:1px solid #ccc;}'
+    + '.pv-section{font-weight:bold; margin:16px 0 2px;}'
     + '.pv-list{margin:0 0 4px; padding-left:34px;}'
-    + '.pv-list li{margin-bottom:6px;}'
+    + '.pv-list li{margin-bottom:2px;}'
     + '.pv-footer{width:100%; margin-top:56px;}'
     + '.pv-sign{display:inline-block; width:45%; vertical-align:top;}'
     + '.pv-sign-label{font-size:12pt;}'
@@ -1987,7 +2009,9 @@ function buildReportHtml(h){
     const c = getFrom(s,p) || {};
     const cond = c.condition || '\u2014';
     const condOk = (cond==='Good'||cond==='Complete'), condBad = (cond==='Poor'||cond==='Incomplete');
+    const hasCount = c.count !== '' && c.count != null && !isNaN(Number(c.count));
     html += '<div class="report-row"><div class="r-label">'+condLabels[p]
+      + (hasCount ? '<div class="r-remark">Count: '+escHtml(c.count)+'</div>' : '')
       + (c.remarks ? '<div class="r-remark">'+escHtml(c.remarks)+'</div>' : '')
       + '</div><span class="badge '+(condOk?'ok':condBad?'del':'')+'">'+escHtml(cond)+'</span></div>';
   });

@@ -94,6 +94,7 @@
   .brand .mark{font-family:'Spectral',serif; font-weight:700; font-size:19px; letter-spacing:.6px; color:#fff; line-height:1.2;
     text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   .brand .sub{font-size:12px; color:#B7C0E8; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .brand .draft-status{font-size:10.5px; color:#8993C4; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   .hdr-right{display:flex; align-items:center; gap:8px; flex-shrink:0;}
   .hdr-chip{font-size:10.5px; font-weight:700; letter-spacing:.3px; padding:5px 10px; border-radius:20px;
     background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.16); white-space:nowrap; color:#fff;}
@@ -133,18 +134,33 @@
   .drawer-section-title{font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase;
     letter-spacing:.4px; padding:10px 8px 8px; margin-top:2px;}
   .drawer-section-title:first-child{margin-top:0;}
-  .history-item{display:flex; align-items:center; gap:10px; width:100%; text-align:left;
-    border:1px solid var(--line); background:#fff; border-radius:10px; padding:10px 12px; margin-bottom:8px;
-    font-family:inherit; cursor:pointer;}
+  /* ---------- history item card (redesigned: was one cramped row of
+     branch + date + score + chevron fighting for space on a narrow
+     drawer; now a proper stacked card so nothing has to truncate or
+     squeeze together on smaller screens) ---------- */
+  .history-item{display:flex; flex-direction:column; width:100%; text-align:left;
+    border:1px solid var(--line); border-left:3px solid var(--line-strong,#D7DCF0);
+    background:#fff; border-radius:12px; padding:12px 13px; margin-bottom:10px;
+    font-family:inherit; cursor:pointer; gap:8px;
+    box-shadow:0 1px 2px rgba(15,37,71,.04);}
   .history-item:active{background:var(--accent-soft); border-color:#C9D1EE;}
-  .history-item .h-main{flex:1; min-width:0;}
-  .history-item .h-branch{font-size:13px; font-weight:700; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-  .history-item .h-date{font-size:11px; color:var(--muted); margin-top:2px;}
-  .history-item .h-score{flex-shrink:0; font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:700;
-    padding:4px 9px; border-radius:20px;}
+  .history-item.good{border-left-color:var(--ok);}
+  .history-item.bad{border-left-color:var(--del);}
+  .history-item .hi-top{display:flex; align-items:flex-start; justify-content:space-between; gap:10px;}
+  .history-item .h-branch{font-size:14.5px; font-weight:700; color:var(--ink); line-height:1.3;
+    overflow-wrap:anywhere;}
+  .history-item .h-score{flex-shrink:0; font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:800;
+    padding:4px 10px; border-radius:20px; white-space:nowrap;}
   .history-item .h-score.good{background:var(--ok-soft); color:var(--ok);}
   .history-item .h-score.bad{background:var(--del-soft); color:var(--del);}
-  .history-item .chev{color:var(--muted-2); flex-shrink:0;}
+  .history-item .hi-meta{display:flex; flex-wrap:wrap; gap:6px;}
+  .history-item .hi-chip{display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--muted);
+    background:#F4F6FC; border-radius:7px; padding:4px 8px; line-height:1.2; white-space:nowrap;}
+  .history-item .hi-chip svg{width:11px; height:11px; flex-shrink:0; opacity:.75;}
+  .history-item .hi-foot{display:flex; align-items:center; justify-content:space-between; gap:8px;
+    border-top:1px solid var(--line); margin-top:2px; padding-top:8px;}
+  .history-item .hi-foot-label{font-size:11px; color:var(--accent-dark); font-weight:700;}
+  .history-item .chev{color:var(--muted-2); flex-shrink:0; font-size:16px;}
 
   .report-hero{display:flex; align-items:center; gap:14px; padding:14px; background:var(--accent-soft);
     border:1px solid #D6DBF6; border-radius:12px; margin-bottom:14px;}
@@ -570,6 +586,7 @@
     <div class="brand">
       <div class="mark">Audit Sheet</div>
       <div class="sub" id="headSub">New audit &middot; not yet submitted</div>
+      <div class="draft-status" id="draftStatus"></div>
     </div>
     <div class="hdr-right">
       <button class="hdr-icon-btn" id="menuBtn" aria-label="Menu" onclick="openBranchMenu()">
@@ -589,12 +606,6 @@
   </div>
   <button class="tb-icon-btn" aria-label="Preview audit findings report" onclick="openPreview()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
-  </button>
-  <button class="tb-icon-btn" aria-label="Print this audit" onclick="printFindings()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-  </button>
-  <button class="tb-icon-btn" aria-label="Share this audit" onclick="shareCurrentAudit()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>
   </button>
 </div>
 </div>
@@ -644,6 +655,7 @@
     <div class="preview-actions">
       <button class="preview-btn" aria-label="Reset preview to auto-drafted text" onclick="resetPreviewDraft()">Reset</button>
       <button class="preview-btn" onclick="capturePreviewEdits(); window.print()">Print</button>
+      <button class="preview-btn" aria-label="Share this audit as a Word document" onclick="shareAuditDoc()">Share</button>
       <button class="preview-btn primary" onclick="downloadPreviewDoc()">Download</button>
     </div>
   </div>
@@ -745,6 +757,103 @@ let previewEditedHtml = null;
 let searchQuery = '';
 let searchMatches = [];
 let searchIndex = -1;
+
+/* ============================================================
+   DRAFT AUTOSAVE
+   ------------------------------------------------------------
+   Protects whatever's on screen but NOT YET SUBMITTED from an
+   internet drop, an accidentally-closed tab, a crashed browser, or
+   just navigating away without meaning to. Every few seconds (and
+   again right before the tab hides/closes) the current checklist is
+   snapshotted into this browser's localStorage — purely local, no
+   internet or backend needed for this part. The next time the page
+   opens and a leftover draft is found, it's offered back before any
+   audit data is entered, so nothing typed is ever silently lost.
+   This is separate from (and doesn't touch) the "previous submitted
+   audits" history above — a draft is only ever the CURRENT,
+   not-yet-submitted audit.
+   ============================================================ */
+const DRAFT_KEY = 'branchAuditDraft_v1';
+let lastDraftSavedAt = null;
+
+/** True if `s` differs from a brand-new blank form — i.e. there's
+ *  actually something worth protecting. auditDate defaults to
+ *  "today" on every fresh form, so that alone doesn't count. */
+function isDraftWorthKeeping(s){
+  if(!s) return false;
+  const blank = freshState();
+  blank.auditDate = s.auditDate;
+  try{ return JSON.stringify(s) !== JSON.stringify(blank); }
+  catch(e){ return true; }
+}
+function saveDraftNow(){
+  if(submitting) return; // a real save is already in flight
+  try{
+    if(!isDraftWorthKeeping(state)){
+      localStorage.removeItem(DRAFT_KEY);
+      lastDraftSavedAt = null;
+      updateDraftIndicator();
+      return;
+    }
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({
+      state: state,
+      editingSubmissionId: editingSubmissionId,
+      previewEditedHtml: previewEditedHtml,
+      savedAt: new Date().toISOString()
+    }));
+    lastDraftSavedAt = new Date().toISOString();
+  }catch(e){ /* storage full/unavailable \u2014 best effort, never interrupts typing */ }
+  updateDraftIndicator();
+}
+function clearDraft(){
+  try{ localStorage.removeItem(DRAFT_KEY); }catch(e){}
+  lastDraftSavedAt = null;
+  updateDraftIndicator();
+}
+/** Small "Draft saved 10:42 AM" line under the header title, so
+ *  there's a visible, honest signal the work is protected \u2014 not
+ *  just a silent background timer. Blank whenever there's nothing
+ *  saved (fresh form, or right after a successful submit). */
+function updateDraftIndicator(){
+  const el = document.getElementById('draftStatus');
+  if(!el) return;
+  if(!lastDraftSavedAt){ el.textContent = ''; return; }
+  const d = new Date(lastDraftSavedAt);
+  const h12 = ((d.getHours() % 12) || 12);
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  el.textContent = 'Draft saved \u00b7 ' + h12 + ':' + mm + ' ' + (d.getHours() < 12 ? 'AM' : 'PM');
+}
+/** Called once on page load. If a leftover draft is found (and it's
+ *  not just a blank form), ask before touching anything else \u2014
+ *  restoring replaces whatever's currently on screen (a blank form
+ *  at boot, so nothing is lost either way). */
+function tryRestoreDraft(){
+  let raw;
+  try{ raw = localStorage.getItem(DRAFT_KEY); }catch(e){ return; }
+  if(!raw) return;
+  let snap;
+  try{ snap = JSON.parse(raw); }catch(e){ return; }
+  if(!snap || !isDraftWorthKeeping(snap.state)) return;
+  const label = (snap.state.branch ? snap.state.branch : 'an audit')
+    + (snap.state.auditDate ? ' \u2014 ' + snap.state.auditDate : '');
+  const when = snap.savedAt ? new Date(snap.savedAt).toLocaleString() : 'earlier';
+  if(confirm('Unsubmitted work was found from ' + when + ' (' + label + ').\n\nRestore it? Tap Cancel to discard it and start fresh.')){
+    state = snap.state;
+    editingSubmissionId = snap.editingSubmissionId || null;
+    previewEditedHtml = snap.previewEditedHtml || null;
+    lastDraftSavedAt = snap.savedAt || null;
+    render();
+    updateDraftIndicator();
+    showToast('Draft restored \u2014 continue where you left off.');
+  } else {
+    clearDraft();
+  }
+}
+setInterval(saveDraftNow, 5000);
+window.addEventListener('beforeunload', saveDraftNow);
+document.addEventListener('visibilitychange', function(){
+  if(document.visibilityState === 'hidden') saveDraftNow();
+});
 
 /* ============================================================
    PERSISTENCE (previous submitted audits)
@@ -1389,8 +1498,8 @@ function renderInventory(){
   return card('sec-inventory','Inventories', null, null,
     conditionRow('inventory.oil','Oil',['Complete','Incomplete'])
     + conditionRow('inventory.promo','Promo',['Complete','Incomplete'])
-    + conditionRow('inventory.repoUnits','Repossessed (Repo) units', null, true)
     + conditionRow('inventory.brandNewCondition','Brand-new (BN) units \u2014 free from scratches, with TBA\u2019s', null, true)
+    + conditionRow('inventory.repoUnits','Repossessed (Repo) units', null, true)
     + conditionRow('inventory.serviceUnits','Service units', null, true)
     + conditionRow('inventory.repairUnits','Repair units (if any)', null, true)
     + '<div class="review-sub" style="margin-top:14px;">Tools (owned by company)</div>' + statusRow('inventory.tools')
@@ -1810,17 +1919,10 @@ function closePreview(){
   document.getElementById('previewOverlay').setAttribute('aria-hidden','true');
   document.body.classList.remove('previewing');
 }
-/* The toolbar's Print icon used to call window.print() straight on
-   the checklist screen, which is why printing didn't look like the
-   Word doc — it was printing the wrong view. It now opens the same
-   Word-style "AUDIT FINDINGS" preview first (same one the Preview
-   button and Download use) and prints THAT, so print, preview, and
-   the downloaded file all match the exact same document. */
-function printFindings(){
-  openPreview();
-  setTimeout(()=>window.print(), 60);
-}
-function downloadPreviewDoc(){
+/* Builds the same Word-openable .doc file used by both Download and
+   Share, from whatever's currently in the preview page (so print,
+   preview, download, and share all show the exact same document). */
+function buildWordDocFile_(){
   capturePreviewEdits();
   const pageEl = document.getElementById('previewPage');
   const content = pageEl.innerHTML;
@@ -1848,6 +1950,12 @@ function downloadPreviewDoc(){
     + '<head><meta charset="utf-8"><title>Audit Findings</title><style>'+style+'</style></head>'
     + '<body><div class="WordSection1">'+content+'</div></body></html>';
   const blob = new Blob(['\ufeff', doc], { type:'application/msword' });
+  let file = null;
+  try{ file = new File([blob], filename, { type:'application/msword' }); }catch(e){ /* File() unsupported \u2014 blob-only fallback below */ }
+  return { blob, file, filename };
+}
+function downloadPreviewDoc(){
+  const { blob, filename } = buildWordDocFile_();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
@@ -1857,33 +1965,34 @@ function downloadPreviewDoc(){
 }
 
 /* ============================================================
-   SHARE (toolbar below header) — sends a quick text snapshot of
-   the audit you're currently filling in via the device's native
-   share sheet (Messenger shows up there on phones that have it
-   installed). Falls back to copying the text if share isn't
-   available, e.g. on most desktop browsers.
+   SHARE (preview popup) — sends the Word (.doc) file itself
+   through the device's native share sheet, so it can be handed
+   straight to Word, Google Drive, Messenger, a printer app, email,
+   etc. — from there, print it or forward it same as any other
+   Word file. Falls back to just downloading the file when the
+   browser can't share files (most desktop browsers), so nothing
+   is a dead end.
    ============================================================ */
-async function shareCurrentAudit(){
-  const score = computeScore();
-  const lines = [
-    'Branch Audit \u2014 ' + (state.branch || '(no branch yet)'),
-    state.auditor ? 'Auditor: ' + state.auditor : null,
-    state.auditDate ? 'Date: ' + state.auditDate : null,
-    'Checklist so far: ' + score.pct + '% (' + score.yes + ' yes, ' + score.no + ' no)',
-    state.findings.length ? 'Findings logged: ' + state.findings.length : null
-  ].filter(Boolean);
-  const text = lines.join('\n');
-
-  if(navigator.share){
-    try{ await navigator.share({ title: 'Branch Audit', text }); return; }
-    catch(e){ if(e && e.name === 'AbortError') return; /* user cancelled, fall through to copy */ }
+async function shareAuditDoc(){
+  const { file, blob, filename } = buildWordDocFile_();
+  const shareTitle = 'Audit Findings' + (state.branch ? ' - ' + state.branch : '');
+  if(file && navigator.canShare && navigator.canShare({ files:[file] })){
+    try{
+      await navigator.share({ files:[file], title: shareTitle });
+      return;
+    }catch(e){
+      if(e && e.name === 'AbortError') return; // user cancelled the share sheet
+      // fall through to download below
+    }
   }
-  try{
-    await navigator.clipboard.writeText(text);
-    showToast('Sharing isn\u2019t available here \u2014 summary copied. Paste it into Messenger.');
-  }catch(e){
-    showToast('Couldn\u2019t share or copy automatically \u2014 select the Review section text manually.');
-  }
+  // No file-sharing support here — download it instead so the person
+  // still ends up with the Word file, ready to share/print manually.
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url), 4000);
+  showToast('Sharing isn\u2019t available here \u2014 downloaded the Word file instead. Open it to share or print.');
 }
 
 async function doSubmit(){
@@ -1936,6 +2045,7 @@ async function doSubmit(){
       editingSubmissionId = null;
       state = freshState();
       previewEditedHtml = null;
+      clearDraft();
       render();
       window.scrollTo({top:0, behavior:'smooth'});
       renderBranchDrawer();
@@ -1946,7 +2056,7 @@ async function doSubmit(){
   } catch(err){
     submitting = false;
     render();
-    showToast('Could not reach the server: ' + err.message);
+    showToast('Could not reach the server \u2014 your answers are safe as a draft on this device. Try Submit again once you\u2019re back online: ' + err.message);
   }
 }
 
@@ -1981,6 +2091,7 @@ function cancelEdit(){
   editingSubmissionId = null;
   state = freshState();
   previewEditedHtml = null;
+  clearDraft();
   render();
   window.scrollTo({top:0, behavior:'smooth'});
 }
@@ -2094,13 +2205,22 @@ function renderHistorySection(list, status, detail){
     + list.map((h,i) => {
         const pct = h.score ? h.score.pct : 0;
         const goodBad = pct >= 80 ? 'good' : 'bad';
-        return '<button class="history-item" onclick="openReport('+i+')">'
-          + '<div class="h-main">'
+        const auditorChip = h.auditor
+          ? '<span class="hi-chip">'
+            + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
+            + escHtml(h.auditor) + '</span>'
+          : '';
+        return '<button class="history-item '+goodBad+'" onclick="openReport('+i+')">'
+          + '<div class="hi-top">'
           + '<div class="h-branch">'+(escHtml(h.branch)||'(no branch name)')+'</div>'
-          + '<div class="h-date">'+escHtml(h.auditDate||'')+' &middot; submitted '+escHtml(fmtDate(h.submittedAt))+'</div>'
-          + '</div>'
           + '<div class="h-score '+goodBad+'">'+pct+'%</div>'
-          + '<span class="chev">&rsaquo;</span>'
+          + '</div>'
+          + '<div class="hi-meta">'
+          + '<span class="hi-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>'+escHtml(h.auditDate||'\u2014')+'</span>'
+          + '<span class="hi-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>Submitted '+escHtml(fmtDate(h.submittedAt))+'</span>'
+          + auditorChip
+          + '</div>'
+          + '<div class="hi-foot"><span class="hi-foot-label">View summary report</span><span class="chev">&rsaquo;</span></div>'
           + '</button>';
       }).join('');
 }
@@ -2285,6 +2405,7 @@ if(window.ResizeObserver){
 syncFooterHeight();
 
 render();
+tryRestoreDraft();
 loadBranches(true);
 </script>
 </body>

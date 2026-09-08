@@ -153,6 +153,9 @@
     padding:4px 10px; border-radius:20px; white-space:nowrap;}
   .history-item .h-score.good{background:var(--ok-soft); color:var(--ok);}
   .history-item .h-score.bad{background:var(--del-soft); color:var(--del);}
+  .history-item .hi-date{display:flex; align-items:center; gap:6px; font-size:12.5px;
+    font-weight:600; color:var(--accent-dark); margin-top:-2px;}
+  .history-item .hi-date svg{width:14px; height:14px; flex-shrink:0; opacity:.85;}
   .history-item .hi-meta{display:flex; flex-wrap:wrap; gap:6px;}
   .history-item .hi-chip{display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--muted);
     background:#F4F6FC; border-radius:7px; padding:4px 8px; line-height:1.2; white-space:nowrap;}
@@ -210,6 +213,22 @@
     body.previewing .preview-toolbar{display:none !important;}
     body.previewing .preview-page-wrap{padding:0 !important; overflow:visible !important; display:block !important;}
     body.previewing .preview-page{box-shadow:none !important; max-width:100% !important; width:auto !important; min-height:0 !important; padding:0 !important; border-radius:0 !important;}
+
+    /* Printing a PAST audit's summary report from the history drawer.
+       The generic ".drawer{display:none}" rule above would otherwise hide
+       the report drawer too — these ID-scoped rules win on specificity
+       and put just that one drawer's content on the printed page. */
+    body.printing-report #scrollArea, body.printing-report footer.nav-bar,
+    body.printing-report .drawer-overlay, body.printing-report .toast,
+    body.printing-report .app-toolbar, body.printing-report #branchDrawer{display:none !important;}
+    body.printing-report #reportDrawer{display:block !important; position:static !important;
+      width:auto !important; height:auto !important; box-shadow:none !important; transform:none !important;}
+    body.printing-report #reportDrawer .drawer-close{display:none !important;}
+    body.printing-report #reportDrawer .drawer-head{border-bottom:2px solid #000 !important;
+      background:none !important; padding:0 0 10px !important; box-shadow:none !important;}
+    body.printing-report #reportDrawer .drawer-title{color:#000 !important; font-size:18px !important;}
+    body.printing-report #reportDrawer .drawer-body{overflow:visible !important; padding:14px 0 0 !important;}
+    body.printing-report .report-actions{display:none !important;}
   }
 
   /* ---------- full-screen report preview ---------- */
@@ -448,10 +467,20 @@
   /* ---------- findings card header ---------- */
   .finding-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;}
 
-  /* ---------- report drawer actions (edit / delete a submitted audit) ---------- */
-  .report-actions{display:flex; gap:8px; margin-bottom:14px;}
-  .report-actions .btn{flex:1; text-align:center; padding:9px 10px; font-size:12.5px;}
+  /* ---------- report drawer actions (print / edit / delete a submitted audit) ----------
+     Redesigned as a 3-up grid with an icon over a label, rather than three
+     flex:1 text buttons crammed edge-to-edge — that layout got visibly tight
+     once a third (Print) button was added to what used to be just Edit/Delete. */
+  .report-actions{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:16px;}
+  .report-actions .btn{display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:5px; text-align:center; padding:11px 6px 10px; font-size:11.5px; line-height:1.15;
+    border-radius:11px; white-space:nowrap;}
+  .report-actions .btn svg{width:17px; height:17px; flex-shrink:0;}
   .report-actions .btn.danger{color:var(--del); border-color:#F0C3CE; background:var(--del-soft);}
+  .report-actions .btn:disabled{opacity:.55; cursor:not-allowed;}
+  @media (min-width:400px){
+    .report-actions .btn{flex-direction:row; padding:10px 8px; font-size:12.5px;}
+  }
 
   /* ---------- pair (confirmation sampling) cards ---------- */
   .pair-card{border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:10px; background:#F8F9FD;}
@@ -1536,7 +1565,7 @@ function renderReview(){
     + '<div class="info-list">'
     + '<div class="info-row"><span>Branch</span><span>'+(escHtml(state.branch)||'&mdash;')+'</span></div>'
     + '<div class="info-row"><span>Auditor</span><span>'+(escHtml(state.auditor)||'&mdash;')+'</span></div>'
-    + '<div class="info-row"><span>Audit date</span><span>'+(escHtml(state.auditDate)||'&mdash;')+'</span></div>'
+    + '<div class="info-row"><span>Audit date</span><span>'+(state.auditDate ? escHtml(mdy(state.auditDate)) : '&mdash;')+'</span></div>'
     + '<div class="info-row"><span>Net collection</span><span>'+(escHtml(state.cash.netCollection)||'&mdash;')+'</span></div>'
     + '<div class="info-row"><span>Cash on hand</span><span>'+(escHtml(state.cash.cashOnHand)||'&mdash;')+'</span></div>'
     + '</div>'
@@ -1592,7 +1621,7 @@ function render(){
   const sheetHtml = sections.map(s => s.render()).join('');
   document.getElementById('main').innerHTML = sheetHtml;
   document.getElementById('reviewWrap').innerHTML = renderReview();
-  document.getElementById('headSub').textContent = state.branch ? (state.branch + (state.auditDate?(' \u00b7 '+state.auditDate):'')) : 'New audit \u00b7 not yet submitted';
+  document.getElementById('headSub').textContent = state.branch ? (state.branch + (state.auditDate?(' \u00b7 '+mdy(state.auditDate)):'')) : 'New audit \u00b7 not yet submitted';
   const s = computeScore();
   const footerStatus = document.getElementById('footerStatus');
   footerStatus.innerHTML = (state.branch ? escHtml(state.branch)+' &middot; ' : '')
@@ -2174,13 +2203,28 @@ function goToDashboard(){
   window.location.href = 'index.html';
 }
 
+/* Formats a date-only value ('YYYY-MM-DD' from a date input, or any
+   parseable date/datetime string) as MM/DD/YYYY. Parses the
+   'YYYY-MM-DD' prefix directly rather than going through `new Date()`
+   for that case, since new Date('2026-09-08') is UTC midnight and can
+   display as Sep 7 in timezones behind UTC — a real one-day-off bug
+   for an audit date. */
+function mdy(val){
+  if(!val) return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(val));
+  if(m) return m[2]+'/'+m[3]+'/'+m[1];
+  try{
+    const d = new Date(val);
+    if(isNaN(d.getTime())) return String(val);
+    return String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+'/'+d.getFullYear();
+  }catch(e){ return String(val); }
+}
 function fmtDate(iso){
   if(!iso) return '';
   try{
     const d = new Date(iso);
     if(isNaN(d.getTime())) return iso;
-    return d.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})
-      + ' \u00b7 ' + d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+    return mdy(iso) + ' \u00b7 ' + d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
   }catch(e){ return iso; }
 }
 
@@ -2201,7 +2245,6 @@ function renderHistorySection(list, status, detail){
   }
   return '<div class="drawer-section-title">Previous audits</div>'
     + banner
-    + '<div class="drawer-hint">Tap an audit to view its summary report.</div>'
     + list.map((h,i) => {
         const pct = h.score ? h.score.pct : 0;
         const goodBad = pct >= 80 ? 'good' : 'bad';
@@ -2215,8 +2258,8 @@ function renderHistorySection(list, status, detail){
           + '<div class="h-branch">'+(escHtml(h.branch)||'(no branch name)')+'</div>'
           + '<div class="h-score '+goodBad+'">'+pct+'%</div>'
           + '</div>'
+          + '<div class="hi-date"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>'+(h.auditDate ? escHtml(mdy(h.auditDate)) : '\u2014')+'</div>'
           + '<div class="hi-meta">'
-          + '<span class="hi-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>'+escHtml(h.auditDate||'\u2014')+'</span>'
           + '<span class="hi-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>Submitted '+escHtml(fmtDate(h.submittedAt))+'</span>'
           + auditorChip
           + '</div>'
@@ -2254,7 +2297,7 @@ function buildReportHtml(h){
   html += '<div class="info-list">'
     + '<div class="info-row"><span>Branch</span><span>'+(escHtml(h.branch)||'&mdash;')+'</span></div>'
     + '<div class="info-row"><span>Auditor</span><span>'+(escHtml(h.auditor)||'&mdash;')+'</span></div>'
-    + '<div class="info-row"><span>Audit date</span><span>'+(escHtml(h.auditDate)||'&mdash;')+'</span></div>'
+    + '<div class="info-row"><span>Audit date</span><span>'+(h.auditDate ? escHtml(mdy(h.auditDate)) : '&mdash;')+'</span></div>'
     + '<div class="info-row"><span>Submitted</span><span>'+(escHtml(fmtDate(h.submittedAt))||'&mdash;')+'</span></div>'
     + (s.cash ? '<div class="info-row"><span>Net collection</span><span>'+(escHtml(s.cash.netCollection)||'&mdash;')+'</span></div>'
               + '<div class="info-row"><span>Cash on hand</span><span>'+(escHtml(s.cash.cashOnHand)||'&mdash;')+'</span></div>' : '')
@@ -2306,15 +2349,37 @@ function buildReportHtml(h){
   return html;
 }
 
-/* Edit/Delete buttons shown at the top of the report drawer for a
-   past audit. Edit is disabled (with an explanatory title) when this
-   device doesn't have the audit's full state cached locally. */
+/* Print/Edit/Delete buttons shown at the top of the report drawer for
+   a past audit. Edit is disabled (with an explanatory title) when this
+   device doesn't have the audit's full state cached locally. Print
+   works regardless — it prints exactly what's on screen in this
+   drawer, no cached state required. */
 function reportActionsHtml(h){
   const canEdit = !!h.state;
+  const printIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>';
+  const editIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>';
+  const delIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
   return '<div class="report-actions">'
-    + '<button type="button" class="btn"'+(canEdit?' onclick="editAuditFromReport()"':' disabled title="Full data not available on this device"')+'>Edit</button>'
-    + '<button type="button" class="btn danger" onclick="deleteAuditFromReport()">Delete</button>'
+    + '<button type="button" class="btn" onclick="printHistoryReport()">'+printIcon+'<span>Print</span></button>'
+    + '<button type="button" class="btn"'+(canEdit?' onclick="editAuditFromReport()"':' disabled title="Full data not available on this device"')+'>'+editIcon+'<span>Edit</span></button>'
+    + '<button type="button" class="btn danger" onclick="deleteAuditFromReport()">'+delIcon+'<span>Delete</span></button>'
     + '</div>';
+}
+
+/* Prints just this past audit's summary report (the reportDrawer's
+   current content), without needing the audit's full cached state —
+   unlike Edit, this always works. A body class flips on print-only
+   CSS (see the printing-report rules in the @media print block) that
+   hides everything else and lets just the report drawer's content
+   fill the printed page; afterprint removes the class again so the
+   on-screen view goes right back to normal. */
+function printHistoryReport(){
+  document.body.classList.add('printing-report');
+  const cleanup = () => document.body.classList.remove('printing-report');
+  window.addEventListener('afterprint', cleanup, { once:true });
+  window.print();
+  // Fallback for browsers/webviews that never fire afterprint reliably.
+  setTimeout(cleanup, 2000);
 }
 
 function openReport(idx){

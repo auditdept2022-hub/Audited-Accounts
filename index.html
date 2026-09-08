@@ -5394,28 +5394,74 @@
       return { wch: Math.min(Math.max(maxLen + 2, 12), cap) };
     });
 
-    // Previous Remarks holds a growing, newline-separated audit history —
-    // wrap it within its own cell instead of letting the column keep
-    // stretching sideways. Deliberately NOT setting an explicit row
-    // height here: Excel auto-sizes a wrapped cell's row height to fit
-    // its content, and keeps re-fitting it live as the column is resized
-    // — but only as long as no explicit height has been set. Setting one
-    // (even a generous one) would lock that row's height, so widening
-    // the column later wouldn't shrink it back down and would leave
-    // blank space in the cell instead.
+    // Auditor Remarks AND Previous Remarks both hold free-form, often
+    // multi-line text (Auditor Remarks stacks a new dated entry on top
+    // each time — see combineRemark_ on the backend — and Previous
+    // Remarks is a growing newline-separated audit history), so both are
+    // wrapped within their own cell instead of letting the column keep
+    // stretching sideways.
+    const auditorCol = headers.length - 2; // 'Auditor Remarks'
+    const wrapCols = [auditorCol, prevCol];
     rows.forEach((r, i)=>{
-      const addr = XLSX.utils.encode_cell({ r: i + 1, c: prevCol });
-      if(ws[addr]) ws[addr].s = { alignment: { wrapText: true, vertical: 'top' } };
+      wrapCols.forEach(colIdx=>{
+        const addr = XLSX.utils.encode_cell({ r: i + 1, c: colIdx });
+        if(ws[addr]) ws[addr].s = { alignment: { wrapText: true, vertical: 'top' } };
+      });
     });
+
+    // Auto-fit each row's HEIGHT to how many lines its wrapped cells will
+    // actually take, so a customer with a long remark or a long stacked
+    // history isn't squashed into a single-line-tall row. Excel/Google
+    // Sheets don't reliably recompute wrapped-row height on their own for
+    // a file written this way (that only happens live, if a person
+    // resizes a column by hand) — a row height must be set explicitly.
+    // Line count is estimated as the sum, per hard newline in the text,
+    // of how many times that line has to soft-wrap at the column's own
+    // character width (same `wch` used for that column above).
+    function wrappedLineCount_(text, colWch){
+      const s = String(text == null ? '' : text);
+      if(!s) return 1;
+      const width = Math.max(1, colWch || 20);
+      return s.split('\n').reduce((sum, line)=>{
+        return sum + Math.max(1, Math.ceil(line.length / width));
+      }, 0);
+    }
+    const POINTS_PER_LINE = 15; // Excel's default single-line row height
+    ws['!rows'] = rows.map(r=>{
+      let maxLines = 1;
+      wrapCols.forEach(colIdx=>{
+        const colWch = ws['!cols'][colIdx] && ws['!cols'][colIdx].wch;
+        const lines = wrappedLineCount_(r[colIdx], colWch);
+        if(lines > maxLines) maxLines = lines;
+      });
+      return { hpt: maxLines * POINTS_PER_LINE };
+    });
+    ws['!rows'].unshift({ hpt: POINTS_PER_LINE }); // header row stays single-line
 
     // Keeps the header row visible while scrolling a long list.
     ws['!freeze'] = { xSplit: 0, ySplit: 1 };
 
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Customers');
-    XLSX.writeFile(wb, 'customers-' + new Date().toISOString().slice(0,10) + '.xlsx');
+
+    // Filename: "<Branch Name> (MM-DD-YYYY).xlsx" — e.g.
+    // "NAGCARLAN (09-08-2026).xlsx" — instead of a generic "customers-...".
+    // Branch names can contain characters that aren't safe in a filename
+    // (Windows/macOS both reject at least \ / : * ? " < > |), so those are
+    // swapped for a space the same way a stray double space elsewhere in
+    // this app is tolerated, rather than letting the browser silently
+    // mangle or refuse the download.
+    const now = new Date();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const yyyy = now.getFullYear();
+    const datedLabel = mm + '-' + dd + '-' + yyyy;
+    const safeBranch = String(currentSheet || 'Export').replace(/[\\/:*?"<>|]/g, ' ').trim();
+    const filename = safeBranch + ' (' + datedLabel + ').xlsx';
+
+    XLSX.writeFile(wb, filename);
     toast('Exported ' + customers.length + ' customers.');
-    logActivity_('success', 'Exported ' + customers.length + ' customer' + (customers.length === 1 ? '' : 's'), 'Saved as an .xlsx file for branch "' + currentSheet + '".');
+    logActivity_('success', 'Exported ' + customers.length + ' customer' + (customers.length === 1 ? '' : 's'), 'Saved as "' + filename + '".');
   }
 
   // Prints just the customer-info table (the columns shown in the Sheet:

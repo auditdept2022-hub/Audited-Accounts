@@ -213,22 +213,6 @@
     body.previewing .preview-toolbar{display:none !important;}
     body.previewing .preview-page-wrap{padding:0 !important; overflow:visible !important; display:block !important;}
     body.previewing .preview-page{box-shadow:none !important; max-width:100% !important; width:auto !important; min-height:0 !important; padding:0 !important; border-radius:0 !important;}
-
-    /* Printing a PAST audit's summary report from the history drawer.
-       The generic ".drawer{display:none}" rule above would otherwise hide
-       the report drawer too — these ID-scoped rules win on specificity
-       and put just that one drawer's content on the printed page. */
-    body.printing-report #scrollArea, body.printing-report footer.nav-bar,
-    body.printing-report .drawer-overlay, body.printing-report .toast,
-    body.printing-report .app-toolbar, body.printing-report #branchDrawer{display:none !important;}
-    body.printing-report #reportDrawer{display:block !important; position:static !important;
-      width:auto !important; height:auto !important; box-shadow:none !important; transform:none !important;}
-    body.printing-report #reportDrawer .drawer-close{display:none !important;}
-    body.printing-report #reportDrawer .drawer-head{border-bottom:2px solid #000 !important;
-      background:none !important; padding:0 0 10px !important; box-shadow:none !important;}
-    body.printing-report #reportDrawer .drawer-title{color:#000 !important; font-size:18px !important;}
-    body.printing-report #reportDrawer .drawer-body{overflow:visible !important; padding:14px 0 0 !important;}
-    body.printing-report .report-actions{display:none !important;}
   }
 
   /* ---------- full-screen report preview ---------- */
@@ -445,9 +429,19 @@
     .er-table-head, .er-table-row{grid-template-columns:18px .8fr 1fr 1.1fr 20px;}
     .er-table-head > div, .er-cell-input, .er-cell-select{font-size:10.5px; padding:6px 4px;}
   }
-  /* ---------- Official Receipt remarks picker (preset dropdown + optional manual entry) ---------- */
+  /* ---------- Official Receipt remarks picker (preset dropdown OR manual entry, never both at once) ----------
+     "Enter manually" used to stack a second input below the dropdown
+     inside the same cell, which made that row visibly taller than the
+     rest of the table. Now the dropdown is swapped OUT for a plain
+     text input in the exact same spot (same row height as every other
+     cell), with a tiny "back to list" button so it's still easy to
+     switch back to a preset. */
   .er-remarks-picker{display:flex; flex-direction:column; width:100%;}
-  .er-remarks-picker .er-remarks-manual{border-top:1px solid var(--line);}
+  .er-remarks-picker-manual{display:flex; flex-direction:row; align-items:center; width:100%;}
+  .er-remarks-picker-manual .er-cell-input{flex:1 1 auto; min-width:0;}
+  .er-remarks-back{flex:0 0 auto; border:none; border-left:1px solid var(--line); background:transparent;
+    color:var(--muted-2); font-size:11px; line-height:1; padding:7px 6px; cursor:pointer; white-space:nowrap;}
+  .er-remarks-back:active{color:var(--text); background:var(--accent-soft);}
   /* ---------- drag-to-reorder entries (Official Receipt / SI-DR / Spareparts / Stock) ----------
      A small grip handle on the left of every row. Press-and-drag it (mouse or
      touch, via Pointer Events so it works on phones) up or down to move that
@@ -678,14 +672,14 @@
 <div class="preview-overlay" id="previewOverlay" aria-hidden="true">
   <div class="preview-toolbar">
     <button class="preview-btn" aria-label="Close preview" onclick="closePreview()">&larr; Close</button>
-    <div class="preview-title">Audit Findings preview
-      <span class="preview-hint">Edit freely &mdash; it only changes this document, never the checklist or saved history</span>
+    <div class="preview-title" id="previewTitle">Audit Findings preview
+      <span class="preview-hint" id="previewHint">Edit freely &mdash; it only changes this document, never the checklist or saved history</span>
     </div>
     <div class="preview-actions">
-      <button class="preview-btn" aria-label="Reset preview to auto-drafted text" onclick="resetPreviewDraft()">Reset</button>
+      <button class="preview-btn" id="previewResetBtn" aria-label="Reset preview to auto-drafted text" onclick="resetPreviewDraft()">Reset</button>
       <button class="preview-btn" onclick="capturePreviewEdits(); window.print()">Print</button>
-      <button class="preview-btn" aria-label="Share this audit as a Word document" onclick="shareAuditDoc()">Share</button>
-      <button class="preview-btn primary" onclick="downloadPreviewDoc()">Download</button>
+      <button class="preview-btn" id="previewShareBtn" aria-label="Share this audit as a Word document" onclick="shareAuditDoc()">Share</button>
+      <button class="preview-btn primary" id="previewDownloadBtn" onclick="downloadPreviewDoc()">Download</button>
     </div>
   </div>
   <div class="preview-page-wrap">
@@ -781,6 +775,15 @@ let openReportIdx = -1;
    any) instead of being reset — so re-opening the preview shows
    exactly what you left it as last time, on that exact branch. */
 let previewEditedHtml = null;
+
+/* True while the full-page preview overlay is showing a PAST audit's
+   read-only findings document (opened from the history report drawer's
+   Print button) instead of the live in-progress draft. Lets the shared
+   preview overlay be reused for both without the read-only view ever
+   overwriting previewEditedHtml/state for the audit currently being
+   filled in. See printHistoryReport() / exitHistoryPreviewMode(). */
+let historyPreviewMode = false;
+let historyPreviewTitleHtml = null;
 
 /* search state (toolbar below header) */
 let searchQuery = '';
@@ -1211,18 +1214,24 @@ function orEntryRow(path, row, i, presets, remarksPresets){
   let remarksCell;
   if(remarksPresets){
     const manual = !!row.remarksManual;
-    const selectVal = manual ? '__manual__' : (row.remarks || '');
-    remarksCell = '<div class="er-remarks-picker">'
-      + '<select class="er-cell-select" onchange="setOrRemarksPreset(\''+path+'\','+i+',this.value)">'
-      + '<option value=""'+(selectVal===''?' selected':'')+'>Select&hellip;</option>'
-      + remarksPresets.map(o=>'<option value="'+escAttr(o)+'"'+(selectVal===o?' selected':'')+'>'+escHtml(o)+'</option>').join('')
-      + '<option value="__manual__"'+(manual?' selected':'')+'>Enter manually</option>'
-      + '</select>'
-      + (manual
-        ? '<input class="er-cell-input er-remarks-manual" type="text" placeholder="Remarks" value="'+escAttr(row.remarks)+'"'
-          + ' oninput="setRepField(\''+path+'\','+i+',\'remarks\',this.value)">'
-        : '')
-      + '</div>';
+    if(manual){
+      // Manual mode: the dropdown is replaced entirely by a text input in
+      // the same spot (not stacked below it), so the row stays the same
+      // height as every other row. The small "List" button switches back
+      // to picking a preset instead of typing.
+      remarksCell = '<div class="er-remarks-picker-manual">'
+        + '<input class="er-cell-input" type="text" placeholder="Remarks" value="'+escAttr(row.remarks)+'"'
+        + ' oninput="setRepField(\''+path+'\','+i+',\'remarks\',this.value)">'
+        + '<button type="button" class="er-remarks-back" title="Choose from list instead" onclick="setOrRemarksPreset(\''+path+'\','+i+',\'\')">List</button>'
+        + '</div>';
+    } else {
+      const selectVal = row.remarks || '';
+      remarksCell = '<select class="er-cell-select" onchange="setOrRemarksPreset(\''+path+'\','+i+',this.value)">'
+        + '<option value=""'+(selectVal===''?' selected':'')+'>Select&hellip;</option>'
+        + remarksPresets.map(o=>'<option value="'+escAttr(o)+'"'+(selectVal===o?' selected':'')+'>'+escHtml(o)+'</option>').join('')
+        + '<option value="__manual__">Enter manually</option>'
+        + '</select>';
+    }
   } else {
     remarksCell = '<input class="er-cell-input" type="text" placeholder="Remarks" value="'+escAttr(row.remarks)+'"'
       + ' oninput="setRepField(\''+path+'\','+i+',\'remarks\',this.value)">';
@@ -1883,6 +1892,7 @@ function openPreview(){
    the preview has ever been opened this session (previewPage starts
    out blank in the DOM). */
 function capturePreviewEdits(){
+  if(historyPreviewMode) return; // read-only history preview — never touch the live draft's edits
   const el = document.getElementById('previewPage');
   if(el && el.innerHTML.trim()) previewEditedHtml = el.innerHTML;
 }
@@ -1943,6 +1953,13 @@ function resetPreviewDraft(){
   showToast('Preview rebuilt from the checklist \u2014 your previous edits were discarded.');
 }
 function closePreview(){
+  if(historyPreviewMode){
+    exitHistoryPreviewMode();
+    document.getElementById('previewOverlay').classList.remove('open');
+    document.getElementById('previewOverlay').setAttribute('aria-hidden','true');
+    document.body.classList.remove('previewing');
+    return;
+  }
   capturePreviewEdits();
   document.getElementById('previewOverlay').classList.remove('open');
   document.getElementById('previewOverlay').setAttribute('aria-hidden','true');
@@ -2366,20 +2383,74 @@ function reportActionsHtml(h){
     + '</div>';
 }
 
-/* Prints just this past audit's summary report (the reportDrawer's
-   current content), without needing the audit's full cached state —
-   unlike Edit, this always works. A body class flips on print-only
-   CSS (see the printing-report rules in the @media print block) that
-   hides everything else and lets just the report drawer's content
-   fill the printed page; afterprint removes the class again so the
-   on-screen view goes right back to normal. */
+/* Builds the read-only "Audit Findings" document for a PAST audit, for
+   the history Print button. Reuses the exact wording the auditor saved
+   at submit time (h.state.reportNarrativeHtml — the same standalone
+   document buildPreviewHtml() drafts for the audit currently on
+   screen), so the printed page looks the same as the live preview,
+   not the plain checklist-style report drawer. Falls back gracefully
+   for older audits saved before that field existed. */
+function buildHistoryPreviewHtml(h){
+  const st = h.state || null;
+  if(st && st.reportNarrativeHtml) return st.reportNarrativeHtml; // already includes its own branch/title/date header
+  const branchName = h.branch ? escHtml(h.branch) : 'BRANCH NAME';
+  const dateStr = h.auditDate ? escHtml(h.auditDate) : '';
+  const header = '<div class="pv-branch">'+branchName+'</div>'
+    + '<div class="pv-title">AUDIT FINDINGS</div>'
+    + '<div class="pv-date">'+(dateStr || '\u2014')+'</div>';
+  if(st && st.reportNarrative && String(st.reportNarrative).trim()){
+    return header + '<div class="pv-list"><p>' + escHtml(st.reportNarrative).trim().replace(/\n/g,'<br>') + '</p></div>';
+  }
+  return header + '<div class="empty-hint">No findings write-up was saved with this audit \u2014 open its detail tab in the Sheet for the full checklist.</div>';
+}
+
+/* Shows a PAST audit's findings document in the same full-page preview
+   used for the audit currently being filled in — read-only, since this
+   isn't the live draft — then opens the browser's print dialog (which
+   is itself the print PREVIEW) so nothing goes straight to a printer
+   unreviewed. Replaces the old behaviour of printing the plain
+   checklist-style report drawer directly. */
 function printHistoryReport(){
-  document.body.classList.add('printing-report');
-  const cleanup = () => document.body.classList.remove('printing-report');
-  window.addEventListener('afterprint', cleanup, { once:true });
+  const list = historyCache || loadLocalHistory();
+  const h = list[openReportIdx];
+  if(!h) return;
+
+  historyPreviewMode = true;
+  const page = document.getElementById('previewPage');
+  page.setAttribute('contenteditable', 'false');
+  page.innerHTML = buildHistoryPreviewHtml(h);
+
+  const hintEl = document.getElementById('previewHint');
+  historyPreviewTitleHtml = hintEl.innerHTML;
+  hintEl.textContent = (h.branch || 'Audit') + (h.auditDate ? ' \u2014 ' + h.auditDate : '') + ' \u00b7 read-only';
+
+  ['previewResetBtn','previewShareBtn','previewDownloadBtn'].forEach(function(id){
+    const btn = document.getElementById(id);
+    if(btn) btn.style.display = 'none';
+  });
+
+  document.getElementById('previewOverlay').classList.add('open');
+  document.getElementById('previewOverlay').setAttribute('aria-hidden','false');
+  document.body.classList.add('previewing');
   window.print();
-  // Fallback for browsers/webviews that never fire afterprint reliably.
-  setTimeout(cleanup, 2000);
+}
+
+/* Undoes everything printHistoryReport() changed, restoring the preview
+   overlay to normal for the live in-progress audit (editable page,
+   full toolbar, original hint text). Called on Close. */
+function exitHistoryPreviewMode(){
+  historyPreviewMode = false;
+  const page = document.getElementById('previewPage');
+  page.setAttribute('contenteditable', 'true');
+  page.innerHTML = previewEditedHtml || '';
+  if(historyPreviewTitleHtml != null){
+    document.getElementById('previewHint').innerHTML = historyPreviewTitleHtml;
+    historyPreviewTitleHtml = null;
+  }
+  ['previewResetBtn','previewShareBtn','previewDownloadBtn'].forEach(function(id){
+    const btn = document.getElementById(id);
+    if(btn) btn.style.display = '';
+  });
 }
 
 function openReport(idx){

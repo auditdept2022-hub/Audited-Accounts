@@ -690,6 +690,7 @@
 <footer class="nav-bar">
   <div class="nav-bar-inner">
     <div class="footer-status" id="footerStatus"></div>
+    <button class="btn" id="newAuditBtn" title="Start a new blank audit">New audit</button>
     <button class="btn primary" id="submitBtn">Submit audit</button>
   </div>
 </footer>
@@ -758,6 +759,13 @@ let submitting = false;
    one. Submit becomes "Save changes" and updates the existing sheet
    tab/index row in place rather than creating a new one. */
 let editingSubmissionId = null;
+/* Snapshot (JSON string) of `state` taken the moment editAuditFromReport()
+   loads a past audit in for editing. Compared against the live `state` so
+   the footer can tell whether anything has actually changed yet \u2014 see
+   hasEditChanges(). Cleared (null) whenever we're not mid-edit, or when an
+   old draft was saved before this feature existed (in which case we can't
+   know, so we conservatively treat it as "has changes"). */
+let editSnapshotJson = null;
 /* Index into historyCache of whichever audit is currently open in the
    report drawer, so the Edit/Delete buttons there know what to act on. */
 let openReportIdx = -1;
@@ -830,6 +838,7 @@ function saveDraftNow(){
     localStorage.setItem(DRAFT_KEY, JSON.stringify({
       state: state,
       editingSubmissionId: editingSubmissionId,
+      editSnapshotJson: editSnapshotJson,
       previewEditedHtml: previewEditedHtml,
       savedAt: new Date().toISOString()
     }));
@@ -872,6 +881,7 @@ function tryRestoreDraft(){
   if(confirm('Unsubmitted work was found from ' + when + ' (' + label + ').\n\nRestore it? Tap Cancel to discard it and start fresh.')){
     state = snap.state;
     editingSubmissionId = snap.editingSubmissionId || null;
+    editSnapshotJson = snap.editSnapshotJson || null;
     previewEditedHtml = snap.previewEditedHtml || null;
     lastDraftSavedAt = snap.savedAt || null;
     render();
@@ -962,6 +972,7 @@ function set(path, value){
   let o = state;
   for(let i=0;i<keys.length-1;i++) o = o[keys[i]];
   o[keys[keys.length-1]] = value;
+  updateSubmitBtnState();
 }
 function escAttr(s){ return (s==null?'':String(s)).replace(/"/g,'&quot;'); }
 function escHtml(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
@@ -976,14 +987,15 @@ function setCond(path, val){
   set(path+'.condition', cur===val ? '' : val);
   renderSection(sectionIdForPath(path));
 }
-function setRepField(path, idx, field, val){ get(path)[idx][field] = val; }
-function addRep(path){ get(path).push(emptyEntry()); renderSection(sectionIdForPath(path)); }
+function setRepField(path, idx, field, val){ get(path)[idx][field] = val; updateSubmitBtnState(); }
+function addRep(path){ get(path).push(emptyEntry()); renderSection(sectionIdForPath(path)); updateSubmitBtnState(); }
 function removeRep(path, idx){
   const row = get(path)[idx] || {};
   const hasData = (row.seriesNo && String(row.seriesNo).trim()) || (row.remarks && String(row.remarks).trim());
   if(hasData && !confirm('Remove this entry? The series no. and remarks you entered for it will be deleted.')) return;
   get(path).splice(idx,1);
   renderSection(sectionIdForPath(path));
+  updateSubmitBtnState();
 }
 
 /* ---------- cash: denomination breakdown + live totals ----------
@@ -1021,7 +1033,7 @@ function onCashFieldInput(field, val){
 function depositsTotal(list){
   return (list||[]).reduce((sum,row)=> sum + (parseFloat(row.amount)||0), 0);
 }
-function setDepositField(idx, field, val){ state.cash.deposits[idx][field] = val; if(field==='amount') refreshCashComputed(); }
+function setDepositField(idx, field, val){ state.cash.deposits[idx][field] = val; if(field==='amount') refreshCashComputed(); else updateSubmitBtnState(); }
 function addDeposit(){ state.cash.deposits.push(emptyDepositEntry()); renderSection('sec-cash'); refreshCashComputed(); }
 function removeDeposit(idx){
   state.cash.deposits.splice(idx,1);
@@ -1029,6 +1041,7 @@ function removeDeposit(idx){
   renderSection('sec-cash'); refreshCashComputed();
 }
 function refreshCashComputed(){
+  updateSubmitBtnState();
   const c = state.cash;
   const n = v => parseFloat(v)||0;
   const total = n(c.totalCollection), gcash = n(c.gcashCollection),
@@ -1621,6 +1634,26 @@ function refreshSummary(){
     footerStatus.innerHTML = (state.branch ? escHtml(state.branch)+' &middot; ' : '')
       + '<strong>'+sc.pct+'%</strong> checklist compliance so far ('+sc.yes+' yes, '+sc.no+' no)';
   }
+  updateSubmitBtnState();
+}
+
+/** Sets the footer submit button's label/enabled state for the current
+ *  submitting / editing / hasEditChanges combination. Shared by render()
+ *  and the lighter-weight refreshSummary() so the "no changes to save"
+ *  state stays accurate without needing a full re-render on every tap. */
+function updateSubmitBtnState(){
+  const submitBtn = document.getElementById('submitBtn');
+  if(!submitBtn) return;
+  if(submitting){
+    submitBtn.innerHTML = '<span class="spinner"></span> '+(editingSubmissionId ? 'Saving...' : 'Submitting...');
+    submitBtn.disabled = true;
+  } else if(editingSubmissionId != null && !hasEditChanges()){
+    submitBtn.textContent = 'No changes to save';
+    submitBtn.disabled = true;
+  } else {
+    submitBtn.textContent = editingSubmissionId ? 'Save changes' : 'Submit audit';
+    submitBtn.disabled = false;
+  }
 }
 
 /* ============================================================
@@ -1635,18 +1668,12 @@ function render(){
   const footerStatus = document.getElementById('footerStatus');
   footerStatus.innerHTML = (state.branch ? escHtml(state.branch)+' &middot; ' : '')
     + '<strong>'+s.pct+'%</strong> checklist compliance so far ('+s.yes+' yes, '+s.no+' no)';
-  const submitBtn = document.getElementById('submitBtn');
-  if(submitting){
-    submitBtn.innerHTML = '<span class="spinner"></span> '+(editingSubmissionId ? 'Saving...' : 'Submitting...');
-    submitBtn.disabled = true;
-  } else {
-    submitBtn.textContent = editingSubmissionId ? 'Save changes' : 'Submit audit';
-    submitBtn.disabled = false;
-  }
+  updateSubmitBtnState();
   applySearchHighlight(); // re-apply since #main was just rebuilt
 }
 
 document.getElementById('submitBtn').addEventListener('click', doSubmit);
+document.getElementById('newAuditBtn').addEventListener('click', newAudit);
 
 function showToast(msg){
   const t = document.getElementById('toast');
@@ -2089,6 +2116,7 @@ async function doSubmit(){
         submittedAt: new Date().toISOString(), score: score, state: payload
       });
       editingSubmissionId = null;
+      editSnapshotJson = null;
       state = freshState();
       previewEditedHtml = null;
       clearDraft();
@@ -2116,6 +2144,9 @@ function editAuditFromReport(){
   if((state.branch || editingSubmissionId) && !confirm('Discard the audit currently on screen and load this one for editing?')) return;
   state = JSON.parse(JSON.stringify(h.state));
   editingSubmissionId = h.submissionId || null;
+  // Snapshot the just-loaded state so hasEditChanges() can tell, later,
+  // whether the auditor has actually touched anything yet.
+  editSnapshotJson = JSON.stringify(state);
   // Restore the exact findings document you last saved for THIS audit
   // (if it has one) instead of wiping it, so opening the preview shows
   // the same edited wording you left it with \u2014 not a fresh re-draft.
@@ -2135,11 +2166,47 @@ function editAuditFromReport(){
 function cancelEdit(){
   if(!confirm('Discard changes and stop editing this audit?')) return;
   editingSubmissionId = null;
+  editSnapshotJson = null;
   state = freshState();
   previewEditedHtml = null;
   clearDraft();
   render();
   window.scrollTo({top:0, behavior:'smooth'});
+}
+
+/** True once something has actually changed since a past audit was
+ *  loaded in for editing \u2014 used to keep the footer button from
+ *  reading "Save changes" (and being tappable) when there's nothing
+ *  new to save yet. If we're not editing, or an old draft didn't carry
+ *  a snapshot, this returns true so the button never gets stuck wrongly
+ *  disabled. */
+function hasEditChanges(){
+  if(editingSubmissionId == null) return true;
+  if(editSnapshotJson == null) return true;
+  try{ return JSON.stringify(state) !== editSnapshotJson; }
+  catch(e){ return true; }
+}
+
+/** Starts a brand-new blank audit, whether or not one is currently
+ *  mid-edit or mid-draft. Confirms first if there's anything on screen
+ *  worth losing (an edit in progress, or a non-blank not-yet-submitted
+ *  draft) so a stray tap can't silently wipe work. */
+function newAudit(){
+  const isBlank = !editingSubmissionId && !isDraftWorthKeeping(state);
+  if(!isBlank){
+    const msg = editingSubmissionId
+      ? 'Discard changes and stop editing this audit, then start a new one?'
+      : 'Discard the current unsaved audit and start a new one?';
+    if(!confirm(msg)) return;
+  }
+  editingSubmissionId = null;
+  editSnapshotJson = null;
+  state = freshState();
+  previewEditedHtml = null;
+  clearDraft();
+  render();
+  window.scrollTo({top:0, behavior:'smooth'});
+  showToast('Started a new audit.');
 }
 
 /* Permanently deletes a submitted audit: its detail sheet tab, its

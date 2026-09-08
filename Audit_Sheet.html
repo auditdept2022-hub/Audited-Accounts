@@ -193,7 +193,7 @@
     body.previewing .preview-overlay{position:static !important; background:none !important;}
     body.previewing .preview-toolbar{display:none !important;}
     body.previewing .preview-page-wrap{padding:0 !important; overflow:visible !important; display:block !important;}
-    body.previewing .preview-page{box-shadow:none !important; max-width:100% !important; padding:0 !important; border-radius:0 !important;}
+    body.previewing .preview-page{box-shadow:none !important; max-width:100% !important; width:auto !important; aspect-ratio:auto !important; padding:0 !important; border-radius:0 !important;}
   }
 
   /* ---------- full-screen report preview ---------- */
@@ -209,23 +209,23 @@
   .preview-btn.primary{background:#fff; color:#0f2547; border-color:#fff;}
   .preview-page-wrap{flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden;
     -webkit-overflow-scrolling:touch; overscroll-behavior-y:contain;
-    padding:26px 14px 60px; display:flex; justify-content:center; touch-action:pan-y;}
-  .preview-page{background:#fff; width:100%; max-width:760px; min-height:600px; padding:52px 56px;
-    box-shadow:0 8px 28px rgba(0,0,0,.28); border-radius:2px; font-family:'Times New Roman',Georgia,serif;
-    color:#111; font-size:14px; line-height:1.65; outline:none; flex-shrink:0;}
+    padding:26px 14px 60px; display:flex; justify-content:center; align-items:flex-start; touch-action:pan-y;}
+  .preview-page{background:#fff; width:100%; max-width:816px; aspect-ratio:8.5/11; padding:11.7647%;
+    box-shadow:0 8px 28px rgba(0,0,0,.28); border-radius:2px; font-family:Calibri,'Segoe UI',Arial,sans-serif;
+    color:#111; font-size:14px; line-height:1.55; outline:none; flex-shrink:0; box-sizing:border-box;}
   .preview-page:focus{box-shadow:0 8px 28px rgba(0,0,0,.28), 0 0 0 3px rgba(42,61,154,.3);}
-  .pv-branch{font-weight:700; text-align:center; font-size:15px; letter-spacing:.3px; text-transform:uppercase;}
-  .pv-title{font-weight:700; text-align:center; font-size:15px; margin-top:2px; letter-spacing:.5px;}
-  .pv-date{text-align:center; margin-top:2px; margin-bottom:24px; text-transform:uppercase;}
-  .pv-section{font-weight:700; margin:22px 0 8px; text-transform:uppercase; letter-spacing:.3px;}
-  .pv-bullet{margin:0 0 7px 16px;}
-  .pv-footer{margin-top:60px; width:100%;}
+  .pv-branch{font-weight:400; text-align:left; font-size:14px;}
+  .pv-title{font-weight:400; text-align:left; font-size:14px;}
+  .pv-date{text-align:left; font-size:14px; margin-bottom:20px;}
+  .pv-section{font-weight:700; margin:18px 0 6px;}
+  .pv-list{margin:0 0 4px; padding-left:34px;}
+  .pv-list li{margin-bottom:6px; padding-left:2px;}
+  .pv-footer{margin-top:56px; width:100%;}
   .pv-sign{display:inline-block; width:45%; vertical-align:top;}
   .pv-sign + .pv-sign{margin-left:8%;}
   .pv-sign-label{font-size:14px;}
   .pv-sign .line{border-top:1px solid #111; margin-top:44px; padding-top:4px; font-size:12px; min-height:14px;}
   @media (max-width:640px){
-    .preview-page{padding:32px 20px;}
     .preview-title{font-size:13px;}
     .preview-hint{display:none;}
     .preview-toolbar{padding:10px 10px; gap:6px; flex-wrap:nowrap;}
@@ -1494,16 +1494,16 @@ function buildPreviewHtml(){
   html += '<div class="pv-date">'+(dateStr ? escHtml(dateStr) : '\u2014')+'</div>';
   html += '<div class="pv-section">BRANCH</div>';
   if(branchBullets.length){
-    branchBullets.forEach(b=>{ html += '<div class="pv-bullet">- '+escHtml(b)+'</div>'; });
+    html += '<ol class="pv-list">' + branchBullets.map(b=>'<li>'+escHtml(b)+'</li>').join('') + '</ol>';
   } else {
-    html += '<div class="pv-bullet">- (Fill in the checklist first, or type findings here.)</div>';
+    html += '<ol class="pv-list"><li>(Fill in the checklist first, or type findings here.)</li></ol>';
   }
   if(issues.length){
     html += '<div class="pv-section">ISSUES NOTED</div>';
-    issues.forEach(b=>{ html += '<div class="pv-bullet">- '+escHtml(b)+'</div>'; });
+    html += '<ol class="pv-list">' + issues.map(b=>'<li>'+escHtml(b)+'</li>').join('') + '</ol>';
   }
-  html += '<div class="pv-section">FIELD</div>';
-  fieldBullets.forEach(b=>{ html += '<div class="pv-bullet">- '+escHtml(b)+'</div>'; });
+  html += '<div class="pv-section">Field</div>';
+  html += '<ol class="pv-list">' + fieldBullets.map(b=>'<li>'+escHtml(b)+'</li>').join('') + '</ol>';
   html += '<div class="pv-footer">'
     + '<div class="pv-sign"><div class="pv-sign-label">Prepared by:</div><div class="line">'+escHtml(state.auditor||'')+'</div></div>'
     + '<div class="pv-sign"><div class="pv-sign-label">Acknowledged by:</div><div class="line">&nbsp;</div></div>'
@@ -1580,6 +1580,13 @@ function htmlToPlainText(html){
       if(t) lines.push(t);
       return;
     }
+    if(node.tagName === 'OL' || node.tagName === 'UL'){
+      Array.from(node.children).forEach(function(li, i){
+        const t = li.textContent.replace(/\u00a0/g,' ').trim();
+        if(t) lines.push((i+1)+'. '+t);
+      });
+      return;
+    }
     if(node.classList && node.classList.contains('pv-footer')){
       node.querySelectorAll('.pv-sign').forEach(function(sign){
         const label = sign.querySelector('.pv-sign-label');
@@ -1634,25 +1641,34 @@ function downloadPreviewDoc(){
   const content = pageEl.innerHTML;
   const safeBranch = (state.branch || 'Audit Findings').replace(/[\\/:*?"<>|]/g,'-').trim();
   const filename = 'Audit Findings - ' + safeBranch + (state.auditDate ? (' - '+state.auditDate) : '') + '.doc';
-  const style = 'body{font-family:"Times New Roman",Georgia,serif; font-size:14px; line-height:1.65; color:#111;}'
-    + '.pv-branch,.pv-title{font-weight:bold; text-align:center; font-size:15px; text-transform:uppercase;}'
-    + '.pv-date{text-align:center; margin-bottom:22px; text-transform:uppercase;}'
-    + '.pv-section{font-weight:bold; margin:22px 0 8px; text-transform:uppercase;}'
-    + '.pv-bullet{margin:0 0 7px 16px;}'
-    + '.pv-footer{width:100%; margin-top:60px;}'
+  // @page WordSection1 is the standard trick Word looks for when it opens
+  // an HTML/.doc file: it sets the document's actual Page Setup (paper
+  // size + margins) instead of leaving Word's own default, so this opens
+  // already configured for a real 8.5in x 11in (Letter) sheet with 1in
+  // margins on every side \u2014 ready to print immediately, no manual
+  // Page Setup needed by whoever you send it to.
+  const style = '@page WordSection1{size:8.5in 11.0in; margin:1.0in 1.0in 1.0in 1.0in; mso-page-orientation:portrait;}'
+    + 'div.WordSection1{page:WordSection1;}'
+    + 'body{font-family:Calibri,"Segoe UI",Arial,sans-serif; font-size:14px; line-height:1.55; color:#111;}'
+    + '.pv-branch,.pv-title,.pv-date{font-weight:normal; text-align:left; font-size:14px;}'
+    + '.pv-date{margin-bottom:20px;}'
+    + '.pv-section{font-weight:bold; margin:18px 0 6px;}'
+    + '.pv-list{margin:0 0 4px; padding-left:34px;}'
+    + '.pv-list li{margin-bottom:6px;}'
+    + '.pv-footer{width:100%; margin-top:56px;}'
     + '.pv-sign{display:inline-block; width:45%; vertical-align:top;}'
     + '.pv-sign-label{font-size:14px;}'
     + '.pv-sign .line{border-top:1px solid #111; margin-top:44px; padding-top:4px; font-size:12px;}';
   const doc = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
     + '<head><meta charset="utf-8"><title>Audit Findings</title><style>'+style+'</style></head>'
-    + '<body>'+content+'</body></html>';
+    + '<body><div class="WordSection1">'+content+'</div></body></html>';
   const blob = new Blob(['\ufeff', doc], { type:'application/msword' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(()=>URL.revokeObjectURL(url), 4000);
-  showToast('Downloaded \u2014 opens in Word, ready to send.');
+  showToast('Downloaded \u2014 opens in Word already set to 8.5\u2033\u00d711\u2033, ready to print.');
 }
 
 /* ============================================================

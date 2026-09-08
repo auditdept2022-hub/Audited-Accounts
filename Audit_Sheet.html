@@ -380,6 +380,55 @@
     margin:14px 0 8px;}
   .or-group-title:first-child{margin-top:0;}
 
+  /* ---------- spreadsheet-style entry table (Official Receipt / SI / DR groups) ----------
+     A real gridded table — header row (Type / Series No / Remarks) plus one row
+     per entry, columns aligned like an actual spreadsheet so a long run of Series
+     No values (e.g. "5000 - 5050", "1000050 - 1000100") lines up and is easy to
+     scan, instead of being stacked one field per line. Tapping "+ Add entry"
+     appends a blank row you type straight into, the same as adding a sheet row. */
+  .er-table{border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden;
+    margin-bottom:8px; background:#fff;}
+  .er-table-head, .er-table-row{display:grid; grid-template-columns:22px .85fr 1.15fr 1.3fr 22px;}
+  .er-table-head{background:#F8F9FD; border-bottom:1px solid var(--line);}
+  .er-table-head > div{padding:8px 7px; font-size:11px; font-weight:700; color:var(--text);
+    border-right:1px solid var(--line); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .er-table-head > div:last-child{border-right:none;}
+  .er-table-row{border-bottom:1px solid var(--line); background:#fff;}
+  .er-table-row:last-of-type{border-bottom:none;}
+  .er-table-row > div{border-right:1px solid var(--line); display:flex; align-items:center; min-width:0;}
+  .er-table-row > div:last-child{border-right:none; justify-content:center;}
+  .er-cell-input, .er-cell-select{width:100%; min-width:0; border:none; background:transparent;
+    font-family:inherit; font-size:12px; color:var(--text); padding:7px 6px; outline:none; box-sizing:border-box;}
+  .er-cell-input:focus, .er-cell-select:focus{background:var(--accent-soft);}
+  .er-cell-select{-webkit-appearance:none; appearance:none;}
+  .er-table-row .icon-btn{width:20px; height:20px; border:none; background:transparent; color:var(--muted-2); font-size:15px;}
+  .er-table-row .icon-btn:active{color:var(--del); background:transparent;}
+  .er-add-row{display:block; width:100%; border:none; background:#fff; color:var(--accent-dark); font-family:inherit;
+    font-size:12.5px; font-weight:700; padding:10px; cursor:pointer; text-align:center;}
+  .er-add-row:active{background:var(--accent-soft);}
+  @media (max-width:380px){
+    .er-table-head, .er-table-row{grid-template-columns:18px .8fr 1fr 1.1fr 20px;}
+    .er-table-head > div, .er-cell-input, .er-cell-select{font-size:10.5px; padding:6px 4px;}
+  }
+  /* ---------- Official Receipt remarks picker (preset dropdown + optional manual entry) ---------- */
+  .er-remarks-picker{display:flex; flex-direction:column; width:100%;}
+  .er-remarks-picker .er-remarks-manual{border-top:1px solid var(--line);}
+  /* ---------- drag-to-reorder entries (Official Receipt / SI-DR / Spareparts / Stock) ----------
+     A small grip handle on the left of every row. Press-and-drag it (mouse or
+     touch, via Pointer Events so it works on phones) up or down to move that
+     entry to a new spot in its own list — handy when a range like "1-50" was
+     typed after "100-150" and needs to sit above it. */
+  .er-drag-cell{cursor:grab; touch-action:none;}
+  .er-drag-cell:active{cursor:grabbing;}
+  .er-drag-handle{width:14px; height:18px; position:relative; flex-shrink:0;}
+  .er-drag-handle::before{content:''; position:absolute; top:2px; left:2px; width:3px; height:3px;
+    border-radius:50%; background:var(--muted-2);
+    box-shadow:0 5px 0 var(--muted-2), 0 10px 0 var(--muted-2),
+               7px 0 0 var(--muted-2), 7px 5px 0 var(--muted-2), 7px 10px 0 var(--muted-2);}
+  .er-table-row{transition:transform .15s ease;}
+  .er-table-row.er-dragging{transition:none; position:relative; z-index:5;
+    box-shadow:0 6px 16px rgba(15,37,71,.18); border-radius:8px;}
+
   /* ---------- findings card header ---------- */
   .finding-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;}
 
@@ -992,39 +1041,143 @@ function conditionRow(path, label, opts, withCount){
    share a row with a dropdown it doesn't need. Series No and Remarks
    each get their own full-width line so long values (e.g. a series
    range like "10050 - 10051") are always fully visible, not clipped. */
+/* Official Receipt remarks: instead of a free-text box, offer a quick
+   picker of the common remarks plus an "Enter manually" option that
+   reveals a text box for anything else. Only the Official Receipt
+   group uses this — the other three groups keep a plain text box. */
+const OR_REMARKS_PRESETS = ['MA','OTHERS','REG','COD/DP','SPARE PARTS'];
 const OR_GROUPS = [
-  { path:'officialReceipts.orEntries', title:'Official Receipt', addLabel:'OR entry', presets:['Motofinance','Motowheels'] },
+  { path:'officialReceipts.orEntries', title:'Official Receipt', addLabel:'OR entry', presets:['Motofinance','Motowheels'], remarksPresets:OR_REMARKS_PRESETS },
   { path:'officialReceipts.sparepartsEntries', title:'Spareparts Invoice', addLabel:'spareparts invoice', presets:null },
   { path:'officialReceipts.salesDrEntries', title:'Sales Invoice & Delivery Receipt', addLabel:'entry', presets:['Sales Invoice','Delivery Receipt'] },
   { path:'officialReceipts.stockEntries', title:'Stock Receipt', addLabel:'stock entry', presets:['Motofinance','Motowheels','Spareparts','Sales Invoice','Delivery Receipt'] }
 ];
-function orEntryRow(path, row, i, presets){
-  const head = presets
-    ? '<select class="er-type-select" onchange="setRepField(\''+path+'\','+i+',\'type\',this.value)">'
-      + '<option value=""'+(row.type?'':' selected')+'>Select type&hellip;</option>'
+function setOrRemarksPreset(path, idx, value){
+  const row = get(path)[idx];
+  if(value === '__manual__'){
+    row.remarksManual = true;
+  } else {
+    row.remarksManual = false;
+    row.remarks = value;
+  }
+  renderSection(sectionIdForPath(path));
+}
+function orEntryRow(path, row, i, presets, remarksPresets){
+  const typeCell = presets
+    ? '<select class="er-cell-select" onchange="setRepField(\''+path+'\','+i+',\'type\',this.value)">'
+      + '<option value=""'+(row.type?'':' selected')+'>Select&hellip;</option>'
       + presets.map(t=>'<option value="'+escAttr(t)+'"'+(row.type===t?' selected':'')+'>'+escHtml(t)+'</option>').join('')
       + '</select>'
-    : '<span class="er-row-index">Entry '+(i+1)+'</span>';
-  return '<div class="entry-row-simple">'
-    + '<div class="er-row-head">' + head
-    + '<button type="button" class="icon-btn" onclick="removeRep(\''+path+'\','+i+')">&times;</button>'
-    + '</div>'
-    + '<input class="input" type="text" placeholder="Series No (e.g. 10050 - 10051)" value="'+escAttr(row.seriesNo)+'"'
-    + ' oninput="setRepField(\''+path+'\','+i+',\'seriesNo\',this.value)">'
-    + '<input class="input" type="text" placeholder="Remarks (optional)" value="'+escAttr(row.remarks)+'"'
-    + ' oninput="setRepField(\''+path+'\','+i+',\'remarks\',this.value)">'
+    : '<input class="er-cell-input" type="text" placeholder="Type" value="'+escAttr(row.type)+'"'
+      + ' oninput="setRepField(\''+path+'\','+i+',\'type\',this.value)">';
+  let remarksCell;
+  if(remarksPresets){
+    const manual = !!row.remarksManual;
+    const selectVal = manual ? '__manual__' : (row.remarks || '');
+    remarksCell = '<div class="er-remarks-picker">'
+      + '<select class="er-cell-select" onchange="setOrRemarksPreset(\''+path+'\','+i+',this.value)">'
+      + '<option value=""'+(selectVal===''?' selected':'')+'>Select&hellip;</option>'
+      + remarksPresets.map(o=>'<option value="'+escAttr(o)+'"'+(selectVal===o?' selected':'')+'>'+escHtml(o)+'</option>').join('')
+      + '<option value="__manual__"'+(manual?' selected':'')+'>Enter manually</option>'
+      + '</select>'
+      + (manual
+        ? '<input class="er-cell-input er-remarks-manual" type="text" placeholder="Remarks" value="'+escAttr(row.remarks)+'"'
+          + ' oninput="setRepField(\''+path+'\','+i+',\'remarks\',this.value)">'
+        : '')
+      + '</div>';
+  } else {
+    remarksCell = '<input class="er-cell-input" type="text" placeholder="Remarks" value="'+escAttr(row.remarks)+'"'
+      + ' oninput="setRepField(\''+path+'\','+i+',\'remarks\',this.value)">';
+  }
+  return '<div class="er-table-row" data-idx="'+i+'">'
+    + '<div class="er-drag-cell"><span class="er-drag-handle" onpointerdown="orDragStart(event,\''+path+'\','+i+')"></span></div>'
+    + '<div>' + typeCell + '</div>'
+    + '<div><input class="er-cell-input" type="text" inputmode="numeric" placeholder="e.g. 5000 - 5050" value="'+escAttr(row.seriesNo)+'"'
+    + ' oninput="setRepField(\''+path+'\','+i+',\'seriesNo\',this.value)"></div>'
+    + '<div>' + remarksCell + '</div>'
+    + '<div><button type="button" class="icon-btn" onclick="removeRep(\''+path+'\','+i+')">&times;</button></div>'
     + '</div>';
 }
 function orGroupList(g){
   const arr = get(g.path);
   let html = '<div class="or-group-title">'+escHtml(g.title)+'</div>';
-  if(!arr.length){
-    html += '<div class="empty-hint">No entries logged yet.</div>';
-  } else {
-    arr.forEach((row,i)=>{ html += orEntryRow(g.path, row, i, g.presets); });
-  }
-  html += '<button type="button" class="btn-add" onclick="addRep(\''+g.path+'\')">+ Add '+g.addLabel+'</button>';
+  html += '<div class="er-table">'
+    + '<div class="er-table-head"><div></div><div>Type</div><div>Series No</div><div>Remarks</div><div></div></div>';
+  arr.forEach((row,i)=>{ html += orEntryRow(g.path, row, i, g.presets, g.remarksPresets); });
+  html += '<button type="button" class="er-add-row" onclick="addRep(\''+g.path+'\')">+ Add entry</button>'
+    + '</div>';
   return html;
+}
+
+/* ---------- drag-to-reorder for the entry lists above ----------
+   Works with mouse OR touch via Pointer Events (no HTML5 drag-and-drop,
+   which touchscreens mostly ignore). Press the grip handle, drag up or
+   down; the row you're dragging follows your finger/cursor and the
+   rows it passes shuffle out of the way to show where it'll land. On
+   release, the underlying array is reordered to match and the section
+   re-renders clean. */
+let orDrag = null;
+function orDragStart(e, path, idx){
+  if(e.pointerType === 'mouse' && e.button !== 0) return;
+  const handle = e.currentTarget;
+  const row = handle.closest('.er-table-row');
+  const list = row.parentElement;
+  const rows = Array.from(list.querySelectorAll('.er-table-row'));
+  const rects = rows.map((el) => el.getBoundingClientRect());
+  orDrag = {
+    path: path,
+    fromIndex: idx,
+    currentIndex: idx,
+    list: list,
+    rows: rows,
+    rects: rects,
+    row: row,
+    startY: e.clientY,
+    rowHeight: rects[idx].height
+  };
+  try { handle.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  row.classList.add('er-dragging');
+  document.addEventListener('pointermove', orDragMove);
+  document.addEventListener('pointerup', orDragEnd);
+  document.addEventListener('pointercancel', orDragEnd);
+}
+function orDragMove(e){
+  if(!orDrag) return;
+  e.preventDefault();
+  const dy = e.clientY - orDrag.startY;
+  orDrag.row.style.transform = 'translateY(' + dy + 'px)';
+  const draggedMid = orDrag.rects[orDrag.fromIndex].top + orDrag.rowHeight / 2 + dy;
+  let newIndex = orDrag.fromIndex;
+  orDrag.rects.forEach((rect, i) => {
+    if (i === orDrag.fromIndex) return;
+    const mid = rect.top + rect.height / 2;
+    if (draggedMid < mid && i < newIndex) newIndex = i;
+    if (draggedMid > mid && i > newIndex) newIndex = i;
+  });
+  orDrag.rows.forEach((r, i) => {
+    if (i === orDrag.fromIndex) return;
+    let shift = 0;
+    if (orDrag.fromIndex < newIndex && i > orDrag.fromIndex && i <= newIndex) shift = -orDrag.rowHeight;
+    else if (orDrag.fromIndex > newIndex && i < orDrag.fromIndex && i >= newIndex) shift = orDrag.rowHeight;
+    r.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+  });
+  orDrag.currentIndex = newIndex;
+}
+function orDragEnd(){
+  if(!orDrag) return;
+  document.removeEventListener('pointermove', orDragMove);
+  document.removeEventListener('pointerup', orDragEnd);
+  document.removeEventListener('pointercancel', orDragEnd);
+  const path = orDrag.path, fromIndex = orDrag.fromIndex, toIndex = orDrag.currentIndex;
+  orDrag.row.classList.remove('er-dragging');
+  orDrag.rows.forEach((r) => { r.style.transform = ''; });
+  orDrag = null;
+  if (toIndex !== fromIndex) {
+    const arr = get(path);
+    const moved = arr.splice(fromIndex, 1)[0];
+    arr.splice(toIndex, 0, moved);
+  }
+  renderSection(sectionIdForPath(path));
 }
 
 const STATUS_OPTS = ['Complete','Missing','Good','Poor'];

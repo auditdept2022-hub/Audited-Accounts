@@ -1600,20 +1600,42 @@ async function doSubmit(){
 
 /* branch list (optional) — GET request, also a "simple" request so no preflight */
 let knownBranches = [];
+let branchesLoading = false;
 
-async function loadBranches(){
-  if(!backendConfigured){ renderBranchDrawer(); return; }
+/* Auto-refreshes the branch list in the background (so a branch added
+   to the "Branches" sheet tab shows up without a manual page reload),
+   but only touches the datalist DOM when the fetched list is actually
+   different from what's already loaded — if nothing changed, it stays
+   completely still: no re-render, no flicker, no disturbing whatever
+   the person is doing (e.g. mid-typing in the branch field). */
+async function loadBranches(isInitial){
+  if(!backendConfigured){ if(isInitial) renderBranchDrawer(); return; }
+  if(branchesLoading) return;
+  branchesLoading = true;
   try{
     const res = await fetch(APPS_SCRIPT_URL + '?action=branches');
     const result = await res.json();
-    const dl = document.getElementById('branchList');
     if(result && Array.isArray(result.branches)){
-      knownBranches = result.branches;
-      if(dl) dl.innerHTML = knownBranches.map(b=>'<option value="'+escAttr(b)+'"></option>').join('');
+      const changed = result.branches.length !== knownBranches.length
+        || result.branches.some((b,i)=> b !== knownBranches[i]);
+      if(changed){
+        knownBranches = result.branches;
+        const dl = document.getElementById('branchList');
+        if(dl) dl.innerHTML = knownBranches.map(b=>'<option value="'+escAttr(b)+'"></option>').join('');
+      }
     }
   }catch(e){ /* non-fatal — free text still works */ }
-  renderBranchDrawer();
+  branchesLoading = false;
+  if(isInitial) renderBranchDrawer();
 }
+/* Background refresh: every 5 minutes, and whenever the tab/app comes
+   back into focus (covers the common case of leaving the form open on
+   a phone, switching away, then coming back later). loadBranches()
+   itself decides whether anything actually needs to change, and these
+   background calls never touch the branch drawer/history view — only
+   the very first load on page open does that. */
+setInterval(loadBranches, 5*60*1000);
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) loadBranches(); });
 
 /* ============================================================
    HEADER — back to dashboard + hamburger branch menu
@@ -1808,7 +1830,7 @@ if(window.ResizeObserver){
 syncFooterHeight();
 
 render();
-loadBranches();
+loadBranches(true);
 </script>
 </body>
 </html>

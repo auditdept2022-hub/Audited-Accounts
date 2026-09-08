@@ -671,7 +671,12 @@ function saveHistoryEntry(entry){
 async function fetchHistory(){
   if(!backendConfigured) return loadLocalHistory();
   try{
-    const res = await fetch(APPS_SCRIPT_URL + '?action=history');
+    // cache:'no-store' + a timestamp param stop the browser (and any
+    // network cache in between) from serving back a stale response for
+    // what looks like "the same" GET URL — without this, a device can
+    // sit showing old history for a while after a new audit was submitted
+    // elsewhere.
+    const res = await fetch(APPS_SCRIPT_URL + '?action=history&_=' + Date.now(), { cache: 'no-store' });
     const result = await res.json();
     if(result && Array.isArray(result.history)){
       saveLocalHistoryCache(result.history);
@@ -1653,7 +1658,7 @@ async function loadBranches(isInitial){
   if(branchesLoading) return;
   branchesLoading = true;
   try{
-    const res = await fetch(APPS_SCRIPT_URL + '?action=branches');
+    const res = await fetch(APPS_SCRIPT_URL + '?action=branches&_=' + Date.now(), { cache: 'no-store' });
     const result = await res.json();
     if(result && Array.isArray(result.branches)){
       const changed = result.branches.length !== knownBranches.length

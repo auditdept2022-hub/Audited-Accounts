@@ -193,7 +193,7 @@
     body.previewing .preview-overlay{position:static !important; background:none !important;}
     body.previewing .preview-toolbar{display:none !important;}
     body.previewing .preview-page-wrap{padding:0 !important; overflow:visible !important; display:block !important;}
-    body.previewing .preview-page{box-shadow:none !important; max-width:100% !important; width:auto !important; aspect-ratio:auto !important; padding:0 !important; border-radius:0 !important;}
+    body.previewing .preview-page{box-shadow:none !important; max-width:100% !important; width:auto !important; min-height:0 !important; padding:0 !important; border-radius:0 !important;}
   }
 
   /* ---------- full-screen report preview ---------- */
@@ -210,7 +210,7 @@
   .preview-page-wrap{flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden;
     -webkit-overflow-scrolling:touch; overscroll-behavior-y:contain;
     padding:26px 14px 60px; display:flex; justify-content:center; align-items:flex-start; touch-action:pan-y;}
-  .preview-page{background:#fff; width:100%; max-width:816px; aspect-ratio:8.5/11; padding:11.7647%;
+  .preview-page{background:#fff; width:100%; max-width:816px; min-height:1056px; padding:11.7647%;
     box-shadow:0 8px 28px rgba(0,0,0,.28); border-radius:2px; font-family:Calibri,'Segoe UI',Arial,sans-serif;
     color:#111; font-size:12pt; line-height:1.15; outline:none; flex-shrink:0; box-sizing:border-box;
     widows:3; orphans:3;}
@@ -234,7 +234,7 @@
   .pv-sign{display:inline-block; width:45%; vertical-align:top;}
   .pv-sign + .pv-sign{margin-left:8%;}
   .pv-sign-label{font-size:12pt;}
-  .pv-sign .line{border-top:1px solid #111; margin-top:44px; padding-top:4px; font-size:12pt; min-height:14px;}
+  .pv-sign .line{margin-top:44px; padding-top:4px; font-size:12pt; min-height:14px;}
   @media (max-width:640px){
     .preview-title{font-size:13px;}
     .preview-hint{display:none;}
@@ -1537,7 +1537,7 @@ function buildPreviewHtml(){
   html += '<div class="pv-section">Field</div>';
   html += '<ol class="pv-list">' + fieldBullets.map(b=>'<li>'+escHtml(b)+'</li>').join('') + '</ol>';
   html += '<div class="pv-footer">'
-    + '<div class="pv-sign"><div class="pv-sign-label">Prepared by:</div><div class="line">'+escHtml(state.auditor||'')+'</div></div>'
+    + '<div class="pv-sign"><div class="pv-sign-label">Prepared by:</div><div class="line">&nbsp;</div></div>'
     + '<div class="pv-sign"><div class="pv-sign-label">Acknowledged by:</div><div class="line">&nbsp;</div></div>'
     + '</div>';
   return html;
@@ -1690,7 +1690,7 @@ function downloadPreviewDoc(){
     + '.pv-footer{width:100%; margin-top:56px;}'
     + '.pv-sign{display:inline-block; width:45%; vertical-align:top;}'
     + '.pv-sign-label{font-size:12pt;}'
-    + '.pv-sign .line{border-top:1px solid #111; margin-top:44px; padding-top:4px; font-size:12pt;}';
+    + '.pv-sign .line{margin-top:44px; padding-top:4px; font-size:12pt;}';
   const doc = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
     + '<head><meta charset="utf-8"><title>Audit Findings</title><style>'+style+'</style></head>'
     + '<body><div class="WordSection1">'+content+'</div></body></html>';

@@ -183,7 +183,7 @@
 
   /* ---------- print ---------- */
   @media print{
-    @page{ margin:1in; }
+    @page{ size:letter; margin:1in; }
     .app-toolbar, footer.nav-bar, .drawer-overlay, .drawer, .toast{display:none !important;}
     #scrollArea{overflow:visible !important; height:auto !important; padding-bottom:0 !important;}
     body{overflow:visible !important; height:auto !important; display:block !important;}
@@ -207,10 +207,12 @@
   .preview-btn{background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.3); color:#fff;
     padding:8px 14px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap;}
   .preview-btn.primary{background:#fff; color:#0f2547; border-color:#fff;}
-  .preview-page-wrap{flex:1; overflow-y:auto; padding:26px 14px 60px; display:flex; justify-content:center;}
+  .preview-page-wrap{flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden;
+    -webkit-overflow-scrolling:touch; overscroll-behavior-y:contain;
+    padding:26px 14px 60px; display:flex; justify-content:center; touch-action:pan-y;}
   .preview-page{background:#fff; width:100%; max-width:760px; min-height:600px; padding:52px 56px;
     box-shadow:0 8px 28px rgba(0,0,0,.28); border-radius:2px; font-family:'Times New Roman',Georgia,serif;
-    color:#111; font-size:14px; line-height:1.65; outline:none;}
+    color:#111; font-size:14px; line-height:1.65; outline:none; flex-shrink:0;}
   .preview-page:focus{box-shadow:0 8px 28px rgba(0,0,0,.28), 0 0 0 3px rgba(42,61,154,.3);}
   .pv-branch{font-weight:700; text-align:center; font-size:15px; letter-spacing:.3px; text-transform:uppercase;}
   .pv-title{font-weight:700; text-align:center; font-size:15px; margin-top:2px; letter-spacing:.5px;}
@@ -572,15 +574,16 @@
   <div class="preview-toolbar">
     <button class="preview-btn" aria-label="Close preview" onclick="closePreview()">&larr; Close</button>
     <div class="preview-title">Audit Findings preview
-      <span class="preview-hint">Tap the document to edit it before downloading</span>
+      <span class="preview-hint">Edit freely &mdash; it only changes this document, never the checklist or saved history</span>
     </div>
     <div class="preview-actions">
-      <button class="preview-btn" onclick="window.print()">Print</button>
+      <button class="preview-btn" aria-label="Reset preview to auto-drafted text" onclick="resetPreviewDraft()">Reset</button>
+      <button class="preview-btn" onclick="capturePreviewEdits(); window.print()">Print</button>
       <button class="preview-btn primary" onclick="downloadPreviewDoc()">Download</button>
     </div>
   </div>
   <div class="preview-page-wrap">
-    <div class="preview-page" id="previewPage" contenteditable="true" spellcheck="false"></div>
+    <div class="preview-page" id="previewPage" contenteditable="true" spellcheck="false" oninput="capturePreviewEdits()"></div>
   </div>
 </div>
 
@@ -658,6 +661,20 @@ let editingSubmissionId = null;
 /* Index into historyCache of whichever audit is currently open in the
    report drawer, so the Edit/Delete buttons there know what to act on. */
 let openReportIdx = -1;
+
+/* The "Audit Findings" preview is a STANDALONE document: it never
+   writes back into `state`, so editing it can't change your checklist
+   answers or score, and the main history/dashboard list still reflects
+   the checklist you actually filled in. But YOUR edited wording (not
+   the raw auto-draft) is what gets saved as the narrative on Submit —
+   see doSubmit(). It's auto-drafted fresh the first time you open the
+   preview for a given audit, kept as-is across re-opens/edits within
+   that audit, and reset to null (so a fresh auto-draft appears) when
+   you start a brand-new audit. When you tap Edit on a past audit,
+   this is restored from that audit's saved reportNarrativeHtml (if
+   any) instead of being reset — so re-opening the preview shows
+   exactly what you left it as last time, on that exact branch. */
+let previewEditedHtml = null;
 
 /* search state (toolbar below header) */
 let searchQuery = '';
@@ -1522,12 +1539,81 @@ function buildPreviewPlainText(){
   return lines.join('\n');
 }
 function openPreview(){
-  document.getElementById('previewPage').innerHTML = buildPreviewHtml();
+  // Auto-draft only the FIRST time this audit's preview is opened.
+  // After that, whatever's in previewEditedHtml (your manual edits)
+  // is reused as-is, so re-opening the preview never wipes your
+  // wording changes. This document is standalone: editing it here
+  // never touches `state`, so it can't change the checklist answers,
+  // the score, or what gets saved to the main history/dashboard list.
+  if(previewEditedHtml == null){
+    previewEditedHtml = buildPreviewHtml();
+  }
+  document.getElementById('previewPage').innerHTML = previewEditedHtml;
   document.getElementById('previewOverlay').classList.add('open');
   document.getElementById('previewOverlay').setAttribute('aria-hidden','false');
   document.body.classList.add('previewing');
 }
+/* Keeps previewEditedHtml in sync as the auditor types, so the
+   standalone document's latest wording survives a close/reopen of
+   the overlay (and is what Print/Download/Submit use). Guarded so it
+   never overwrites a real draft with an empty string if called before
+   the preview has ever been opened this session (previewPage starts
+   out blank in the DOM). */
+function capturePreviewEdits(){
+  const el = document.getElementById('previewPage');
+  if(el && el.innerHTML.trim()) previewEditedHtml = el.innerHTML;
+}
+/* Converts the standalone preview's edited HTML back into the same
+   plain-text line format buildPreviewPlainText() used to produce, so
+   whatever the auditor actually edited is what lands in the "Audit
+   Initial Report" sheet cell (which only stores plain text) — not a
+   re-derived draft. Falls back gracefully for the signature footer,
+   whose two "Prepared by / Acknowledged by" blocks aren't simple
+   one-line divs. */
+function htmlToPlainText(html){
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const lines = [];
+  tmp.childNodes.forEach(function(node){
+    if(node.nodeType !== 1){
+      const t = (node.textContent || '').trim();
+      if(t) lines.push(t);
+      return;
+    }
+    if(node.classList && node.classList.contains('pv-footer')){
+      node.querySelectorAll('.pv-sign').forEach(function(sign){
+        const label = sign.querySelector('.pv-sign-label');
+        const line = sign.querySelector('.line');
+        const labelText = label ? label.textContent.trim() : '';
+        const lineText = line ? line.textContent.replace(/\u00a0/g,'').trim() : '';
+        lines.push(labelText + (lineText ? ' ' + lineText : ''));
+      });
+      return;
+    }
+    lines.push(node.textContent.replace(/\u00a0/g,' ').trim());
+  });
+  // Collapse runs of blank lines to one, and trim leading/trailing blanks.
+  const cleaned = [];
+  lines.forEach(function(l){
+    if(l === '' && cleaned.length && cleaned[cleaned.length-1] === '') return;
+    cleaned.push(l);
+  });
+  while(cleaned.length && cleaned[0] === '') cleaned.shift();
+  while(cleaned.length && cleaned[cleaned.length-1] === '') cleaned.pop();
+  return cleaned.join('\n');
+}
+/* Throws away manual edits and rebuilds the document fresh from the
+   current checklist answers — for when the checklist changed since
+   you last edited the standalone preview and you want it back in
+   sync, instead of hand-editing it again from scratch. */
+function resetPreviewDraft(){
+  if(!confirm('Discard your manual edits in this document and rebuild it from the current checklist answers?')) return;
+  previewEditedHtml = buildPreviewHtml();
+  document.getElementById('previewPage').innerHTML = previewEditedHtml;
+  showToast('Preview rebuilt from the checklist \u2014 your previous edits were discarded.');
+}
 function closePreview(){
+  capturePreviewEdits();
   document.getElementById('previewOverlay').classList.remove('open');
   document.getElementById('previewOverlay').setAttribute('aria-hidden','true');
   document.body.classList.remove('previewing');
@@ -1543,6 +1629,7 @@ function printFindings(){
   setTimeout(()=>window.print(), 60);
 }
 function downloadPreviewDoc(){
+  capturePreviewEdits();
   const pageEl = document.getElementById('previewPage');
   const content = pageEl.innerHTML;
   const safeBranch = (state.branch || 'Audit Findings').replace(/[\\/:*?"<>|]/g,'-').trim();
@@ -1613,10 +1700,18 @@ async function doSubmit(){
   const payload = JSON.parse(JSON.stringify(state));
   payload.score = score;
   if(isEdit) payload.submissionId = editingSubmissionId;
-  // Plain-text narrative (same content as the "Audit Findings" preview),
-  // sent so the backend can always save it into the "Audit Initial
-  // Report" tab on every submit — no need to remember to Download first.
-  payload.reportNarrative = buildPreviewPlainText();
+  // Save YOUR edited findings document, not the raw auto-draft, so
+  // what lands in the "Audit Initial Report" sheet matches what you
+  // actually reviewed. If the preview was never opened this session
+  // (e.g. straight-to-submit without checking it), fall back to a
+  // fresh auto-draft so the sheet is never left blank. The full HTML
+  // is saved too (reportNarrativeHtml, inside the hidden data JSON)
+  // so re-opening this exact audit for editing later can restore your
+  // exact wording instead of just plain text.
+  capturePreviewEdits();
+  const narrativeHtml = previewEditedHtml != null ? previewEditedHtml : buildPreviewHtml();
+  payload.reportNarrativeHtml = narrativeHtml;
+  payload.reportNarrative = htmlToPlainText(narrativeHtml);
 
   submitting = true; render();
   try{
@@ -1639,6 +1734,7 @@ async function doSubmit(){
       });
       editingSubmissionId = null;
       state = freshState();
+      previewEditedHtml = null;
       render();
       window.scrollTo({top:0, behavior:'smooth'});
       renderBranchDrawer();
@@ -1663,6 +1759,12 @@ function editAuditFromReport(){
   if((state.branch || editingSubmissionId) && !confirm('Discard the audit currently on screen and load this one for editing?')) return;
   state = JSON.parse(JSON.stringify(h.state));
   editingSubmissionId = h.submissionId || null;
+  // Restore the exact findings document you last saved for THIS audit
+  // (if it has one) instead of wiping it, so opening the preview shows
+  // the same edited wording you left it with \u2014 not a fresh re-draft.
+  // Older audits saved before this feature existed won't have it, so
+  // they'll simply auto-draft fresh the first time you open the preview.
+  previewEditedHtml = (h.state && h.state.reportNarrativeHtml) ? h.state.reportNarrativeHtml : null;
   closeReport();
   closeBranchMenu();
   render();
@@ -1677,6 +1779,7 @@ function cancelEdit(){
   if(!confirm('Discard changes and stop editing this audit?')) return;
   editingSubmissionId = null;
   state = freshState();
+  previewEditedHtml = null;
   render();
   window.scrollTo({top:0, behavior:'smooth'});
 }

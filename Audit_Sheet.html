@@ -751,7 +751,7 @@ function freshState(){
       closedAccountNotebook:null, noPendingChattel:null },
     officialReceipts:{ allComplete:null, cutoffSigned:null, greenCopiesFiledSeries:null,
       greenCopiesOrganized:null, properlyValidated:null,
-      orEntries:[], sparepartsEntries:[], salesDrEntries:[], stockEntries:[],
+      orEntries:[], sparepartsEntries:[], salesDrEntries:[],
       tableRemarks:'' },
     image:{
       openedBefore8am:null, personnelPresent:null,
@@ -1009,6 +1009,29 @@ function setCond(path, val){
   renderSection(sectionIdForPath(path));
 }
 function setRepField(path, idx, field, val){ get(path)[idx][field] = val; updateSubmitBtnState(); }
+
+/* Series No auto-fill: booklets of OR/SI/DR are almost always issued in
+   runs of 50 (e.g. 51-100, 11251-11300), so the moment someone finishes
+   typing the starting number and types the dash (e.g. "51-"), we
+   auto-complete the end of the range as start+49 and select that
+   auto-filled part. Typing over the selection (e.g. to get an odd range
+   like 17-50) simply replaces it, and nothing stops a full manual edit
+   at any time — this is a convenience, not a lock. */
+function onSeriesNoInput(input, path, idx){
+  const val = input.value;
+  const m = val.match(/^\s*(\d+)\s*-\s*$/);
+  if(m){
+    const start = parseInt(m[1], 10);
+    if(!isNaN(start)){
+      const end = start + 49;
+      const prefix = start + '-';
+      const newVal = prefix + end;
+      input.value = newVal;
+      try{ input.setSelectionRange(prefix.length, newVal.length); }catch(e){}
+    }
+  }
+  setRepField(path, idx, 'seriesNo', input.value);
+}
 function addRep(path){ get(path).push(emptyEntry()); renderSection(sectionIdForPath(path)); updateSubmitBtnState(); }
 function removeRep(path, idx){
   const row = get(path)[idx] || {};
@@ -1257,22 +1280,24 @@ function conditionRow(path, label, opts, withCount){
 /* Official Receipt / SI / DR entries used to be one flat list with a
    10-option "Used/Stock - <doc type>" dropdown crammed next to Series
    No in a tight grid — hard to read and easy to squeeze on a phone.
-   They're now four separate, clearly headered groups (Official
-   Receipt, Spareparts Invoice, Sales Invoice & Delivery Receipt,
-   Stock Receipt), each its own repeatable list, so nothing has to
-   share a row with a dropdown it doesn't need. Series No and Remarks
-   each get their own full-width line so long values (e.g. a series
-   range like "10050 - 10051") are always fully visible, not clipped. */
+   They're now three separate, clearly headered groups (Official
+   Receipt, Spareparts Invoice, Sales Invoice & Delivery Receipt),
+   each its own repeatable list, so nothing has to share a row with a
+   dropdown it doesn't need. Series No and Remarks each get their own
+   full-width line so long values (e.g. a series range like
+   "10050 - 10051") are always fully visible, not clipped. Stock
+   entries no longer get their own group — they're logged as
+   "Stock - Motofinance" / "Stock - Motowheels" right in the Official
+   Receipt type list instead. */
 /* Official Receipt remarks: instead of a free-text box, offer a quick
    picker of the common remarks plus an "Enter manually" option that
    reveals a text box for anything else. Only the Official Receipt
    group uses this — the other three groups keep a plain text box. */
 const OR_REMARKS_PRESETS = ['MA','OTHERS','REG','COD/DP','SPARE PARTS'];
 const OR_GROUPS = [
-  { path:'officialReceipts.orEntries', title:'Official Receipt', addLabel:'OR entry', presets:['Motofinance','Motowheels'], remarksPresets:OR_REMARKS_PRESETS },
+  { path:'officialReceipts.orEntries', title:'Official Receipt', addLabel:'OR entry', presets:['Motofinance','Motowheels','Stock - Motofinance','Stock - Motowheels'], remarksPresets:OR_REMARKS_PRESETS },
   { path:'officialReceipts.sparepartsEntries', title:'Spareparts Invoice', addLabel:'spareparts invoice', presets:['Stock'], allowManualType:true },
-  { path:'officialReceipts.salesDrEntries', title:'Sales Invoice & Delivery Receipt', addLabel:'entry', presets:['Sales Invoice','Delivery Receipt','Stock'] },
-  { path:'officialReceipts.stockEntries', title:'Stock Receipt', addLabel:'stock entry', presets:['Motofinance','Motowheels','Spareparts','Sales Invoice','Delivery Receipt'] }
+  { path:'officialReceipts.salesDrEntries', title:'Sales Invoice & Delivery Receipt', addLabel:'entry', presets:['Sales Invoice','Delivery Receipt','Stock'] }
 ];
 /* Type field equivalent of setOrRemarksPreset(): only used by groups with
    allowManualType:true (currently just Spareparts Invoice), where "Stock"
@@ -1352,8 +1377,8 @@ function orEntryRow(path, row, i, presets, remarksPresets, allowManualType){
   return '<div class="er-table-row" data-idx="'+i+'">'
     + '<div class="er-drag-cell"><span class="er-drag-handle" onpointerdown="orDragStart(event,\''+path+'\','+i+')"></span></div>'
     + '<div>' + typeCell + '</div>'
-    + '<div><input class="er-cell-input" type="text" inputmode="numeric" placeholder="e.g. 5000 - 5050" value="'+escAttr(row.seriesNo)+'"'
-    + ' oninput="setRepField(\''+path+'\','+i+',\'seriesNo\',this.value)"></div>'
+    + '<div><input class="er-cell-input" type="text" inputmode="numeric" placeholder="e.g. 51-100" value="'+escAttr(row.seriesNo)+'"'
+    + ' oninput="onSeriesNoInput(this,\''+path+'\','+i+')"></div>'
     + '<div>' + remarksCell + '</div>'
     + '<div><button type="button" class="icon-btn" onclick="removeRep(\''+path+'\','+i+')">&times;</button></div>'
     + '</div>';

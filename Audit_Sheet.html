@@ -172,8 +172,17 @@
   .history-item .hi-foot-label{font-size:11px; color:var(--accent-dark); font-weight:700;}
   .history-item .chev{color:var(--muted-2); flex-shrink:0; font-size:16px;}
 
-  .report-hero{display:flex; align-items:center; gap:14px; padding:14px; background:var(--accent-soft);
-    border:1px solid #D6DBF6; border-radius:12px; margin-bottom:14px;}
+  /* Score hero: was a giant "95%" next to some fine print — read at a
+     glance like an overall report-card grade, when really it only
+     tallies the plain Yes/No checklist questions (condition checks,
+     counts, and remarks aren't part of it at all). Redesigned as a
+     labeled Yes/No breakdown \u2014 fraction + a two-color bar + an
+     explicit note \u2014 so it's clearly a checklist tally, not a rating.
+     Shared by the in-progress review card (.score-hero) and the
+     submitted-report drawer (.report-hero); both get identical markup
+     from scoreHeroHtml(). */
+  .score-hero, .report-hero{padding:16px; background:var(--accent-soft);
+    border:1px solid #D6DBF6; border-radius:14px; margin-bottom:14px;}
   .report-section-title{font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase;
     letter-spacing:.4px; margin:16px 0 8px;}
   .report-section-title:first-of-type{margin-top:0;}
@@ -210,7 +219,7 @@
   /* ---------- print ---------- */
   @media print{
     @page{ size:letter; margin:1in; }
-    .app-toolbar, footer.nav-bar, .drawer-overlay, .drawer, .toast{display:none !important;}
+    .app-toolbar, footer.nav-bar, .drawer-overlay, .drawer, .toast-overlay, .confirm-overlay{display:none !important;}
     #scrollArea{overflow:visible !important; height:auto !important; padding-bottom:0 !important;}
     body{overflow:visible !important; height:auto !important; display:block !important;}
     .card{break-inside:avoid; box-shadow:none !important; border:1px solid #ccc !important;}
@@ -553,12 +562,22 @@
   .empty-hint{color:var(--muted-2); font-size:12.5px; padding:10px 2px;}
 
   /* ---------- review / score card ---------- */
-  .score-hero{display:flex; align-items:center; gap:16px; padding:14px; background:var(--accent-soft);
-    border:1px solid #D6DBF6; border-radius:12px; margin-bottom:14px;}
-  .score-num{font-family:'JetBrains Mono',monospace; font-weight:700; font-size:34px; color:var(--accent-dark); line-height:1;}
-  .score-meta{font-size:12px; color:var(--muted);}
-  .score-meta strong{color:var(--text);}
-  .badge{display:inline-flex; align-items:center; padding:2px 9px; border-radius:20px; font-size:10.5px; font-weight:700;}
+  .score-hero-top{display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:10px;}
+  .score-hero-label{font-size:11.5px; font-weight:700; color:var(--accent-dark); text-transform:uppercase; letter-spacing:.4px;}
+  .score-hero-frac{font-family:'JetBrains Mono',monospace; font-weight:800; font-size:21px; color:var(--ink); white-space:nowrap; flex-shrink:0;}
+  .score-hero-frac span{font-size:11.5px; font-weight:600; color:var(--muted); margin-left:5px;}
+  .score-hero-bar{height:9px; border-radius:5px; overflow:hidden; display:flex; background:var(--del-soft); margin-bottom:10px;}
+  .score-hero-bar-seg.yes{background:var(--ok); height:100%;}
+  .score-hero-bar-seg.no{background:var(--del); height:100%;}
+  .score-hero-legend{display:flex; align-items:center; gap:16px; font-size:12px; color:var(--text); margin-bottom:10px;}
+  .score-hero-legend .dot{width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:6px; vertical-align:1px;}
+  .score-hero-legend .dot.yes{background:var(--ok);}
+  .score-hero-legend .dot.no{background:var(--del);}
+  .score-hero-note{display:flex; gap:6px; font-size:10.5px; color:var(--muted-2); line-height:1.4;
+    padding-top:9px; border-top:1px dashed #C9D0F0;}
+  .score-hero-note svg{width:12px; height:12px; flex-shrink:0; margin-top:1px; color:var(--muted-2);}
+  .badge{display:inline-flex; align-items:center; padding:2px 9px; border-radius:20px; font-size:10.5px; font-weight:700;
+    background:var(--accent-soft); color:var(--accent-dark);}
   .badge.ok{background:var(--ok-soft); color:var(--ok);}
   .badge.del{background:var(--del-soft); color:var(--del);}
   .info-list{border:1px solid var(--line); border-radius:12px; overflow:hidden; background:#fff; margin-bottom:12px;}
@@ -599,10 +618,52 @@
     display:flex; align-items:center; justify-content:center; gap:8px;}
   .btn.primary:disabled{opacity:.6; cursor:not-allowed;}
 
-  .toast{position:fixed; left:50%; transform:translateX(-50%); bottom:88px; z-index:50;
-    background:var(--panel-2); color:#fff; font-size:12.5px; padding:10px 16px; border-radius:10px; max-width:88vw;
-    box-shadow:0 8px 24px rgba(0,0,0,.28); opacity:0; pointer-events:none; transition:opacity .25s, bottom .25s;}
-  .toast.show{opacity:1; bottom:98px;}
+  .toast-overlay{position:fixed; inset:0; z-index:70; display:flex; align-items:center; justify-content:center;
+    padding:24px; pointer-events:none;}
+  .toast{pointer-events:none; cursor:pointer; display:flex; align-items:flex-start; gap:11px;
+    background:#fff; color:var(--text); font-size:13.5px; line-height:1.48; padding:15px 16px;
+    border-radius:14px; width:100%; max-width:340px; border-left:4px solid var(--accent);
+    box-shadow:0 18px 50px rgba(10,14,40,.32), 0 2px 8px rgba(10,14,40,.12);
+    opacity:0; transform:scale(.94) translateY(8px); transition:opacity .2s ease, transform .2s ease;}
+  .toast.show{opacity:1; transform:scale(1) translateY(0); pointer-events:auto;}
+  .toast.type-success{border-left-color:var(--ok);}
+  .toast.type-error{border-left-color:var(--del);}
+  .toast.type-warn{border-left-color:var(--rstr);}
+  .toast.type-info{border-left-color:var(--accent);}
+  .toast .toast-icon{width:22px; height:22px; flex-shrink:0; margin-top:1px;}
+  .toast .toast-msg{flex:1; min-width:0; overflow-wrap:anywhere; padding-top:1px;}
+  .toast .toast-close{flex-shrink:0; border:none; background:transparent; color:var(--muted-2);
+    font-size:17px; line-height:1; cursor:pointer; padding:2px 0 0; margin:-2px -2px 0 0;}
+  .toast .toast-close:active{color:var(--text);}
+
+  /* ---------- centered confirm dialog (replaces native confirm()) ---------- */
+  .confirm-overlay{position:fixed; inset:0; z-index:65; background:rgba(10,14,40,.5);
+    display:flex; align-items:center; justify-content:center; padding:22px;
+    opacity:0; pointer-events:none; transition:opacity .18s ease;}
+  .confirm-overlay.open{opacity:1; pointer-events:auto;}
+  .confirm-card{background:#fff; border-radius:18px; width:100%; max-width:360px;
+    box-shadow:0 24px 60px rgba(10,14,40,.4); overflow:hidden; text-align:center;
+    transform:scale(.94) translateY(8px); transition:transform .18s ease;}
+  .confirm-overlay.open .confirm-card{transform:scale(1) translateY(0);}
+  .confirm-icon{width:46px; height:46px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    margin:24px auto 0; flex-shrink:0;}
+  .confirm-icon svg{width:23px; height:23px;}
+  .confirm-icon.q{background:var(--accent-soft); color:var(--accent);}
+  .confirm-icon.warn{background:var(--rstr-soft); color:var(--rstr);}
+  .confirm-icon.danger{background:var(--del-soft); color:var(--del);}
+  .confirm-body{padding:14px 22px 2px;}
+  .confirm-title{font-family:'Spectral',serif; font-weight:700; font-size:17px; color:var(--ink); margin-bottom:7px;}
+  .confirm-msg{font-size:13.5px; color:var(--muted); line-height:1.5; white-space:pre-line;}
+  .confirm-actions{display:flex; gap:10px; padding:20px 20px calc(20px + var(--safe-b));}
+  .confirm-btn{flex:1; padding:12px 12px; border-radius:11px; font-family:inherit; font-size:13.5px;
+    font-weight:700; cursor:pointer; border:none;}
+  .confirm-btn.cancel{background:#F1F3FB; color:var(--text);}
+  .confirm-btn.cancel:active{background:#E4E8F7;}
+  .confirm-btn.ok{background:linear-gradient(160deg,var(--accent),var(--accent-dark)); color:#fff;
+    box-shadow:0 3px 10px rgba(29,44,116,.28);}
+  .confirm-btn.ok:active{opacity:.88;}
+  .confirm-btn.ok.danger{background:linear-gradient(160deg,#C23A57,var(--del));
+    box-shadow:0 3px 10px rgba(176,48,74,.3);}
 
   .spinner{width:15px; height:15px; border-radius:50%; border:2.5px solid rgba(255,255,255,.4);
     border-top-color:#fff; animation:spin .7s linear infinite; flex-shrink:0;}
@@ -715,7 +776,23 @@
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast-overlay" id="toastOverlay">
+  <div class="toast" id="toast" onclick="hideToast()"></div>
+</div>
+
+<div class="confirm-overlay" id="confirmOverlay" aria-hidden="true">
+  <div class="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMsg">
+    <div class="confirm-icon" id="confirmIcon"></div>
+    <div class="confirm-body">
+      <div class="confirm-title" id="confirmTitle"></div>
+      <div class="confirm-msg" id="confirmMsg"></div>
+    </div>
+    <div class="confirm-actions">
+      <button type="button" class="confirm-btn cancel" id="confirmCancelBtn">Cancel</button>
+      <button type="button" class="confirm-btn ok" id="confirmOkBtn">Confirm</button>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ============================================================
@@ -889,7 +966,7 @@ function updateDraftIndicator(){
  *  not just a blank form), ask before touching anything else \u2014
  *  restoring replaces whatever's currently on screen (a blank form
  *  at boot, so nothing is lost either way). */
-function tryRestoreDraft(){
+async function tryRestoreDraft(){
   let raw;
   try{ raw = localStorage.getItem(DRAFT_KEY); }catch(e){ return; }
   if(!raw) return;
@@ -899,7 +976,11 @@ function tryRestoreDraft(){
   const label = (snap.state.branch ? snap.state.branch : 'an audit')
     + (snap.state.auditDate ? ' \u2014 ' + snap.state.auditDate : '');
   const when = snap.savedAt ? new Date(snap.savedAt).toLocaleString() : 'earlier';
-  if(confirm('Unsubmitted work was found from ' + when + ' (' + label + ').\n\nRestore it? Tap Cancel to discard it and start fresh.')){
+  const ok = await showConfirm(
+    'Found unsubmitted work from ' + when + ' (' + label + ').',
+    { title:'Restore unsaved work?', confirmLabel:'Restore', cancelLabel:'Discard' }
+  );
+  if(ok){
     state = snap.state;
     editingSubmissionId = snap.editingSubmissionId || null;
     editSnapshotJson = snap.editSnapshotJson || null;
@@ -907,7 +988,7 @@ function tryRestoreDraft(){
     lastDraftSavedAt = snap.savedAt || null;
     render();
     updateDraftIndicator();
-    showToast('Draft restored \u2014 continue where you left off.');
+    showToast('Draft restored \u2014 continue where you left off.', 'success');
   } else {
     clearDraft();
   }
@@ -1041,10 +1122,16 @@ function onSeriesNoInput(input, path, idx){
   setRepField(path, idx, 'seriesNo', input.value);
 }
 function addRep(path){ get(path).push(emptyEntry()); renderSection(sectionIdForPath(path)); updateSubmitBtnState(); }
-function removeRep(path, idx){
+async function removeRep(path, idx){
   const row = get(path)[idx] || {};
   const hasData = (row.seriesNo && String(row.seriesNo).trim()) || (row.remarks && String(row.remarks).trim());
-  if(hasData && !confirm('Remove this entry? The series no. and remarks you entered for it will be deleted.')) return;
+  if(hasData){
+    const ok = await showConfirm(
+      'The series no. and remarks you entered for it will be deleted.',
+      { title:'Remove this entry?', confirmLabel:'Remove', danger:true }
+    );
+    if(!ok) return;
+  }
   get(path).splice(idx,1);
   renderSection(sectionIdForPath(path));
   updateSubmitBtnState();
@@ -1061,9 +1148,15 @@ function addConfirmationEntry(){
   renderSection('sec-confirmation');
   updateSubmitBtnState();
 }
-function removeConfirmationEntry(idx){
+async function removeConfirmationEntry(idx){
   const row = state.confirmation.entries[idx] || {};
-  if(row.remarks && String(row.remarks).trim() && !confirm('Remove this entry? The remarks you entered for it will be deleted.')) return;
+  if(row.remarks && String(row.remarks).trim()){
+    const ok = await showConfirm(
+      'The remarks you entered for it will be deleted.',
+      { title:'Remove this entry?', confirmLabel:'Remove', danger:true }
+    );
+    if(!ok) return;
+  }
   state.confirmation.entries.splice(idx,1);
   if(state.confirmation.entries.length===0) state.confirmation.entries.push(emptyConfirmationEntry());
   renderSection('sec-confirmation');
@@ -1180,6 +1273,31 @@ function computeScore(fromState){
   const total = yes+no;
   const pct = total ? Math.round((yes/total)*100) : 0;
   return { total, yes, no, pct };
+}
+/** Renders the Yes/No checklist tally as a labeled fraction + two-color
+ *  bar + explicit note, instead of a bare "95%" that reads like an
+ *  overall audit grade. Used identically by the in-progress review card
+ *  and the submitted-report drawer so both stay in sync if this ever
+ *  changes again. */
+function scoreHeroHtml(s){
+  const yesPct = s.total ? (s.yes / s.total) * 100 : 0;
+  const noPct = s.total ? 100 - yesPct : 0;
+  return '<div class="score-hero-top">'
+    + '<span class="score-hero-label">Yes / No checklist items</span>'
+    + '<span class="score-hero-frac">'+s.yes+' / '+s.total+'<span>('+s.pct+'% yes)</span></span>'
+    + '</div>'
+    + '<div class="score-hero-bar">'
+    + '<div class="score-hero-bar-seg yes" style="width:'+yesPct+'%"></div>'
+    + '<div class="score-hero-bar-seg no" style="width:'+noPct+'%"></div>'
+    + '</div>'
+    + '<div class="score-hero-legend">'
+    + '<span><span class="dot yes"></span>'+s.yes+' yes</span>'
+    + '<span><span class="dot no"></span>'+s.no+' no</span>'
+    + '</div>'
+    + '<div class="score-hero-note">'
+    + '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M12 16v.01M12 8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
+    + '<span>Tally of Yes/No checklist answers only \u2014 condition checks, counts, and remarks aren\u2019t included, so this isn\u2019t an overall audit rating.</span>'
+    + '</div>';
 }
 /* human-readable labels for the yes/no + condition checklist items,
    used to build the readable "previous audits" report */
@@ -1727,8 +1845,7 @@ function renderReview(){
     + '<div class="card-body">'
     + (editingSubmissionId!=null ? '<div class="banner" style="margin-bottom:10px;">Editing a previously submitted audit. Tap <strong>Save changes</strong> to update it, or <a href="#" onclick="cancelEdit();return false;" style="color:inherit;text-decoration:underline;">cancel editing</a>.</div>' : '')
     + '<div class="score-hero">'
-    + '<div class="score-num">'+s.pct+'%</div>'
-    + '<div class="score-meta">Checklist compliance<br><strong>'+s.yes+'</strong> yes &middot; <strong>'+s.no+'</strong> no &middot; '+s.total+' items scored</div>'
+    + scoreHeroHtml(s)
     + '</div>'
     + '<div class="info-list">'
     + '<div class="info-row"><span>Branch</span><span>'+(escHtml(state.branch)||'&mdash;')+'</span></div>'
@@ -1778,7 +1895,7 @@ function refreshSummary(){
   const footerStatus = document.getElementById('footerStatus');
   if(footerStatus){
     footerStatus.innerHTML = (state.branch ? escHtml(state.branch)+' &middot; ' : '')
-      + '<strong>'+sc.pct+'%</strong> checklist compliance so far ('+sc.yes+' yes, '+sc.no+' no)';
+      + '<strong>'+sc.yes+'/'+sc.total+'</strong> Yes/No items answered Yes ('+sc.no+' No)';
   }
   updateSubmitBtnState();
 }
@@ -1821,18 +1938,90 @@ function render(){
   const s = computeScore();
   const footerStatus = document.getElementById('footerStatus');
   footerStatus.innerHTML = (state.branch ? escHtml(state.branch)+' &middot; ' : '')
-    + '<strong>'+s.pct+'%</strong> checklist compliance so far ('+s.yes+' yes, '+s.no+' no)';
+    + '<strong>'+s.yes+'/'+s.total+'</strong> Yes/No items answered Yes ('+s.no+' No)';
   updateSubmitBtnState();
   applySearchHighlight(); // re-apply since #main was just rebuilt
 }
 
 document.getElementById('submitBtn').addEventListener('click', doSubmit);
 
-function showToast(msg){
+const TOAST_ICONS = {
+  success:'<svg class="toast-icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="var(--ok-soft)"/><path d="M7.5 12.4l2.8 2.8L16.5 9" stroke="var(--ok)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  error:'<svg class="toast-icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="var(--del-soft)"/><path d="M9 9l6 6M15 9l-6 6" stroke="var(--del)" stroke-width="2" stroke-linecap="round"/></svg>',
+  warn:'<svg class="toast-icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="var(--rstr-soft)"/><path d="M12 7.5v5.5M12 16.5h.01" stroke="var(--rstr)" stroke-width="2" stroke-linecap="round"/></svg>',
+  info:'<svg class="toast-icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="var(--accent-soft)"/><path d="M12 10.5v5.5M12 7.4h.01" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/></svg>'
+};
+let toastTimer = null;
+/** Centered, color-coded notification card. type is 'success' | 'error' |
+ *  'warn' | 'info' (default) and picks the icon + accent stripe, so the
+ *  kind of message is clear at a glance instead of every toast looking
+ *  the same. Auto-dismisses, but tapping the card (or its \u00d7) closes
+ *  it immediately. */
+function showToast(msg, type){
+  type = (type && TOAST_ICONS[type]) ? type : 'info';
   const t = document.getElementById('toast');
-  t.textContent = msg; t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'), 2400);
+  t.className = 'toast type-' + type;
+  t.innerHTML = TOAST_ICONS[type]
+    + '<div class="toast-msg"></div>'
+    + '<button type="button" class="toast-close" aria-label="Dismiss" onclick="event.stopPropagation(); hideToast();">&times;</button>';
+  t.querySelector('.toast-msg').textContent = msg;
+  // Reflow before adding .show so the transition reliably replays even
+  // if a toast is fired again while the previous one is still fading.
+  void t.offsetWidth;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, 3400);
 }
+function hideToast(){
+  document.getElementById('toast').classList.remove('show');
+  clearTimeout(toastTimer);
+}
+
+const CONFIRM_ICONS = {
+  q:'<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M9.3 9.3a2.7 2.7 0 1 1 3.9 2.4c-.9.5-1.2 1-1.2 1.9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M12 17v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  warn:'<svg viewBox="0 0 24 24" fill="none"><path d="M12 3.5 21 19H3L12 3.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 9.5v4.2M12 16.7v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  danger:'<svg viewBox="0 0 24 24" fill="none"><path d="M9 4h6l.8 2H19v2H5V6h3.2L9 4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M6.5 8h11l-.9 12.1a2 2 0 0 1-2 1.9H9.4a2 2 0 0 1-2-1.9L6.5 8Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 11.5v6M14 11.5v6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>'
+};
+let confirmResolve_ = null;
+/** Promise-based replacement for the native confirm() dialog: a centered
+ *  card with a clear title, one plain-language question, and two
+ *  unmistakable buttons (Cancel vs. a labeled action) instead of a
+ *  browser-styled OK/Cancel box. opts: {title, confirmLabel, cancelLabel,
+ *  danger (red, for permanent/destructive actions), warn (amber, for
+ *  discard-type actions) \u2014 default icon is a neutral question mark. */
+function showConfirm(message, opts){
+  opts = opts || {};
+  return new Promise(function(resolve){
+    confirmResolve_ = resolve;
+    document.getElementById('confirmTitle').textContent = opts.title || 'Are you sure?';
+    document.getElementById('confirmMsg').textContent = message || '';
+    const okBtn = document.getElementById('confirmOkBtn');
+    const cancelBtn = document.getElementById('confirmCancelBtn');
+    okBtn.textContent = opts.confirmLabel || 'Confirm';
+    cancelBtn.textContent = opts.cancelLabel || 'Cancel';
+    okBtn.className = 'confirm-btn ok' + (opts.danger ? ' danger' : '');
+    const kind = opts.danger ? 'danger' : (opts.warn ? 'warn' : 'q');
+    const icon = document.getElementById('confirmIcon');
+    icon.className = 'confirm-icon ' + kind;
+    icon.innerHTML = CONFIRM_ICONS[kind];
+    const overlay = document.getElementById('confirmOverlay');
+    overlay.classList.add('open');
+    overlay.setAttribute('aria-hidden', 'false');
+  });
+}
+function resolveConfirm_(result){
+  const overlay = document.getElementById('confirmOverlay');
+  overlay.classList.remove('open');
+  overlay.setAttribute('aria-hidden', 'true');
+  const resolve = confirmResolve_;
+  confirmResolve_ = null;
+  if(resolve) resolve(result);
+}
+document.getElementById('confirmOkBtn').addEventListener('click', function(){ resolveConfirm_(true); });
+document.getElementById('confirmCancelBtn').addEventListener('click', function(){ resolveConfirm_(false); });
+document.getElementById('confirmOverlay').addEventListener('click', function(e){
+  if(e.target.id === 'confirmOverlay') resolveConfirm_(false);
+});
 
 /* ============================================================
    SEARCH (toolbar below header) — highlights matching questions,
@@ -2126,11 +2315,15 @@ function htmlToPlainText(html){
    current checklist answers — for when the checklist changed since
    you last edited the standalone preview and you want it back in
    sync, instead of hand-editing it again from scratch. */
-function resetPreviewDraft(){
-  if(!confirm('Discard your manual edits in this document and rebuild it from the current checklist answers?')) return;
+async function resetPreviewDraft(){
+  const ok = await showConfirm(
+    'This discards your manual edits and rebuilds it from the current checklist answers.',
+    { title:'Rebuild document?', confirmLabel:'Rebuild', cancelLabel:'Keep edits', warn:true }
+  );
+  if(!ok) return;
   previewEditedHtml = buildPreviewHtml();
   document.getElementById('previewPage').innerHTML = previewEditedHtml;
-  showToast('Preview rebuilt from the checklist \u2014 your previous edits were discarded.');
+  showToast('Preview rebuilt from the checklist \u2014 your previous edits were discarded.', 'info');
 }
 function closePreview(){
   if(historyPreviewMode){
@@ -2187,7 +2380,7 @@ function downloadPreviewDoc(){
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(()=>URL.revokeObjectURL(url), 4000);
-  showToast('Downloaded \u2014 opens in Word already set to 8.5\u2033\u00d711\u2033, ready to print.');
+  showToast('Downloaded \u2014 opens in Word already set to 8.5\u2033\u00d711\u2033, ready to print.', 'success');
 }
 
 /* ============================================================
@@ -2218,18 +2411,18 @@ async function shareAuditDoc(){
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(()=>URL.revokeObjectURL(url), 4000);
-  showToast('Sharing isn\u2019t available here \u2014 downloaded the Word file instead. Open it to share or print.');
+  showToast('Sharing isn\u2019t available here \u2014 downloaded the Word file instead. Open it to share or print.', 'info');
 }
 
 async function doSubmit(){
   if(submitting) return; // already in flight — ignore a stray double-tap
   if(!state.branch){
-    showToast('Please enter the branch name first.');
+    showToast('Please enter the branch name first.', 'warn');
     document.getElementById('sec-basics').scrollIntoView({behavior:'smooth', block:'start'});
     return;
   }
   if(!backendConfigured){
-    showToast('Backend not configured yet \u2014 see the note in the review card.');
+    showToast('Backend not configured yet \u2014 see the note in the review card.', 'warn');
     return;
   }
   const isEdit = !!editingSubmissionId;
@@ -2263,7 +2456,7 @@ async function doSubmit(){
     const result = await res.json();
     submitting = false;
     if(result && result.ok){
-      showToast(isEdit ? 'Audit updated \u2014 changes saved.' : 'Audit submitted \u2014 saved to its own tab and to Audit Initial Report.');
+      showToast(isEdit ? 'Audit updated \u2014 changes saved.' : 'Audit submitted \u2014 saved to its own tab and to Audit Initial Report.', 'success');
       saveHistoryEntry({
         submissionId: result.submissionId || editingSubmissionId || null,
         branch: payload.branch, auditor: payload.auditor, auditDate: payload.auditDate,
@@ -2279,24 +2472,30 @@ async function doSubmit(){
       renderBranchDrawer();
     } else {
       render();
-      showToast('Could not '+(isEdit?'save changes':'submit')+': ' + (result && result.error ? result.error : 'unknown error'));
+      showToast('Could not '+(isEdit?'save changes':'submit')+': ' + (result && result.error ? result.error : 'unknown error'), 'error');
     }
   } catch(err){
     submitting = false;
     render();
-    showToast('Could not reach the server \u2014 your answers are safe as a draft on this device. Try Submit again once you\u2019re back online: ' + err.message);
+    showToast('Could not reach the server \u2014 your answers are safe as a draft on this device. Try Submit again once you\u2019re back online: ' + err.message, 'error');
   }
 }
 
 /* Loads a previously-submitted audit's full state back into the form
    so it can be edited, then saved with "Save changes" (which updates
    the existing sheet tab/index row instead of creating a new one). */
-function editAuditFromReport(){
+async function editAuditFromReport(){
   if(deleteInFlight) return;
   const list = historyCache || loadLocalHistory();
   const h = list[openReportIdx];
-  if(!h || !h.state){ showToast('Full data for this audit isn\u2019t available on this device \u2014 open it on the device that submitted it, or check the shared Sheet directly.'); return; }
-  if((state.branch || editingSubmissionId) && !confirm('Discard the audit currently on screen and load this one for editing?')) return;
+  if(!h || !h.state){ showToast('Full data for this audit isn\u2019t available on this device \u2014 open it on the device that submitted it, or check the shared Sheet directly.', 'warn'); return; }
+  if(state.branch || editingSubmissionId){
+    const ok = await showConfirm(
+      'Loading this audit for editing will discard the one currently on screen.',
+      { title:'Discard current audit?', confirmLabel:'Load for editing', warn:true }
+    );
+    if(!ok) return;
+  }
   state = JSON.parse(JSON.stringify(h.state));
   editingSubmissionId = h.submissionId || null;
   // Snapshot the just-loaded state so hasEditChanges() can tell, later,
@@ -2314,12 +2513,16 @@ function editAuditFromReport(){
   window.scrollTo({top:0, behavior:'smooth'});
   showToast(editingSubmissionId
     ? 'Editing this audit \u2014 make your changes, then tap Save changes.'
-    : 'Editing this audit \u2014 it has no submission ID on record, so saving will create a new tab instead of updating the old one.');
+    : 'Editing this audit \u2014 it has no submission ID on record, so saving will create a new tab instead of updating the old one.', 'info');
 }
 
 /** Stops editing and clears the form, after a confirmation. */
-function cancelEdit(){
-  if(!confirm('Discard changes and stop editing this audit?')) return;
+async function cancelEdit(){
+  const ok = await showConfirm(
+    'This discards your changes and stops editing this audit.',
+    { title:'Stop editing?', confirmLabel:'Discard changes', danger:true }
+  );
+  if(!ok) return;
   editingSubmissionId = null;
   editSnapshotJson = null;
   state = freshState();
@@ -2346,13 +2549,14 @@ function hasEditChanges(){
  *  mid-edit or mid-draft. Confirms first if there's anything on screen
  *  worth losing (an edit in progress, or a non-blank not-yet-submitted
  *  draft) so a stray tap can't silently wipe work. */
-function newAudit(){
+async function newAudit(){
   const isBlank = !editingSubmissionId && !isDraftWorthKeeping(state);
   if(!isBlank){
     const msg = editingSubmissionId
-      ? 'Discard changes and stop editing this audit, then start a new one?'
-      : 'Discard the current unsaved audit and start a new one?';
-    if(!confirm(msg)) return;
+      ? 'This discards your changes, stops editing this audit, and starts a new one.'
+      : 'This discards the current unsaved audit and starts a new one.';
+    const ok = await showConfirm(msg, { title:'Start a new audit?', confirmLabel:'Start new', warn:true });
+    if(!ok) return;
   }
   editingSubmissionId = null;
   editSnapshotJson = null;
@@ -2362,7 +2566,7 @@ function newAudit(){
   closeBranchMenu();
   render();
   window.scrollTo({top:0, behavior:'smooth'});
-  showToast('Started a new audit.');
+  showToast('Started a new audit.', 'success');
 }
 
 /** Toggles the Print/Edit/Delete row (in the report drawer) between
@@ -2400,9 +2604,13 @@ async function deleteAuditFromReport(){
   const h = list[openReportIdx];
   if(!h) return;
   const label = (h.branch || 'This audit') + (h.auditDate ? ' \u2014 ' + h.auditDate : '');
-  if(!confirm('Delete this audit permanently?\n\n' + label + '\n\nThis removes its sheet tab from the spreadsheet and cannot be undone.')) return;
-  if(!backendConfigured){ showToast('Backend not configured yet \u2014 cannot delete.'); return; }
-  if(!h.submissionId){ showToast('This audit has no submission ID on record, so it can\u2019t be deleted remotely \u2014 remove its tab directly in the Sheet instead.'); return; }
+  const ok = await showConfirm(
+    label + '\n\nThis removes its sheet tab from the spreadsheet and cannot be undone.',
+    { title:'Delete this audit permanently?', confirmLabel:'Delete', danger:true }
+  );
+  if(!ok) return;
+  if(!backendConfigured){ showToast('Backend not configured yet \u2014 cannot delete.', 'warn'); return; }
+  if(!h.submissionId){ showToast('This audit has no submission ID on record, so it can\u2019t be deleted remotely \u2014 remove its tab directly in the Sheet instead.', 'warn'); return; }
   deleteInFlight = true;
   setReportActionsBusy_(true);
   try{
@@ -2413,17 +2621,17 @@ async function deleteAuditFromReport(){
     });
     const result = await res.json();
     if(result && result.ok){
-      showToast('Audit deleted.');
+      showToast('Audit deleted.', 'success');
       closeReport();
       historyCache = (historyCache || []).filter(x => x.submissionId !== h.submissionId);
       saveLocalHistoryCache(historyCache);
       renderBranchDrawer();
     } else {
-      showToast('Could not delete: ' + (result && result.error ? result.error : 'unknown error'));
+      showToast('Could not delete: ' + (result && result.error ? result.error : 'unknown error'), 'error');
       setReportActionsBusy_(false);
     }
   } catch(err){
-    showToast('Could not reach the server: ' + err.message);
+    showToast('Could not reach the server: ' + err.message, 'error');
     setReportActionsBusy_(false);
   } finally {
     deleteInFlight = false;
@@ -2473,7 +2681,7 @@ document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) loadBra
    HEADER — back to dashboard + hamburger branch menu
    ============================================================ */
 function goToDashboard(){
-  if(submitting){ showToast('Please wait for the current submission to finish before leaving.'); return; }
+  if(submitting){ showToast('Please wait for the current submission to finish before leaving.', 'warn'); return; }
   window.location.href = 'index.html';
 }
 
@@ -2527,6 +2735,7 @@ function renderHistorySection(list, status, detail){
     + list.map((h,i) => {
         const pct = h.score ? h.score.pct : 0;
         const goodBad = pct >= 80 ? 'good' : 'bad';
+        const yn = h.score ? (h.score.yes+'/'+h.score.total+' Yes/No items answered Yes') : '';
         const auditorChip = h.auditor
           ? '<span class="hi-chip">'
             + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
@@ -2535,7 +2744,7 @@ function renderHistorySection(list, status, detail){
         return '<button class="history-item '+goodBad+'" onclick="openReport('+i+')">'
           + '<div class="hi-top">'
           + '<div class="h-branch">'+(escHtml(h.branch)||'(no branch name)')+'</div>'
-          + '<div class="h-score '+goodBad+'">'+pct+'%</div>'
+          + '<div class="h-score '+goodBad+'" title="'+escAttr(yn)+'">'+pct+'%</div>'
           + '</div>'
           + '<div class="hi-date"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>'+(h.auditDate ? escHtml(mdy(h.auditDate)) : '\u2014')+'</div>'
           + '<div class="hi-meta">'
@@ -2570,9 +2779,9 @@ function buildReportHtml(h){
   const pillYN = v => v===true ? '<span class="badge ok">Yes</span>' : v===false ? '<span class="badge del">No</span>' : '&mdash;';
   let html = '';
   html += '<div class="report-hero">'
-    + '<div class="score-num">'+score.pct+'%</div>'
-    + '<div class="score-meta">Checklist compliance<br><strong>'+score.yes+'</strong> yes &middot; <strong>'+score.no+'</strong> no &middot; '+score.total+' items scored</div>'
+    + scoreHeroHtml(score)
     + '</div>';
+  html += '<div class="report-section-title" style="margin-top:0;">Overview</div>';
   html += '<div class="info-list">'
     + '<div class="info-row"><span>Branch</span><span>'+(escHtml(h.branch)||'&mdash;')+'</span></div>'
     + '<div class="info-row"><span>Auditor</span><span>'+(escHtml(h.auditor)||'&mdash;')+'</span></div>'
@@ -2764,9 +2973,13 @@ function closeBranchMenu(){
    alone so they aren't lost on reset.
    ============================================================ */
 async function hardResetApp(){
-  if(submitting){ showToast('Please wait for the current submission to finish before resetting.'); return; }
+  if(submitting){ showToast('Please wait for the current submission to finish before resetting.', 'warn'); return; }
   const btn = document.getElementById('hardResetBtn');
-  if(!confirm('This reloads the latest version of the app from GitHub. Your previous audit reports on this device are kept. Continue?')) return;
+  const ok = await showConfirm(
+    'This reloads the latest version of the app from GitHub. Your previous audit reports on this device are kept.',
+    { title:'Reload app?', confirmLabel:'Reload' }
+  );
+  if(!ok) return;
   if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Resetting\u2026'; }
 
   try{

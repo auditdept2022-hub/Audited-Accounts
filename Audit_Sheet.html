@@ -1010,20 +1010,23 @@ function setCond(path, val){
 }
 function setRepField(path, idx, field, val){ get(path)[idx][field] = val; updateSubmitBtnState(); }
 
-/* Series No auto-fill: booklets of OR/SI/DR are almost always issued in
-   runs of 50 (e.g. 51-100, 11251-11300), so the moment someone finishes
-   typing the starting number and types the dash (e.g. "51-"), we
-   auto-complete the end of the range as start+49 and select that
-   auto-filled part. Typing over the selection (e.g. to get an odd range
-   like 17-50) simply replaces it, and nothing stops a full manual edit
-   at any time — this is a convenience, not a lock. */
+/* Series No auto-fill: OR/SI/DR booklets are always issued in blocks
+   that END on a multiple of 50 (1-50, 51-100, 101-150...) — whether a
+   block starts exactly at the top of one (51, 101, stock booklets) or
+   partway through because the previous booklet was only partly used
+   (e.g. 17, 53), the END is simply the next multiple of 50. So the
+   moment someone finishes typing the starting number and types the
+   dash (e.g. "17-"), we round up to that next multiple of 50 and
+   select the auto-filled part. Typing over the selection replaces it,
+   and nothing stops a full manual edit at any time — this is a
+   convenience, not a lock. */
 function onSeriesNoInput(input, path, idx){
   const val = input.value;
   const m = val.match(/^\s*(\d+)\s*-\s*$/);
   if(m){
     const start = parseInt(m[1], 10);
-    if(!isNaN(start)){
-      const end = start + 49;
+    if(!isNaN(start) && start > 0){
+      const end = Math.ceil(start / 50) * 50;
       const prefix = start + '-';
       const newVal = prefix + end;
       input.value = newVal;

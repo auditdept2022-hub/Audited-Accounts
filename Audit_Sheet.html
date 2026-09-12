@@ -65,7 +65,7 @@
      html/body themselves never scroll. This is the robust fix. */
   #scrollArea{flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden;
     -webkit-overflow-scrolling:touch; overscroll-behavior-y:contain;
-    padding-bottom:calc(var(--footer-h, 84px) + 10px + var(--safe-b));}
+    padding-bottom:calc(10px + var(--safe-b));}
   img,svg{max-width:100%;}
   input,textarea,select,button{max-width:100%;}
   *{scrollbar-width:thin;scrollbar-color:#C7CEEE var(--line);}
@@ -432,6 +432,13 @@
   .er-add-row{display:block; width:100%; border:none; background:#fff; color:var(--accent-dark); font-family:inherit;
     font-size:12.5px; font-weight:700; padding:10px; cursor:pointer; text-align:center;}
   .er-add-row:active{background:var(--accent-soft);}
+  /* ---------- confirmation-of-accounts: repeatable remarks entries ---------- */
+  .conf-entries{border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; background:#fff;}
+  .conf-entry{padding:10px;}
+  .conf-entry + .conf-entry{border-top:1px solid var(--line);}
+  .conf-entry-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;}
+  .conf-entry-label{font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.4px;}
+  .conf-entries .er-add-row{border-top:1px solid var(--line);}
   @media (max-width:380px){
     .er-table-head, .er-table-row{grid-template-columns:18px .8fr 1fr 1.1fr 20px;}
     .er-table-head > div, .er-cell-input, .er-cell-select{font-size:10.5px; padding:6px 4px;}
@@ -567,11 +574,14 @@
   .banner{background:var(--gold-soft); border:1px solid #E6D6A0; color:#6B5215; font-size:12.5px;
     padding:10px 14px; border-radius:10px; margin-bottom:10px;}
 
-  /* ---------- footer / submit ---------- */
-  footer.nav-bar{position:fixed; left:0; right:0; bottom:0; z-index:20; background:#fff;
-    border-top:1px solid var(--line); padding:9px calc(14px + var(--safe-r)) calc(9px + var(--safe-b)) calc(14px + var(--safe-l));
-    box-shadow:0 -8px 24px rgba(16,22,60,.08);
-    transform:translateZ(0); -webkit-transform:translateZ(0); will-change:transform; backface-visibility:hidden;}
+  /* ---------- footer / submit ----------
+     Used to be position:fixed to the bottom of the viewport (a permanent
+     floating bar). It now sits in normal document flow, right after the
+     form content, so it doesn't eat into the visible screen area — it
+     just scrolls up with everything else and appears once you reach the
+     bottom of that branch's audit. */
+  footer.nav-bar{background:#fff; margin-top:18px;
+    border-top:1px solid var(--line); padding:14px calc(14px + var(--safe-r)) calc(14px + var(--safe-b)) calc(14px + var(--safe-l));}
   .nav-bar-inner{max-width:520px; margin:0 auto; display:flex; align-items:center; gap:12px;}
   .footer-status{display:none; font-size:12.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   .footer-status strong{color:var(--text); font-family:'JetBrains Mono',monospace;}
@@ -644,6 +654,12 @@
 <main class="wrap">
   <div id="main"></div>
   <div id="reviewWrap"></div>
+  <footer class="nav-bar">
+    <div class="nav-bar-inner">
+      <div class="footer-status" id="footerStatus"></div>
+      <button class="btn primary" id="submitBtn">Submit audit</button>
+    </div>
+  </footer>
 </main>
 </div>
 <!-- /#scrollArea -->
@@ -699,13 +715,6 @@
   </div>
 </div>
 
-<footer class="nav-bar">
-  <div class="nav-bar-inner">
-    <div class="footer-status" id="footerStatus"></div>
-    <button class="btn primary" id="submitBtn">Submit audit</button>
-  </div>
-</footer>
-
 <div class="toast" id="toast"></div>
 
 <script>
@@ -725,6 +734,7 @@ const backendConfigured = APPS_SCRIPT_URL && APPS_SCRIPT_URL.indexOf('PASTE_YOUR
 const emptyEntry = () => ({ type:'', seriesNo:'', remarks:'' });
 const emptyDepositEntry = () => ({ amount:'', time:'', remarks:'' });
 const emptyStatusEntry = () => ({ status:'', remarks:'' });
+const emptyConfirmationEntry = () => ({ remarks:'' });
 
 function freshState(){
   return {
@@ -758,7 +768,7 @@ function freshState(){
       tools: emptyStatusEntry(), spareparts: emptyStatusEntry(),
       platesOrCr: emptyStatusEntry(), assets: emptyStatusEntry()
     },
-    confirmation:{ remarks:'' },
+    confirmation:{ entries:[ emptyConfirmationEntry() ] },
     findings:[]
   };
 }
@@ -1009,6 +1019,26 @@ function removeRep(path, idx){
   updateSubmitBtnState();
 }
 
+/* Confirmation of accounts used to be a single free-text Remarks box.
+   It's now a repeatable list — tap "+ Add entry" for a fresh line each
+   time there's a separate issue to note, instead of running everything
+   together in one paragraph. Always keeps at least one (possibly blank)
+   entry so there's always somewhere to type. */
+function setConfirmationRemarks(idx, val){ state.confirmation.entries[idx].remarks = val; updateSubmitBtnState(); }
+function addConfirmationEntry(){
+  state.confirmation.entries.push(emptyConfirmationEntry());
+  renderSection('sec-confirmation');
+  updateSubmitBtnState();
+}
+function removeConfirmationEntry(idx){
+  const row = state.confirmation.entries[idx] || {};
+  if(row.remarks && String(row.remarks).trim() && !confirm('Remove this entry? The remarks you entered for it will be deleted.')) return;
+  state.confirmation.entries.splice(idx,1);
+  if(state.confirmation.entries.length===0) state.confirmation.entries.push(emptyConfirmationEntry());
+  renderSection('sec-confirmation');
+  updateSubmitBtnState();
+}
+
 /* ---------- cash: denomination breakdown + live totals ----------
    These run on every keystroke (oninput). They must NEVER call the
    full render() — replacing the whole form's HTML while a number
@@ -1038,13 +1068,40 @@ function onDenomInput(group, denom, el){
   refreshCashComputed();
 }
 function onCashFieldInput(field, val){
-  state.cash[field] = val;
+  state.cash[field] = String(val).replace(/,/g,'');
   refreshCashComputed();
+}
+/* Peso fields (Total/Gcash collection, Less: expenses) show comma+decimal
+   formatting (e.g. "15,000.00") once you tab away, but that's annoying to
+   edit against, so focusing the field swaps back to the plain typed number
+   and blurring re-formats it. The underlying state is always the plain
+   (unformatted) number either way — only the on-screen text changes. */
+function onCashFieldFocus(field, el){
+  el.value = state.cash[field] === '' ? '' : String(state.cash[field]);
+}
+function onCashFieldBlur(field, el){
+  el.value = state.cash[field] === '' ? '' : fmtMoney(state.cash[field]);
+}
+function moneyInputEl(value, field){
+  const display = (value === '' || value == null) ? '' : fmtMoney(value);
+  return '<input class="input" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00" value="'+escAttr(display)+'"'
+    + ' oninput="onCashFieldInput(\''+field+'\', this.value)"'
+    + ' onfocus="onCashFieldFocus(\''+field+'\', this)"'
+    + ' onblur="onCashFieldBlur(\''+field+'\', this)">';
 }
 function depositsTotal(list){
   return (list||[]).reduce((sum,row)=> sum + (parseFloat(row.amount)||0), 0);
 }
-function setDepositField(idx, field, val){ state.cash.deposits[idx][field] = val; if(field==='amount') refreshCashComputed(); else updateSubmitBtnState(); }
+function setDepositField(idx, field, val){
+  state.cash.deposits[idx][field] = field==='amount' ? String(val).replace(/,/g,'') : val;
+  if(field==='amount') refreshCashComputed(); else updateSubmitBtnState();
+}
+function onDepositAmtFocus(idx, el){
+  el.value = state.cash.deposits[idx].amount === '' ? '' : String(state.cash.deposits[idx].amount);
+}
+function onDepositAmtBlur(idx, el){
+  el.value = state.cash.deposits[idx].amount === '' ? '' : fmtMoney(state.cash.deposits[idx].amount);
+}
 function addDeposit(){ state.cash.deposits.push(emptyDepositEntry()); renderSection('sec-cash'); refreshCashComputed(); }
 function removeDeposit(idx){
   state.cash.deposits.splice(idx,1);
@@ -1060,8 +1117,8 @@ function refreshCashComputed(){
   const net = total + gcash - exp;
   const onHand = net - dep;
   const hasInput = c.totalCollection !== '' || c.gcashCollection !== '' || c.lessExpenses !== '' || dep !== 0;
-  c.netCollection = hasInput ? net.toFixed(2) : '';
-  c.cashOnHand = hasInput ? onHand.toFixed(2) : '';
+  c.netCollection = hasInput ? fmtMoney(net) : '';
+  c.cashOnHand = hasInput ? fmtMoney(onHand) : '';
 
   const netEl = document.getElementById('cashNetDisplay');
   if(netEl) netEl.value = c.netCollection;
@@ -1213,10 +1270,24 @@ function conditionRow(path, label, opts, withCount){
 const OR_REMARKS_PRESETS = ['MA','OTHERS','REG','COD/DP','SPARE PARTS'];
 const OR_GROUPS = [
   { path:'officialReceipts.orEntries', title:'Official Receipt', addLabel:'OR entry', presets:['Motofinance','Motowheels'], remarksPresets:OR_REMARKS_PRESETS },
-  { path:'officialReceipts.sparepartsEntries', title:'Spareparts Invoice', addLabel:'spareparts invoice', presets:null },
-  { path:'officialReceipts.salesDrEntries', title:'Sales Invoice & Delivery Receipt', addLabel:'entry', presets:['Sales Invoice','Delivery Receipt'] },
+  { path:'officialReceipts.sparepartsEntries', title:'Spareparts Invoice', addLabel:'spareparts invoice', presets:['Stock'], allowManualType:true },
+  { path:'officialReceipts.salesDrEntries', title:'Sales Invoice & Delivery Receipt', addLabel:'entry', presets:['Sales Invoice','Delivery Receipt','Stock'] },
   { path:'officialReceipts.stockEntries', title:'Stock Receipt', addLabel:'stock entry', presets:['Motofinance','Motowheels','Spareparts','Sales Invoice','Delivery Receipt'] }
 ];
+/* Type field equivalent of setOrRemarksPreset(): only used by groups with
+   allowManualType:true (currently just Spareparts Invoice), where "Stock"
+   is offered as a one-tap preset but anything else can still be typed in
+   via "Enter manually". */
+function setEntryTypePreset(path, idx, value){
+  const row = get(path)[idx];
+  if(value === '__manual__'){
+    row.typeManual = true;
+  } else {
+    row.typeManual = false;
+    row.type = value;
+  }
+  renderSection(sectionIdForPath(path));
+}
 function setOrRemarksPreset(path, idx, value){
   const row = get(path)[idx];
   if(value === '__manual__'){
@@ -1227,14 +1298,32 @@ function setOrRemarksPreset(path, idx, value){
   }
   renderSection(sectionIdForPath(path));
 }
-function orEntryRow(path, row, i, presets, remarksPresets){
-  const typeCell = presets
-    ? '<select class="er-cell-select" onchange="setRepField(\''+path+'\','+i+',\'type\',this.value)">'
-      + '<option value=""'+(row.type?'':' selected')+'>Select&hellip;</option>'
-      + presets.map(t=>'<option value="'+escAttr(t)+'"'+(row.type===t?' selected':'')+'>'+escHtml(t)+'</option>').join('')
-      + '</select>'
-    : '<input class="er-cell-input" type="text" placeholder="Type" value="'+escAttr(row.type)+'"'
-      + ' oninput="setRepField(\''+path+'\','+i+',\'type\',this.value)">';
+function orEntryRow(path, row, i, presets, remarksPresets, allowManualType){
+  let typeCell;
+  if(presets && allowManualType){
+    const manual = !!row.typeManual;
+    if(manual){
+      typeCell = '<div class="er-remarks-picker-manual">'
+        + '<input class="er-cell-input" type="text" placeholder="Type" value="'+escAttr(row.type)+'"'
+        + ' oninput="setRepField(\''+path+'\','+i+',\'type\',this.value)">'
+        + '<button type="button" class="er-remarks-back" title="Choose from list instead" onclick="setEntryTypePreset(\''+path+'\','+i+',\'\')">List</button>'
+        + '</div>';
+    } else {
+      typeCell = '<select class="er-cell-select" onchange="setEntryTypePreset(\''+path+'\','+i+',this.value)">'
+        + '<option value=""'+(row.type?'':' selected')+'>Select&hellip;</option>'
+        + presets.map(t=>'<option value="'+escAttr(t)+'"'+(row.type===t?' selected':'')+'>'+escHtml(t)+'</option>').join('')
+        + '<option value="__manual__">Enter manually</option>'
+        + '</select>';
+    }
+  } else {
+    typeCell = presets
+      ? '<select class="er-cell-select" onchange="setRepField(\''+path+'\','+i+',\'type\',this.value)">'
+        + '<option value=""'+(row.type?'':' selected')+'>Select&hellip;</option>'
+        + presets.map(t=>'<option value="'+escAttr(t)+'"'+(row.type===t?' selected':'')+'>'+escHtml(t)+'</option>').join('')
+        + '</select>'
+      : '<input class="er-cell-input" type="text" placeholder="Type" value="'+escAttr(row.type)+'"'
+        + ' oninput="setRepField(\''+path+'\','+i+',\'type\',this.value)">';
+  }
   let remarksCell;
   if(remarksPresets){
     const manual = !!row.remarksManual;
@@ -1274,7 +1363,7 @@ function orGroupList(g){
   let html = '<div class="or-group-title">'+escHtml(g.title)+'</div>';
   html += '<div class="er-table">'
     + '<div class="er-table-head"><div></div><div>Type</div><div>Series No</div><div>Remarks</div><div></div></div>';
-  arr.forEach((row,i)=>{ html += orEntryRow(g.path, row, i, g.presets, g.remarksPresets); });
+  arr.forEach((row,i)=>{ html += orEntryRow(g.path, row, i, g.presets, g.remarksPresets, g.allowManualType); });
   html += '<button type="button" class="er-add-row" onclick="addRep(\''+g.path+'\')">+ Add entry</button>'
     + '</div>';
   return html;
@@ -1440,8 +1529,11 @@ function depositsList(){
   let html = '<div class="field span2"><label>Less: deposits</label><div class="deposit-list">';
   arr.forEach((row,i)=>{
     html += '<div class="deposit-row">'
-      + '<input class="dep-amt" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Amount"'
-      + ' value="'+escAttr(row.amount)+'" oninput="setDepositField('+i+',\'amount\',this.value)">'
+      + '<input class="dep-amt" type="text" inputmode="decimal" placeholder="Amount"'
+      + ' value="'+escAttr(row.amount===''? '' : fmtMoney(row.amount))+'"'
+      + ' oninput="setDepositField('+i+',\'amount\',this.value)"'
+      + ' onfocus="onDepositAmtFocus('+i+',this)"'
+      + ' onblur="onDepositAmtBlur('+i+',this)">'
       + '<input class="dep-time" type="time"'
       + ' value="'+escAttr(row.time)+'" oninput="setDepositField('+i+',\'time\',this.value)">'
       + '<input class="dep-remarks" type="text" placeholder="Remarks"'
@@ -1484,9 +1576,9 @@ function renderCash(){
     + denomTable('cashCount','Cash count breakdown')
     + '</div>'
     + '<div class="field-grid" style="margin-top:14px;">'
-    + field('Total collection', inputEl(c.totalCollection, 'oninput="onCashFieldInput(\'totalCollection\', this.value)"', 'number', 'inputmode="decimal"'))
-    + field('Gcash collection', inputEl(c.gcashCollection, 'oninput="onCashFieldInput(\'gcashCollection\', this.value)"', 'number', 'inputmode="decimal"'))
-    + field('Less: expenses', inputEl(c.lessExpenses, 'oninput="onCashFieldInput(\'lessExpenses\', this.value)"', 'number', 'inputmode="decimal"'))
+    + field('Total collection', moneyInputEl(c.totalCollection, 'totalCollection'))
+    + field('Gcash collection', moneyInputEl(c.gcashCollection, 'gcashCollection'))
+    + field('Less: expenses', moneyInputEl(c.lessExpenses, 'lessExpenses'))
     + depositsList()
     + field('Net collection', '<input class="input locked" id="cashNetDisplay" type="text" value="'+escAttr(c.netCollection)+'" disabled>')
     + field('Cash on hand', '<input class="input locked" id="cashOnHandDisplay" type="text" value="'+escAttr(c.cashOnHand)+'" disabled>')
@@ -1571,11 +1663,21 @@ function renderInventory(){
 }
 
 function renderConfirmation(){
+  const entries = state.confirmation.entries;
+  const rows = entries.map((row,i) =>
+    '<div class="conf-entry">'
+    + '<div class="conf-entry-head"><span class="conf-entry-label">Entry '+(i+1)+'</span>'
+    + (entries.length>1 ? '<button type="button" class="icon-btn" onclick="removeConfirmationEntry('+i+')" aria-label="Remove entry">&times;</button>' : '')
+    + '</div>'
+    + textareaEl(row.remarks, 'oninput="setConfirmationRemarks('+i+', this.value)"',
+        'Leave blank if nothing to flag. Otherwise note the issue here (overdue, delinquent, risk, etc.)...')
+    + '</div>'
+  ).join('');
   return card('sec-confirmation','Confirmation of accounts', null, null,
     '<div class="field span2"><label>Remarks</label>'
-    + textareaEl(state.confirmation.remarks, 'oninput="set(\'confirmation.remarks\', this.value)"',
-        'Leave blank if nothing to flag. Otherwise note the issue here (overdue, delinquent, risk, etc.)...')
-    + '</div>', true);
+    + '<div class="conf-entries">' + rows
+    + '<button type="button" class="er-add-row" onclick="addConfirmationEntry()">+ Add entry</button>'
+    + '</div></div>', true);
 }
 
 function renderFindings(){
@@ -1855,8 +1957,8 @@ function buildIssuesBullets(){
 }
 function buildFieldBullets(){
   const bullets = ['Confirmation of accounts (c/o audit department with spreadsheets).'];
-  const remarks = get('confirmation.remarks');
-  if(remarks && String(remarks).trim()) bullets.push('Remarks: ' + String(remarks).trim());
+  const entries = (state.confirmation.entries||[]).map(e=>e && e.remarks && String(e.remarks).trim()).filter(Boolean);
+  entries.forEach(r => bullets.push('Remarks: ' + r));
   return bullets;
 }
 function buildPreviewHtml(){
@@ -2652,21 +2754,6 @@ async function hardResetApp(){
   url.searchParams.set('_r', Date.now().toString());
   window.location.replace(url.toString());
 }
-
-/* Keep the space reserved above the fixed Submit bar in exact sync with
-   its real rendered height, instead of a guessed pixel value — avoids
-   a visible blank strip if the bar's height ever differs by device/font. */
-function syncFooterHeight(){
-  const el = document.querySelector('footer.nav-bar');
-  if(!el) return;
-  document.documentElement.style.setProperty('--footer-h', el.offsetHeight + 'px');
-}
-window.addEventListener('resize', syncFooterHeight);
-window.addEventListener('orientationchange', syncFooterHeight);
-if(window.ResizeObserver){
-  new ResizeObserver(syncFooterHeight).observe(document.querySelector('footer.nav-bar'));
-}
-syncFooterHeight();
 
 render();
 tryRestoreDraft();

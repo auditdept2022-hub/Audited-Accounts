@@ -141,6 +141,13 @@
   .drawer-section-title{font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase;
     letter-spacing:.4px; padding:10px 8px 8px; margin-top:2px;}
   .drawer-section-title:first-child{margin-top:0;}
+  /* ---------- dashboard summary strip (audit count / avg score) ---------- */
+  .history-stat-strip{display:flex; align-items:center; gap:14px; background:var(--accent-soft);
+    border:1px solid #D6DBF6; border-radius:12px; padding:11px 16px; margin:0 0 10px;}
+  .history-stat-strip .hs-item{display:flex; flex-direction:column; align-items:center; gap:1px; flex:1;}
+  .history-stat-strip .hs-num{font-family:'JetBrains Mono',monospace; font-weight:800; font-size:16px; color:var(--accent-dark);}
+  .history-stat-strip .hs-label{font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.3px;}
+  .history-stat-strip .hs-sep{width:1px; align-self:stretch; background:#C9D1EE;}
   /* ---------- history item card (redesigned: was one cramped row of
      branch + date + score + chevron fighting for space on a narrow
      drawer; now a proper stacked card so nothing has to truncate or
@@ -183,13 +190,39 @@
      from scoreHeroHtml(). */
   .score-hero, .report-hero{padding:16px; background:var(--accent-soft);
     border:1px solid #D6DBF6; border-radius:14px; margin-bottom:14px;}
-  .report-section-title{font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase;
-    letter-spacing:.4px; margin:16px 0 8px;}
+  .report-section-title{display:flex; align-items:center; gap:7px; font-size:11px; font-weight:800; color:var(--accent-dark);
+    text-transform:uppercase; letter-spacing:.5px; margin:20px 0 9px; padding-bottom:6px;
+    border-bottom:1px solid var(--line);}
+  .report-section-title svg{width:13px; height:13px; flex-shrink:0; color:var(--accent);}
   .report-section-title:first-of-type{margin-top:0;}
-  .report-row{display:flex; justify-content:space-between; gap:10px; font-size:12.5px; padding:8px 10px;
-    border:1px solid var(--line); border-radius:9px; margin-bottom:6px; background:#fff;}
-  .report-row .r-label{flex:1; color:var(--text);}
-  .report-row .r-remark{font-size:11px; color:var(--muted); margin-top:3px;}
+  .report-row{display:flex; justify-content:space-between; align-items:flex-start; gap:12px; font-size:12.5px; padding:10px 12px;
+    border:1px solid var(--line); border-radius:10px; margin-bottom:7px; background:#fff;
+    box-shadow:0 1px 2px rgba(16,22,60,.03);}
+  .report-row .r-label{flex:1; color:var(--text); font-weight:500; padding-top:1px;}
+  .report-row .r-remark{font-size:11px; color:var(--muted); margin-top:4px; line-height:1.45;}
+
+  /* ---------- deposits: professional itemized card list (report view) ---------- */
+  .deposit-report-list{display:flex; flex-direction:column; gap:8px; margin-bottom:8px;}
+  .deposit-report-item{display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+    background:#fff; border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:10px;
+    padding:11px 13px; box-shadow:0 1px 2px rgba(16,22,60,.04);}
+  .deposit-report-item .dep-left{flex:1; min-width:0;}
+  .deposit-report-item .dep-amount-row{display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;}
+  .deposit-report-item .dep-amount{font-family:'JetBrains Mono',monospace; font-weight:800; font-size:15px; color:var(--ink);}
+  .deposit-report-item .dep-time-chip{font-size:10.5px; font-weight:700; color:var(--accent-dark);
+    background:var(--accent-soft); border-radius:20px; padding:2px 9px; white-space:nowrap;}
+  .deposit-report-item .dep-remark{font-size:11.5px; color:var(--muted); margin-top:4px; line-height:1.4;}
+  .deposit-report-item .dep-index{flex-shrink:0; width:22px; height:22px; border-radius:50%; background:var(--accent-soft);
+    color:var(--accent-dark); font-size:10.5px; font-weight:800; display:flex; align-items:center; justify-content:center;}
+  .deposit-report-total{display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background:linear-gradient(160deg,var(--accent),var(--accent-dark)); color:#fff; border-radius:10px;
+    padding:11px 14px; margin-bottom:4px; box-shadow:0 3px 10px rgba(29,44,116,.22);}
+  .deposit-report-total .dr-label{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; opacity:.85;}
+  .deposit-report-total .dr-value{font-family:'JetBrains Mono',monospace; font-weight:800; font-size:16px;}
+
+  /* ---------- report toolbar actions (undo / redo) ---------- */
+  .tb-icon-btn:disabled{opacity:.35; cursor:not-allowed;}
+  .tb-icon-btn:disabled:active{background:#F8F9FD;}
 
   /* ---------- toolbar: search / print / share (replaces old jump-chip row) ---------- */
   .toolbar-row{display:flex; align-items:center; gap:8px; padding:10px 14px; background:#fff;
@@ -223,6 +256,7 @@
     #scrollArea{overflow:visible !important; height:auto !important; padding-bottom:0 !important;}
     body{overflow:visible !important; height:auto !important; display:block !important;}
     .card{break-inside:avoid; box-shadow:none !important; border:1px solid #ccc !important;}
+    .report-row, .deposit-report-item, .deposit-report-total, .info-row{break-inside:avoid;}
     #main{column-count:1 !important;}
     body.previewing #scrollArea, body.previewing footer.nav-bar{display:none !important;}
     body.previewing .preview-overlay{position:static !important; background:none !important;}
@@ -706,6 +740,12 @@
     <span class="search-count" id="searchCount"></span>
     <button class="search-clear" id="searchClearBtn" aria-label="Clear search" onclick="clearSearch()" style="display:none;">&times;</button>
   </div>
+  <button class="tb-icon-btn" id="undoBtn" aria-label="Undo last change" title="Undo (Ctrl+Z)" onclick="undoEdit()" disabled>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+  </button>
+  <button class="tb-icon-btn" id="redoBtn" aria-label="Redo last undone change" title="Redo (Ctrl+Shift+Z)" onclick="redoEdit()" disabled>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>
+  </button>
   <button class="tb-icon-btn" aria-label="Preview audit findings report" onclick="openPreview()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
   </button>
@@ -897,6 +937,84 @@ let searchMatches = [];
 let searchIndex = -1;
 
 /* ============================================================
+   UNDO / REDO
+   ------------------------------------------------------------
+   A generic snapshot stack for `state`. checkpoint(key) is called
+   at the START of every mutating function, BEFORE the change is
+   applied, so the stack always holds "what it looked like right
+   before this edit". Rapid edits to the SAME field (e.g. every
+   keystroke in one text box) are coalesced into a single undo step
+   as long as they land within UNDO_COALESCE_MS of each other —
+   otherwise every keystroke would need its own undo tap. Passing a
+   falsy key (add/remove row, toggles, dropdowns) always pushes a
+   fresh step, since those are discrete one-tap actions anyway.
+   ============================================================ */
+let undoStack = [];
+let redoStack = [];
+let lastCheckpointKey = null;
+let lastCheckpointTime = 0;
+const UNDO_COALESCE_MS = 1200;
+const UNDO_MAX = 80;
+
+function checkpoint(key){
+  const now = Date.now();
+  if(key && key === lastCheckpointKey && (now - lastCheckpointTime) < UNDO_COALESCE_MS){
+    lastCheckpointTime = now;
+    return; // same field, still typing — don't fragment undo into one step per keystroke
+  }
+  try{
+    undoStack.push(JSON.stringify(state));
+    if(undoStack.length > UNDO_MAX) undoStack.shift();
+  }catch(e){ /* best effort */ }
+  redoStack = [];
+  lastCheckpointKey = key || null;
+  lastCheckpointTime = now;
+  updateUndoRedoButtons();
+}
+function undoEdit(){
+  if(!undoStack.length) return;
+  let prevParsed;
+  const prevRaw = undoStack[undoStack.length-1];
+  try{ prevParsed = JSON.parse(prevRaw); }catch(e){ return; }
+  undoStack.pop();
+  redoStack.push(JSON.stringify(state));
+  state = prevParsed;
+  lastCheckpointKey = null;
+  render();
+  refreshSummary();
+  updateUndoRedoButtons();
+}
+function redoEdit(){
+  if(!redoStack.length) return;
+  let nextParsed;
+  const nextRaw = redoStack[redoStack.length-1];
+  try{ nextParsed = JSON.parse(nextRaw); }catch(e){ return; }
+  redoStack.pop();
+  undoStack.push(JSON.stringify(state));
+  state = nextParsed;
+  lastCheckpointKey = null;
+  render();
+  refreshSummary();
+  updateUndoRedoButtons();
+}
+function updateUndoRedoButtons(){
+  const u = document.getElementById('undoBtn');
+  const r = document.getElementById('redoBtn');
+  if(u) u.disabled = undoStack.length === 0;
+  if(r) r.disabled = redoStack.length === 0;
+}
+function resetUndoHistory(){
+  undoStack = []; redoStack = []; lastCheckpointKey = null; lastCheckpointTime = 0;
+  updateUndoRedoButtons();
+}
+document.addEventListener('keydown', function(e){
+  if(!(e.ctrlKey || e.metaKey)) return;
+  const k = e.key.toLowerCase();
+  if(k === 'z' && !e.shiftKey){ e.preventDefault(); undoEdit(); }
+  else if((k === 'z' && e.shiftKey) || k === 'y'){ e.preventDefault(); redoEdit(); }
+});
+
+/* ============================================================
    DRAFT AUTOSAVE
    ------------------------------------------------------------
    Protects whatever's on screen but NOT YET SUBMITTED from an
@@ -960,7 +1078,13 @@ function updateDraftIndicator(){
   const d = new Date(lastDraftSavedAt);
   const h12 = ((d.getHours() % 12) || 12);
   const mm = String(d.getMinutes()).padStart(2, '0');
-  el.textContent = 'Draft saved \u00b7 ' + h12 + ':' + mm + ' ' + (d.getHours() < 12 ? 'AM' : 'PM');
+  const timeStr = h12 + ':' + mm + ' ' + (d.getHours() < 12 ? 'AM' : 'PM');
+  // While editing a previously-SUBMITTED audit, this local snapshot is
+  // just an in-progress safety net for the edit \u2014 the audit itself
+  // already exists, finished, in the Sheet. Label it distinctly from a
+  // brand-new not-yet-submitted audit's draft, so it's clear tapping
+  // "Save changes" is what finalizes it, not this local autosave.
+  el.textContent = (editingSubmissionId != null ? 'Edit in progress \u00b7 saved locally ' : 'Draft saved \u00b7 ') + timeStr;
 }
 /** Called once on page load. If a leftover draft is found (and it's
  *  not just a blank form), ask before touching anything else \u2014
@@ -982,6 +1106,7 @@ async function tryRestoreDraft(){
   );
   if(ok){
     state = snap.state;
+    resetUndoHistory();
     editingSubmissionId = snap.editingSubmissionId || null;
     editSnapshotJson = snap.editSnapshotJson || null;
     previewEditedHtml = snap.previewEditedHtml || null;
@@ -1070,6 +1195,7 @@ function get(path){
   return path.split('.').reduce((o,k)=> (o==null?o:o[k]), state);
 }
 function set(path, value){
+  checkpoint(path);
   const keys = path.split('.');
   let o = state;
   for(let i=0;i<keys.length-1;i++) o = o[keys[i]];
@@ -1089,7 +1215,7 @@ function setCond(path, val){
   set(path+'.condition', cur===val ? '' : val);
   renderSection(sectionIdForPath(path));
 }
-function setRepField(path, idx, field, val){ get(path)[idx][field] = val; updateSubmitBtnState(); }
+function setRepField(path, idx, field, val){ checkpoint(path+'#'+idx+'#'+field); get(path)[idx][field] = val; updateSubmitBtnState(); }
 
 /* Series No auto-fill: OR/SI/DR booklets are always issued in blocks
    that END on a multiple of 50 (1-50, 51-100, 101-150...) — whether a
@@ -1121,7 +1247,7 @@ function onSeriesNoInput(input, path, idx){
   }
   setRepField(path, idx, 'seriesNo', input.value);
 }
-function addRep(path){ get(path).push(emptyEntry()); renderSection(sectionIdForPath(path)); updateSubmitBtnState(); }
+function addRep(path){ checkpoint(); get(path).push(emptyEntry()); renderSection(sectionIdForPath(path)); updateSubmitBtnState(); }
 async function removeRep(path, idx){
   const row = get(path)[idx] || {};
   const hasData = (row.seriesNo && String(row.seriesNo).trim()) || (row.remarks && String(row.remarks).trim());
@@ -1132,6 +1258,7 @@ async function removeRep(path, idx){
     );
     if(!ok) return;
   }
+  checkpoint();
   get(path).splice(idx,1);
   renderSection(sectionIdForPath(path));
   updateSubmitBtnState();
@@ -1142,8 +1269,9 @@ async function removeRep(path, idx){
    time there's a separate issue to note, instead of running everything
    together in one paragraph. Always keeps at least one (possibly blank)
    entry so there's always somewhere to type. */
-function setConfirmationRemarks(idx, val){ state.confirmation.entries[idx].remarks = val; updateSubmitBtnState(); }
+function setConfirmationRemarks(idx, val){ checkpoint('conf#'+idx); state.confirmation.entries[idx].remarks = val; updateSubmitBtnState(); }
 function addConfirmationEntry(){
+  checkpoint();
   state.confirmation.entries.push(emptyConfirmationEntry());
   renderSection('sec-confirmation');
   updateSubmitBtnState();
@@ -1157,6 +1285,7 @@ async function removeConfirmationEntry(idx){
     );
     if(!ok) return;
   }
+  checkpoint();
   state.confirmation.entries.splice(idx,1);
   if(state.confirmation.entries.length===0) state.confirmation.entries.push(emptyConfirmationEntry());
   renderSection('sec-confirmation');
@@ -1181,6 +1310,7 @@ function denomGroupTotal(group){
   return total;
 }
 function onDenomInput(group, denom, el){
+  checkpoint('denom#'+group+'#'+denom);
   state.cash[group]['d'+denom] = el.value;
   const qty = parseFloat(el.value)||0;
   const sub = document.getElementById('denom-'+group+'-'+denom+'-sub');
@@ -1192,6 +1322,7 @@ function onDenomInput(group, denom, el){
   refreshCashComputed();
 }
 function onCashFieldInput(field, val){
+  checkpoint('cashfield#'+field);
   state.cash[field] = String(val).replace(/,/g,'');
   refreshCashComputed();
 }
@@ -1217,6 +1348,7 @@ function depositsTotal(list){
   return (list||[]).reduce((sum,row)=> sum + (parseFloat(row.amount)||0), 0);
 }
 function setDepositField(idx, field, val){
+  checkpoint('deposit#'+idx+'#'+field);
   state.cash.deposits[idx][field] = field==='amount' ? String(val).replace(/,/g,'') : val;
   if(field==='amount') refreshCashComputed(); else updateSubmitBtnState();
 }
@@ -1226,8 +1358,9 @@ function onDepositAmtFocus(idx, el){
 function onDepositAmtBlur(idx, el){
   el.value = state.cash.deposits[idx].amount === '' ? '' : fmtMoney(state.cash.deposits[idx].amount);
 }
-function addDeposit(){ state.cash.deposits.push(emptyDepositEntry()); renderSection('sec-cash'); refreshCashComputed(); }
+function addDeposit(){ checkpoint(); state.cash.deposits.push(emptyDepositEntry()); renderSection('sec-cash'); refreshCashComputed(); }
 function removeDeposit(idx){
+  checkpoint();
   state.cash.deposits.splice(idx,1);
   if(state.cash.deposits.length===0) state.cash.deposits.push(emptyDepositEntry());
   renderSection('sec-cash'); refreshCashComputed();
@@ -1430,6 +1563,7 @@ const OR_GROUPS = [
    is offered as a one-tap preset but anything else can still be typed in
    via "Enter manually". */
 function setEntryTypePreset(path, idx, value){
+  checkpoint();
   const row = get(path)[idx];
   if(value === '__manual__'){
     row.typeManual = true;
@@ -1440,6 +1574,7 @@ function setEntryTypePreset(path, idx, value){
   renderSection(sectionIdForPath(path));
 }
 function setOrRemarksPreset(path, idx, value){
+  checkpoint();
   const row = get(path)[idx];
   if(value === '__manual__'){
     row.remarksManual = true;
@@ -1584,6 +1719,7 @@ function orDragEnd(){
   orDrag.rows.forEach((r) => { r.style.transform = ''; });
   orDrag = null;
   if (toIndex !== fromIndex) {
+    checkpoint();
     const arr = get(path);
     const moved = arr.splice(fromIndex, 1)[0];
     arr.splice(toIndex, 0, moved);
@@ -1610,9 +1746,10 @@ function statusRow(path){
     + '</div>';
 }
 
-function addFinding(){ state.findings.push({text:'', severity:'Medium'}); renderSection('sec-findings'); refreshSummary(); }
-function removeFinding(i){ state.findings.splice(i,1); renderSection('sec-findings'); refreshSummary(); }
+function addFinding(){ checkpoint(); state.findings.push({text:'', severity:'Medium'}); renderSection('sec-findings'); refreshSummary(); }
+function removeFinding(i){ checkpoint(); state.findings.splice(i,1); renderSection('sec-findings'); refreshSummary(); }
 function setFinding(i, field, val){
+  checkpoint('finding#'+i+'#'+field);
   state.findings[i][field]=val;
   if(field!=='text'){ renderSection('sec-findings'); refreshSummary(); }
 }
@@ -2467,6 +2604,7 @@ async function doSubmit(){
       state = freshState();
       previewEditedHtml = null;
       clearDraft();
+      resetUndoHistory();
       render();
       window.scrollTo({top:0, behavior:'smooth'});
       renderBranchDrawer();
@@ -2507,6 +2645,7 @@ async function editAuditFromReport(){
   // Older audits saved before this feature existed won't have it, so
   // they'll simply auto-draft fresh the first time you open the preview.
   previewEditedHtml = (h.state && h.state.reportNarrativeHtml) ? h.state.reportNarrativeHtml : null;
+  resetUndoHistory();
   closeReport();
   closeBranchMenu();
   render();
@@ -2528,6 +2667,7 @@ async function cancelEdit(){
   state = freshState();
   previewEditedHtml = null;
   clearDraft();
+  resetUndoHistory();
   render();
   window.scrollTo({top:0, behavior:'smooth'});
 }
@@ -2563,6 +2703,7 @@ async function newAudit(){
   state = freshState();
   previewEditedHtml = null;
   clearDraft();
+  resetUndoHistory();
   closeBranchMenu();
   render();
   window.scrollTo({top:0, behavior:'smooth'});
@@ -2719,20 +2860,37 @@ function syncStatusBanner_(status, detail){
   return '<div class="banner" style="margin:0 0 10px;" title="'+escAttr(detail||'')+'">&#9888; '+escHtml(msg)+'</div>';
 }
 
-function renderHistorySection(list, status, detail){
+/* ---------- dashboard filter (Previous audits list) ----------
+ * A small local text filter over the already-fetched history list —
+ * doesn't re-hit the server, just narrows what's shown by branch or
+ * auditor name. Kept as a separate global (not per-render state) so
+ * re-opening the drawer remembers what you were looking for. */
+let historyFilterQuery = '';
+function historyStatSummary(list){
+  if(!list || !list.length) return '';
+  const withScore = list.filter(h => h.score && typeof h.score.pct === 'number');
+  const avg = withScore.length ? Math.round(withScore.reduce((sum,h)=>sum+h.score.pct,0) / withScore.length) : null;
+  return '<div class="history-stat-strip">'
+    + '<div class="hs-item"><span class="hs-num">'+list.length+'</span><span class="hs-label">'+(list.length===1?'audit':'audits')+'</span></div>'
+    + (avg!=null ? '<div class="hs-sep"></div><div class="hs-item"><span class="hs-num">'+avg+'%</span><span class="hs-label">avg. Yes/No</span></div>' : '')
+    + '</div>';
+}
+function historyFilterInputHtml(){
+  return '<div class="search-wrap" style="margin:0 0 10px;">'
+    + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>'
+    + '<input type="text" id="historyFilterInput" placeholder="Filter by branch or auditor&hellip;" autocomplete="off" value="'+escAttr(historyFilterQuery)+'" oninput="onHistoryFilterInput(this.value)">'
+    + (historyFilterQuery ? '<button class="search-clear" aria-label="Clear filter" onclick="onHistoryFilterInput(\'\')">&times;</button>' : '')
+    + '</div>';
+}
+function renderHistoryItems(list){
   list = list || [];
-  const banner = syncStatusBanner_(status, detail);
-  if(list.length === 0){
-    // Only show the "nothing here yet" hint once we've actually heard
-    // back from somewhere (local cache or server) — while still
-    // "checking" for the first time, an empty list doesn't yet mean
-    // there's truly nothing, so don't say so.
-    const emptyHint = status === 'checking' ? '' : '<div class="empty-hint">No previous audits yet \u2014 submit your first one and it\u2019ll show up here.</div>';
-    return '<div class="drawer-section-title">Previous audits</div>' + banner + emptyHint;
+  const q = historyFilterQuery.trim().toLowerCase();
+  const withIndex = list.map((h,i)=>({h,i}));
+  const filtered = q ? withIndex.filter(({h}) => (h.branch||'').toLowerCase().includes(q) || (h.auditor||'').toLowerCase().includes(q)) : withIndex;
+  if(!filtered.length){
+    return '<div class="empty-hint">No audits match \u201c'+escHtml(historyFilterQuery)+'\u201d.</div>';
   }
-  return '<div class="drawer-section-title">Previous audits</div>'
-    + banner
-    + list.map((h,i) => {
+  return filtered.map(({h,i}) => {
         const pct = h.score ? h.score.pct : 0;
         const goodBad = pct >= 80 ? 'good' : 'bad';
         const yn = h.score ? (h.score.yes+'/'+h.score.total+' Yes/No items answered Yes') : '';
@@ -2755,6 +2913,44 @@ function renderHistorySection(list, status, detail){
           + '</button>';
       }).join('');
 }
+function onHistoryFilterInput(v){
+  historyFilterQuery = v;
+  const listEl = document.getElementById('historyItemsList');
+  if(listEl) listEl.innerHTML = renderHistoryItems(historyCache);
+  const clearWrap = document.getElementById('historyFilterInput');
+  if(clearWrap){
+    const wrap = clearWrap.closest('.search-wrap');
+    let clearBtn = wrap.querySelector('.search-clear');
+    if(v && !clearBtn){
+      clearBtn = document.createElement('button');
+      clearBtn.className = 'search-clear';
+      clearBtn.setAttribute('aria-label','Clear filter');
+      clearBtn.innerHTML = '&times;';
+      clearBtn.onclick = function(){ onHistoryFilterInput(''); };
+      wrap.appendChild(clearBtn);
+    } else if(!v && clearBtn){
+      clearBtn.remove();
+    }
+  }
+}
+
+function renderHistorySection(list, status, detail){
+  list = list || [];
+  const banner = syncStatusBanner_(status, detail);
+  if(list.length === 0){
+    // Only show the "nothing here yet" hint once we've actually heard
+    // back from somewhere (local cache or server) — while still
+    // "checking" for the first time, an empty list doesn't yet mean
+    // there's truly nothing, so don't say so.
+    const emptyHint = status === 'checking' ? '' : '<div class="empty-hint">No previous audits yet \u2014 submit your first one and it\u2019ll show up here.</div>';
+    return '<div class="drawer-section-title">Previous audits</div>' + banner + emptyHint;
+  }
+  return '<div class="drawer-section-title">Previous audits</div>'
+    + banner
+    + historyStatSummary(list)
+    + historyFilterInputHtml()
+    + '<div id="historyItemsList">' + renderHistoryItems(list) + '</div>';
+}
 
 async function renderBranchDrawer(){
   const body = document.getElementById('branchDrawerBody');
@@ -2773,6 +2969,20 @@ async function renderBranchDrawer(){
 }
 
 /* ---------- report viewer (read-only summary of a past audit) ---------- */
+/* Small line-icon set for report-section-title headers \u2014 purely
+ * decorative, gives each section a quick visual anchor instead of a
+ * flat wall of identical-looking uppercase labels. */
+const REPORT_ICONS = {
+  overview: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>',
+  deposits: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l9-6 9 6"/><path d="M5 10v9M10 10v9M14 10v9M19 10v9"/><path d="M3 21h18"/></svg>',
+  checklist: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
+  condition: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>',
+  findings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1.5-1.5 4-1.5 3.5 1.5 6 1.5 4-1.5 4-1.5V3s-1.5 1.5-4 1.5S10.5 3 8 3 4 4.5 4 4.5z"/><path d="M4 22V4"/></svg>'
+};
+function reportSectionTitle(key, label, extraStyle){
+  return '<div class="report-section-title"' + (extraStyle ? ' style="'+extraStyle+'"' : '') + '>'
+    + (REPORT_ICONS[key] || '') + '<span>' + label + '</span></div>';
+}
 function buildReportHtml(h){
   const s = h.state || {};
   const score = h.score || computeScore(s);
@@ -2781,7 +2991,7 @@ function buildReportHtml(h){
   html += '<div class="report-hero">'
     + scoreHeroHtml(score)
     + '</div>';
-  html += '<div class="report-section-title" style="margin-top:0;">Overview</div>';
+  html += reportSectionTitle('overview', 'Overview', 'margin-top:0;');
   html += '<div class="info-list">'
     + '<div class="info-row"><span>Branch</span><span>'+(escHtml(h.branch)||'&mdash;')+'</span></div>'
     + '<div class="info-row"><span>Auditor</span><span>'+(escHtml(h.auditor)||'&mdash;')+'</span></div>'
@@ -2793,22 +3003,29 @@ function buildReportHtml(h){
 
   const depositRows = (s.cash && s.cash.deposits || []).filter(d => d && ((d.amount!=='' && d.amount!=null) || (d.time && String(d.time).trim()) || (d.remarks && String(d.remarks).trim())));
   if(depositRows.length){
-    html += '<div class="report-section-title">Deposits</div>';
-    html += depositRows.map(d =>
-      '<div class="report-row"><div class="r-label">'+fmtMoney(parseFloat(d.amount)||0) + (d.time ? ' &middot; '+escHtml(d.time) : '')
-        + (d.remarks ? '<div class="r-remark">'+escHtml(d.remarks)+'</div>' : '')
-        + '</div></div>'
-    ).join('');
-    html += '<div class="report-row"><div class="r-label"><strong>Total</strong></div><span class="badge">'+fmtMoney(depositsTotal(s.cash.deposits))+'</span></div>';
+    html += reportSectionTitle('deposits', 'Deposits');
+    html += '<div class="deposit-report-list">' + depositRows.map((d,i) =>
+      '<div class="deposit-report-item">'
+        + '<div class="dep-index">'+(i+1)+'</div>'
+        + '<div class="dep-left">'
+          + '<div class="dep-amount-row">'
+            + '<span class="dep-amount">\u20b1'+fmtMoney(parseFloat(d.amount)||0)+'</span>'
+            + (d.time ? '<span class="dep-time-chip">'+escHtml(d.time)+'</span>' : '')
+          + '</div>'
+          + (d.remarks ? '<div class="dep-remark">'+escHtml(d.remarks)+'</div>' : '')
+        + '</div>'
+      + '</div>'
+    ).join('') + '</div>';
+    html += '<div class="deposit-report-total"><span class="dr-label">Total deposits</span><span class="dr-value">\u20b1'+fmtMoney(depositsTotal(s.cash.deposits))+'</span></div>';
   }
 
-  html += '<div class="report-section-title">Checklist answers</div>';
+  html += reportSectionTitle('checklist', 'Checklist answers');
   Object.keys(ynLabels).forEach(p=>{
     const v = getFrom(s,p);
     html += '<div class="report-row"><div class="r-label">'+ynLabels[p]+'</div>'+pillYN(v)+'</div>';
   });
 
-  html += '<div class="report-section-title">Condition checks</div>';
+  html += reportSectionTitle('condition', 'Condition checks');
   Object.keys(condLabels).forEach(p=>{
     const c = getFrom(s,p) || {};
     const cond = c.condition || '\u2014';
@@ -2828,7 +3045,7 @@ function buildReportHtml(h){
       + '</div><span class="badge '+(stOk?'ok':stBad?'del':'')+'">'+escHtml(status)+'</span></div>';
   });
 
-  html += '<div class="report-section-title">Findings</div>';
+  html += reportSectionTitle('findings', 'Findings');
   if(s.findings && s.findings.length){
     html += s.findings.map((f,i)=>'<div class="finding-review-row"><span>#'+(i+1)+' ('+(f.severity||'Medium')+')</span><span>'+(escHtml(f.text||'')||'&mdash;')+'</span></div>').join('');
   } else {

@@ -2205,6 +2205,9 @@
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+        <button class="icon-btn profile-hardrefresh-btn" id="openSheetBtn" title="Open the connected Google Sheet in a new tab" onclick="openConnectedSheet_()" aria-label="Open connected Google Sheet">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        </button>
         <button class="icon-btn profile-hardrefresh-btn" id="forceRefreshBtn" title="Force refresh app — clears the cache and reloads everything fresh" onclick="confirmHardRefresh_()" aria-label="Force refresh app">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         </button>
@@ -3526,7 +3529,7 @@
   }
 
   async function undoRenameSheetEntry_(u){
-    await apiCallJson_('renameSheet', { oldName: u.newName, newName: u.oldName });
+    await apiCallJsonRetryOnce_('renameSheet', { oldName: u.newName, newName: u.oldName });
     if(currentSheet === u.newName){ currentSheet = u.oldName; saveCurrentSheet_(); }
     // Same pin carry-over as a manual rename (see startRenameProfile_'s
     // commit above) — an undo is just a rename in the other direction.
@@ -6215,7 +6218,7 @@
     toast(`Clearing "${branchName}" and importing ${toCreate.length} account${toCreate.length === 1 ? '' : 's'}\u2026`);
 
     try{
-      await apiCallJson_('clearBranchData', { name: branchName });
+      await apiCallJsonRetryOnce_('clearBranchData', { name: branchName });
       purgeBranchLocalState_(branchName);
     }catch(err){
       // Distinguish a genuine "no connection at all" (TypeError) from a
@@ -6767,6 +6770,62 @@
   // keep using apiCallJson_ so a hiccup never causes a duplicate write.
   async function apiCallJsonRead_(action, payload, timeoutMs){
     return fetchJsonRetry_(apiUrl_(action, payload), timeoutMs);
+  }
+
+  // COLD-START FIX: structural sheet actions (createSheet/renameSheet/
+  // deleteSheet/clearBranchData) change the spreadsheet itself, so
+  // they're deliberately NOT routed through the offline outbox — they're
+  // meant to run right away, online, with the person watching (see
+  // createProfile_/startRenameProfile_/deleteProfile_/clearBranchData_
+  // below). But unlike everything else in the app, they previously had
+  // NO retry at all: a single Apps Script cold start — very often the
+  // very FIRST request of a whole session, since opening the ☰ menu and
+  // creating a branch is frequently the first thing a person does after
+  // opening the app — meant one AbortError (or one "busy with another
+  // save" collision against the global structural lock; see withLock_ /
+  // the doGet catch in Code.gs) and the action just failed outright,
+  // even though the exact same request sent a moment later would have
+  // gone through fine. This is very likely the #1 cause of "creating a
+  // branch just shows an error / does nothing" and the branch then
+  // looking permanently empty when it's actually never been created at
+  // all.
+  //
+  // This wraps apiCallJson_ with ONE automatic retry for exactly those
+  // two transient cases, mirroring the retry pattern already used
+  // elsewhere for reads (fetchJsonRetry_) and for outbox writes
+  // (syncOutbox's own cold-start/busy handling) — this is the one
+  // remaining place in the app where a cold start meant a hard,
+  // un-retried failure.
+  //
+  // These structural writes aren't idempotent on the backend the way
+  // outbox writes are (no opId — see withIdempotency_ in Code.gs, which
+  // structural actions don't go through), so a retry after a write that
+  // actually DID succeed server-side (it just failed to hand the
+  // response back to the client in time) can come back with an
+  // "already exists" / "not found" error on the retry. That specific
+  // outcome is exactly the caller's true success case — the branch now
+  // exists, or no longer exists, matching what the retry was trying to
+  // do — so it's treated as a success instead of surfaced as a failure.
+  async function apiCallJsonRetryOnce_(action, payload){
+    try{
+      return await apiCallJson_(action, payload);
+    }catch(err){
+      const shouldRetry = (err && err.name === 'AbortError') || isRetryableBusyError_(err);
+      if(!shouldRetry) throw err;
+      await new Promise(r => setTimeout(r, 400));
+      try{
+        return await apiCallJson_(action, payload);
+      }catch(err2){
+        const msg = (err2 && err2.message) || '';
+        if(action === 'createSheet' && /already exists/i.test(msg)){
+          return { ok: true, name: payload && payload.name };
+        }
+        if(action === 'deleteSheet' && /not found/i.test(msg)){
+          return { ok: true };
+        }
+        throw err2;
+      }
+    }
   }
 
   // PERFORMANCE: the backend already gzips the customer list before
@@ -7483,14 +7542,28 @@
     const name = input.value.trim();
     if(!name){ toast('Enter a branch name first.'); return; }
     try{
-      await apiCallJson_('createSheet', { name });
+      await apiCallJsonRetryOnce_('createSheet', { name });
       input.value = '';
       toast('Branch "' + name + '" created.');
       logActivity_('success', 'Branch created', '"' + name + '" was added.');
-      await loadProfiles_();
+      // SNAPPINESS FIX: this used to `await loadProfiles_()` here — a
+      // full extra network round trip (its own listSheets fetch,
+      // potentially its own cold start) — before the new branch could
+      // even be switched to. We already know for certain the branch
+      // exists now (the create above just succeeded), so add it to the
+      // local profile list immediately and switch to it right away;
+      // loadProfiles_() still runs, just in the background afterwards,
+      // to reconcile the authoritative order/name list with the server
+      // (e.g. in case someone else renamed/added another branch at the
+      // same moment) instead of being on the critical path.
+      if(!profilesCache_.includes(name)){
+        profilesCache_ = profilesCache_.concat([name]);
+        saveSheetsCache_(profilesCache_);
+      }
       await switchProfile_(name);
       openProfileMenu();
       renderProfileList_(profilesCache_);
+      loadProfiles_();
     }catch(err){
       const msg = isConnectionError_(err)
         ? connOrOfflineLabel_(err, 'creating a branch (it changes the spreadsheet itself)')
@@ -7514,7 +7587,7 @@
       const newName = input.value.trim();
       if(!newName || newName === oldName){ renderProfileList_(profilesCache_); return; }
       try{
-        await apiCallJson_('renameSheet', { oldName, newName });
+        await apiCallJsonRetryOnce_('renameSheet', { oldName, newName });
         if(currentSheet === oldName){ currentSheet = newName; saveCurrentSheet_(); }
         // Carry a pin over to the new name — otherwise a rename would
         // silently unpin the branch (the pinned list is keyed by name).
@@ -7548,7 +7621,7 @@
   async function deleteProfile_(name){
     if(!await appConfirm('Delete branch "' + name + '" and all its data? This cannot be undone.', { danger: true, title: 'Delete branch?', confirmText: 'Delete' })) return;
     try{
-      await apiCallJson_('deleteSheet', { name });
+      await apiCallJsonRetryOnce_('deleteSheet', { name });
       purgeBranchLocalState_(name);
       toast('Deleted "' + name + '".');
       logActivity_('success', 'Branch deleted', '"' + name + '" and all its records were removed.');
@@ -7627,7 +7700,7 @@
     // anything in memory to snapshot for a later undo.
     const undoSnapshots = (currentSheet === name && customers.length) ? customers.map(c => Object.assign({}, c)) : null;
     try{
-      const result = await apiCallJson_('clearBranchData', { name });
+      const result = await apiCallJsonRetryOnce_('clearBranchData', { name });
       const n = (result && typeof result.cleared === 'number') ? result.cleared : null;
       purgeBranchLocalState_(name);
       toast('Cleared ' + (n !== null ? n + ' record' + (n === 1 ? '' : 's') : 'all records') + ' from "' + name + '".');
@@ -9743,6 +9816,67 @@
     window.location.replace(url.toString());
   }
 
+  // "Open Sheet" button (☰ → Branch Profiles → sheet icon next to Force
+  // refresh): opens the actual Google Sheet the app is reading/writing,
+  // in a new tab, so you can jump straight into the spreadsheet UI
+  // (formatting, a formula, a column you don't want the app to touch)
+  // without hunting for it in Drive.
+  //
+  // The URL comes from the backend (Code.gs action "getSheetUrl", which
+  // just returns SpreadsheetApp.getActiveSpreadsheet().getUrl()) instead
+  // of being hardcoded here, because this app is deliberately
+  // spreadsheet-agnostic (see the top-of-file note in Code.gs) — if the
+  // bound spreadsheet is ever swapped, this button keeps working with no
+  // code change needed on either side.
+  //
+  // Cached in localStorage per API_URL so a second click (or opening it
+  // while briefly offline, e.g. a flaky connection right after opening
+  // this drawer) doesn't have to wait on a round trip — a spreadsheet's
+  // own URL essentially never changes once created.
+  function sheetUrlCacheKey_(){ return 'aa_sheet_url_v1:' + API_URL; }
+  async function openConnectedSheet_(){
+    if(!API_URL){ toast('Connect to a spreadsheet first (☰ → Setup).', 'error'); return; }
+    const btn = document.getElementById('openSheetBtn');
+    const cached = (function(){ try{ return localStorage.getItem(sheetUrlCacheKey_()); }catch(err){ return null; } })();
+
+    // Open a blank tab SYNCHRONOUSLY on the click itself (before any
+    // await) whenever we already have a cached URL to point it at right
+    // away — most browsers' popup blockers only allow window.open when
+    // it's a direct, uninterrupted result of the user gesture, so
+    // awaiting a fetch first and opening afterward gets silently blocked
+    // more often than not.
+    let tab = cached ? window.open(cached, '_blank', 'noopener') : null;
+
+    try{
+      if(btn) btn.classList.add('loading');
+      const data = await fetchJson_(apiUrl_('getSheetUrl', {}), 8000);
+      const url = data && data.url;
+      if(!url) throw new Error('No URL returned');
+      try{ localStorage.setItem(sheetUrlCacheKey_(), url); }catch(err){ /* best-effort */ }
+      if(tab && !tab.closed){
+        if(url !== cached) tab.location.href = url; // cached URL was stale — correct it
+      } else {
+        // No cached URL to open synchronously above, or the popup got
+        // blocked anyway — try again now that we actually have the URL
+        // (this one won't be blocked if the click handler is still
+        // considered "recent" by the browser; if it is, we fall back to
+        // navigating the current tab instead of failing silently).
+        tab = window.open(url, '_blank', 'noopener');
+        if(!tab) window.location.href = url;
+      }
+    } catch(err){
+      if(!cached){
+        if(tab && !tab.closed) tab.close();
+        toast('Could not reach the sheet — check your connection and try again.', 'error');
+      }
+      // else: we already opened the cached URL above, so a failed
+      // refresh here is silent — the tab the person is looking at is
+      // still correct in the overwhelming majority of cases.
+    } finally {
+      if(btn) btn.classList.remove('loading');
+    }
+  }
+
   // Wired to the drawer's "Force refresh now" button — this one is a
   // deliberate, explicit click (not a swipe gesture that already implies
   // intent), so it confirms first: it interrupts whatever the person is
@@ -10396,7 +10530,7 @@
     const prevStatus = document.getElementById('connStatus').textContent;
     document.getElementById('connStatus').textContent = 'Sorting…';
     try{
-      const data = await apiCallJson_('sortBranch', { sortBy: sortBy, dir: dir });
+      const data = await apiCallJsonRetryOnce_('sortBranch', { sortBy: sortBy, dir: dir });
       const fresh = data.customers || [];
       lastListHash = listHash_(fresh);
       customers = fresh;

@@ -9837,41 +9837,45 @@
   async function openConnectedSheet_(){
     if(!API_URL){ toast('Connect to a spreadsheet first (☰ → Setup).', 'error'); return; }
     const btn = document.getElementById('openSheetBtn');
-    const cached = (function(){ try{ return localStorage.getItem(sheetUrlCacheKey_()); }catch(err){ return null; } })();
+    const cacheKey = sheetUrlCacheKey_();
+    const cached = (function(){ try{ return localStorage.getItem(cacheKey); }catch(err){ return null; } })();
 
-    // Open a blank tab SYNCHRONOUSLY on the click itself (before any
-    // await) whenever we already have a cached URL to point it at right
-    // away — most browsers' popup blockers only allow window.open when
-    // it's a direct, uninterrupted result of the user gesture, so
-    // awaiting a fetch first and opening afterward gets silently blocked
-    // more often than not.
-    let tab = cached ? window.open(cached, '_blank', 'noopener') : null;
+    // ALWAYS open a new tab SYNCHRONOUSLY on the click itself, before any
+    // await — most browsers only allow window.open() to open a real new
+    // tab (rather than getting silently blocked as a "popup") when it's
+    // a direct, uninterrupted result of the user gesture. Opening it
+    // only AFTER an awaited fetch (the previous version of this
+    // function) got blocked on the very first use — no cached URL yet
+    // means nothing to open early — and its fallback then navigated the
+    // CURRENT tab instead, which is exactly the "opens in the same tab"
+    // behavior this rewrite avoids: there is no same-tab fallback below
+    // at all anymore. If there's no cached URL yet, this opens a blank
+    // tab first and points it at the real URL a moment later once the
+    // backend responds.
+    const tab = window.open(cached || 'about:blank', '_blank', 'noopener');
 
     try{
       if(btn) btn.classList.add('loading');
       const data = await fetchJson_(apiUrl_('getSheetUrl', {}), 8000);
       const url = data && data.url;
       if(!url) throw new Error('No URL returned');
-      try{ localStorage.setItem(sheetUrlCacheKey_(), url); }catch(err){ /* best-effort */ }
+      try{ localStorage.setItem(cacheKey, url); }catch(err){ /* best-effort */ }
       if(tab && !tab.closed){
-        if(url !== cached) tab.location.href = url; // cached URL was stale — correct it
-      } else {
-        // No cached URL to open synchronously above, or the popup got
-        // blocked anyway — try again now that we actually have the URL
-        // (this one won't be blocked if the click handler is still
-        // considered "recent" by the browser; if it is, we fall back to
-        // navigating the current tab instead of failing silently).
-        tab = window.open(url, '_blank', 'noopener');
-        if(!tab) window.location.href = url;
+        if(url !== cached) tab.location.href = url; // cached URL was stale (or was blank) — correct it
+      } else if(!cached){
+        // The new tab itself got blocked and we had nothing cached to
+        // have already shown — nothing left to open. Surfaced below via
+        // the toast rather than ever falling back to this tab.
+        throw new Error('Popup blocked');
       }
     } catch(err){
+      if(tab && !tab.closed) tab.close();
       if(!cached){
-        if(tab && !tab.closed) tab.close();
-        toast('Could not reach the sheet — check your connection and try again.', 'error');
+        toast('Could not open the sheet in a new tab — your browser may be blocking pop-ups for this site. Allow pop-ups and try again.', 'error');
       }
-      // else: we already opened the cached URL above, so a failed
-      // refresh here is silent — the tab the person is looking at is
-      // still correct in the overwhelming majority of cases.
+      // else: the cached URL was already opened in the new tab above, so
+      // a failed refresh here is silent — that tab is still correct in
+      // the overwhelming majority of cases.
     } finally {
       if(btn) btn.classList.remove('loading');
     }

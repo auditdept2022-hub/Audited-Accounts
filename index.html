@@ -765,6 +765,13 @@
   .badge.del{background:var(--del-soft);color:var(--del);}
   .badge.rstr{background:var(--rstr-soft);color:var(--rstr);}
   .badge.other{background:#E9EBF6;color:var(--muted);}
+  /* Stand-alone "has previous remarks" flag in the customer-list header row.
+     Deliberately its own dark neutral grey, not wired into the Customer
+     Status color-coding above or the color-marker highlight system — it
+     only ever means one thing: this row has at least one previous-audit-
+     remark entry. Renders only when hist.length > 0, so a customer with
+     no previous remarks gets nothing here at all (no flag, no color). */
+  .badge.prev-flag{background:#4B5163;color:#F1F2F6;}
 
   /* Unit Status badges — one distinct color per preset value so a status
      is recognizable at a glance in the card list, the summary fact-grid,
@@ -10891,6 +10898,7 @@
           <div class="rec-id">
             <div class="cust-name"><span class="cust-num">${i + 1}.</span> ${escapeHtml(c.customer)}</div>
             <span class="badge ${g}">${escapeHtml(c.customerStatus || '—')}</span>
+            ${hist.length ? '<span class="badge prev-flag" title="Has previous audit remarks">Prev</span>' : ''}
             ${pendingTag}
           </div>
           <div class="rec-right">

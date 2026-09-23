@@ -6374,6 +6374,47 @@
     return chunks;
   }
 
+  // SAFETY (single-edit URL-length guard): the same ~8KB Apps Script
+  // Web App URL ceiling explained above applies to a completely ordinary
+  // single-customer edit, not just bulk imports — every write leaves as
+  // a GET with its payload JSON-encoded into the URL (see apiUrl_), and
+  // that's true whether the payload came from a 40-row import chunk or
+  // one customer's directly-edited remark history. The one place this
+  // was never guarded before is exactly the one place a genuinely large
+  // payload is most likely: the "edit full remark history" textarea,
+  // which resends its ENTIRE text on every save (it's a direct rewrite,
+  // not an append) and only grows over a customer's lifetime. Without a
+  // guard, a request that crosses the ceiling fails silently at Google's
+  // front end before any of the app's own error handling ever sees it —
+  // and because the exact same oversized request is retried unchanged
+  // every sync pass, it fails the same way forever, which is exactly
+  // what "stuck needing action" looks like from the outside.
+  //
+  // Checked in two places: saveModal() below, BEFORE the edit is even
+  // queued, so the person gets clear, immediate feedback while their
+  // text is still sitting right there in the textarea to shorten — and
+  // again, defensively, inside syncOutbox()'s batch-building step, to
+  // catch anything that slipped into the outbox before this fix existed
+  // (an item already sitting in someone's localStorage from an older
+  // version of this file) without ever corrupting a batch chunk around
+  // it. Same margin as MAX_CHUNK_ENCODED_CHARS, for the same reason.
+  const MAX_SINGLE_WRITE_ENCODED_CHARS = 7200;
+
+  // Mirrors apiUrl_'s own encoding exactly for the `payload` param — the
+  // fixed action/sheet/timestamp prefix around it stays well under 200
+  // chars, so comparing just this against MAX_SINGLE_WRITE_ENCODED_CHARS
+  // (itself already well under the real ~8KB ceiling) leaves a safe
+  // margin without needing to reconstruct the full URL here.
+  function encodedPayloadLength_(payload){
+    return encodeURIComponent(JSON.stringify(payload)).length;
+  }
+
+  function writeTooLargeMessage_(encodedLen){
+    return 'This edit is too large to save in one go (' + encodedLen.toLocaleString() +
+      ' characters — the limit is about ' + MAX_SINGLE_WRITE_ENCODED_CHARS.toLocaleString() +
+      '). Please shorten the remark or history text and try again.';
+  }
+
   // ---- Import run control (Cancel button + connection-loss pause) -------
   //
   // At most one import runs at a time (the Import buttons are disabled for
@@ -8767,6 +8808,175 @@
     let hitBusyError = false;
     let connErrMsg = '';
 
+    // PERFORMANCE FIX (many-round-trips sync): plain 'update' items that
+    // pass the conflict/drift check below used to be sent individually,
+    // right there in the loop, via sendOne_ — a full Apps Script round
+    // trip (branch-lock wait + read + write + flush) apiece. Editing 2-3
+    // different customers in one sync pass meant 2-3 sequential round
+    // trips, which is the main reason a small handful of queued edits
+    // could still feel slow to sync even with everything else already
+    // optimized. Eligible 'update' items are now collected here instead
+    // and sent together via ONE batchUpdateCustomerFull call (chunked
+    // only if needed — see flushUpdateBatch_ below) the next time a
+    // create/delete item is reached or the loop ends. 'create' and
+    // 'delete' items still go through sendOne_ individually: a create
+    // needs a real row number back from the server before anything later
+    // in the SAME pass can reference it (tempRow resolution), and a
+    // delete physically shifts every row below it — batching those adds
+    // real complexity for a case (several simultaneous creates/deletes
+    // in one pass) that's far less common than "edited a few existing
+    // customers." Flushing the pending update batch immediately before
+    // any create/delete (and once more after the loop) preserves the
+    // exact same effective ordering the old fully-sequential loop had.
+    const pendingUpdateBatch_ = [];
+
+    function batchEntryForItem_(item){
+      return {
+        row: item.row,
+        fields: item.fields,
+        historyEdit: item.historyEdit !== undefined ? item.historyEdit : null,
+        currentEdit: item.currentEdit !== undefined ? item.currentEdit : null,
+        dateOfAudit: item.currentEditDate !== undefined ? item.currentEditDate : null,
+        remark: item.remark || '',
+        auditor: item.auditor || '',
+        opId: item.id
+      };
+    }
+
+    // Sends everything currently queued in pendingUpdateBatch_ and clears
+    // it, applying each item's own result exactly the way a successful/
+    // failed individual sendOne_ call used to be handled for a plain
+    // 'update' item (see the removed per-item branch this replaces).
+    // Reads/writes the same `remaining`/`serverByRow`/`syncedAny`/
+    // `syncedCount`/`needsFullReload`/`hitConnectionError`/
+    // `hitConnectionErrorIsTimeout`/`hitBusyError`/`connErrMsg` variables
+    // the surrounding loop uses, via closure — this function only exists
+    // for the lifetime of this one syncOutbox() call.
+    async function flushUpdateBatch_(){
+      if(!pendingUpdateBatch_.length) return;
+      const items = pendingUpdateBatch_.splice(0, pendingUpdateBatch_.length);
+
+      if(hitConnectionError){
+        // Something else in this same pass already hit a connection
+        // problem — nothing further can be sent. Requeue exactly as
+        // still-pending, same as the top-of-loop guard does for any
+        // other item once that flag is set.
+        items.forEach(item => { item.status = undefined; remaining.push(item); });
+        return;
+      }
+
+      // SAFETY: pull out anything that's too large to ever fit in a
+      // batch chunk on its own (see MAX_SINGLE_WRITE_ENCODED_CHARS above)
+      // BEFORE chunking, so one oversized leftover item (most likely an
+      // outbox entry queued by an older version of this file, before the
+      // save-time guard existed) can't blow out the chunk it would
+      // otherwise land in — flagged individually instead, exactly like
+      // the save-time check would have caught it.
+      const eligible = [];
+      items.forEach(item => {
+        const encLen = encodeURIComponent(JSON.stringify(batchEntryForItem_(item))).length;
+        if(encLen > MAX_SINGLE_WRITE_ENCODED_CHARS){
+          item.status = 'error';
+          item.error = writeTooLargeMessage_(encLen);
+          remaining.push(item);
+          if(!item._loggedError){
+            item._loggedError = true;
+            logActivity_('error', 'Sync failed — too large', item.error, null, 'openSync');
+          }
+          return;
+        }
+        eligible.push(item);
+      });
+      if(!eligible.length) return;
+
+      const chunks = chunkByEncodedSize_(eligible, batchEntryForItem_, MAX_CHUNK_ENCODED_CHARS);
+
+      for(const chunk of chunks){
+        if(hitConnectionError){
+          chunk.forEach(item => { item.status = undefined; remaining.push(item); });
+          continue;
+        }
+
+        let data = null;
+        let chunkErr = null;
+        try{
+          data = await apiCallJson_('batchUpdateCustomerFull', { updates: chunk.map(batchEntryForItem_) });
+        }catch(err){
+          chunkErr = err;
+        }
+
+        if(chunkErr){
+          if(isRetryableBusyError_(chunkErr)){
+            hitConnectionError = true;
+            hitBusyError = true;
+            connErrMsg = 'Another save is in progress on this branch';
+            chunk.forEach(item => { item.status = undefined; remaining.push(item); });
+            continue;
+          }
+          if(isConnectionError_(chunkErr)){
+            hitConnectionError = true;
+            hitConnectionErrorIsTimeout = (chunkErr && chunkErr.name === 'AbortError');
+            connErrMsg = connectionErrorLabel_(chunkErr);
+            chunk.forEach(item => { item.status = undefined; remaining.push(item); });
+            continue;
+          }
+          // The whole chunk was rejected outright (shouldn't normally
+          // happen — the backend reports per-row failures inside a
+          // successful response instead — but covers a malformed-request
+          // style error) — flag every item in it rather than silently
+          // dropping them.
+          chunk.forEach(item => {
+            item.status = 'error';
+            item.error = chunkErr.message;
+            remaining.push(item);
+            if(!item._loggedError){
+              item._loggedError = true;
+              logActivity_('error', 'Sync failed for a queued change', chunkErr.message, null, 'openSync');
+            }
+          });
+          continue;
+        }
+
+        const results = (data && data.results) || [];
+        const byOpId = {};
+        results.forEach(r => { if(r && r.opId) byOpId[r.opId] = r; });
+
+        chunk.forEach(item => {
+          const r = byOpId[item.id];
+          if(!r || !r.ok){
+            item.status = 'error';
+            item.error = (r && r.error) || 'No response came back for this change — please retry.';
+            remaining.push(item);
+            if(!item._loggedError){
+              item._loggedError = true;
+              logActivity_('error', 'Sync failed for a queued change', item.error, null, 'openSync');
+            }
+            return;
+          }
+
+          if(item._needsFreshPull){
+            // Same reasoning as the old per-item handling: this item's
+            // fields/remark were merged via the per-field conflict
+            // picker, so the local row (patched optimistically with the
+            // PRE-merge values back when it was queued) can no longer be
+            // trusted to match exactly what was just sent.
+            needsFullReload = true;
+          } else {
+            applyConfirmedUpdate_(item);
+          }
+          syncedAny = true;
+          if(!r._deduped) syncedCount++;
+
+          // Refresh this row's entry in serverByRow, same as the old
+          // per-item loop did after every successful write, so a LATER
+          // item in this same pass targeting the same row diffs against
+          // current reality instead of a now-stale snapshot.
+          const local = customers.find(x => x.row === item.row);
+          if(local) serverByRow[item.row] = Object.assign({}, local);
+        });
+      }
+    }
+
     for(const item of outbox){
       // A connection problem means nothing further can be sent this
       // pass — leave everything from here on exactly as queued and try
@@ -8950,6 +9160,31 @@
           }
         }
 
+        // PERFORMANCE FIX (many-round-trips sync): a plain 'update' item
+        // that made it this far (no conflict, not waiting on a temp row)
+        // no longer goes to sendOne_ right here — it's handed to
+        // pendingUpdateBatch_ instead, and every 'update' item queued up
+        // this way gets sent together in ONE batchUpdateCustomerFull call
+        // the next time a create/delete item is reached (or the loop
+        // ends) — see flushUpdateBatch_ above for the send/result-
+        // handling logic this used to do inline here. 'create' and
+        // 'delete' still fall through to sendOne_ below exactly as
+        // before.
+        if(item.kind === 'update'){
+          item.status = 'syncing';
+          pendingUpdateBatch_.push(item);
+          renderSyncList_();
+          continue;
+        }
+
+        // Anything reaching here is 'create' or 'delete' — flush whatever
+        // updates are already queued FIRST, so this create/delete is sent
+        // (and its row-shifting effects settled) only after every update
+        // ahead of it in the outbox has actually landed, preserving the
+        // same effective ordering the old fully-sequential loop had.
+        await flushUpdateBatch_();
+        if(hitConnectionError){ remaining.push(item); continue; }
+
         // Mark this one as actively in-flight so the sync popup can show
         // a live spinner on exactly the item currently being sent, not
         // just an overall "syncing" state.
@@ -8966,23 +9201,6 @@
           const local = customers.find(x => x.row === item.tempRow);
           if(local){ local.row = result.row; delete local._pending; }
           outbox.forEach(other => { if(other !== item && other.tempRow === item.tempRow) other.row = result.row; });
-        } else if(item.kind === 'update'){
-          if(item._needsFreshPull){
-            // This item's fields/remark were merged via the per-field
-            // conflict picker, so the local row (patched optimistically
-            // with the PRE-merge values back when it was queued) can no
-            // longer be trusted to match exactly what was just sent —
-            // fall back to a real reload for correctness on this pass.
-            needsFullReload = true;
-          } else {
-            // Nothing about this item was touched by conflict merging —
-            // the local row already reflects exactly what was just
-            // written (applyOptimisticUpdate_ applied the very same
-            // fields/remark/currentEdit/historyEdit when it was queued).
-            // Just mark it confirmed instead of re-fetching the whole
-            // sheet to learn something we already know.
-            applyConfirmedUpdate_(item);
-          }
         } else if(item.kind === 'delete'){
           // Deletion is unambiguous — nothing to merge — always safe to
           // apply locally without a reload.
@@ -9002,7 +9220,7 @@
         } else {
           const targetRow = item.kind === 'create' ? result.row : item.row;
           const local = customers.find(x => x.row === targetRow);
-          if(local && !item._needsFreshPull) serverByRow[targetRow] = Object.assign({}, local);
+          if(local) serverByRow[targetRow] = Object.assign({}, local);
         }
         syncedAny = true;
         // BUG FIX: only count this toward the local version bump below if
@@ -9055,6 +9273,12 @@
         }
       }
     }
+
+    // Flush any 'update' items still waiting in the batch (the outbox
+    // didn't end with a create/delete to trigger a flush above, or the
+    // very last item(s) processed were updates) — safe to call
+    // unconditionally; it's a no-op if nothing's queued.
+    await flushUpdateBatch_();
 
     outbox = remaining;
     saveOutbox_();
@@ -11583,6 +11807,14 @@
           status: 'pending',
           customerName: fields.customer || null
         };
+        // SAFETY: see MAX_SINGLE_WRITE_ENCODED_CHARS's comment above —
+        // checked here, before queueing, so a create that's somehow too
+        // large fails with a clear message right away instead of sitting
+        // in the outbox failing the same way on every retry forever.
+        const createPayloadLen = encodedPayloadLength_({ fields: item.fields, remark: item.remark || '', auditor: item.auditor || '', opId: item.id });
+        if(createPayloadLen > MAX_SINGLE_WRITE_ENCODED_CHARS){
+          throw new Error(writeTooLargeMessage_(createPayloadLen));
+        }
         await queueOrSend_(item);
         toast('Customer added — syncing…');
         logActivity_(
@@ -11652,6 +11884,27 @@
             Object.fromEntries(Object.keys(fields).map(k => [k, c[k]]))
           ) : null
         };
+        // SAFETY: see MAX_SINGLE_WRITE_ENCODED_CHARS's comment above.
+        // This is the one that matters in practice — historyEdit resends
+        // the ENTIRE remark-history text on every save (it's a direct
+        // rewrite, not an append), and that only grows over a customer's
+        // lifetime. Checked here, before queueing, so the person gets
+        // clear feedback while their edit is still right there in the
+        // textarea to shorten, instead of a queued item that fails the
+        // exact same way on every retry forever.
+        const updatePayloadLen = encodedPayloadLength_({
+          row: item.row,
+          fields: item.fields,
+          historyEdit: item.historyEdit !== undefined ? item.historyEdit : null,
+          currentEdit: item.currentEdit !== undefined ? item.currentEdit : null,
+          dateOfAudit: item.currentEditDate !== undefined ? item.currentEditDate : null,
+          remark: item.remark || '',
+          auditor: item.auditor || '',
+          opId: item.id
+        });
+        if(updatePayloadLen > MAX_SINGLE_WRITE_ENCODED_CHARS){
+          throw new Error(writeTooLargeMessage_(updatePayloadLen));
+        }
         await queueOrSend_(item);
         toast('Changes saved — syncing…');
 

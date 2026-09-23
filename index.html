@@ -10909,6 +10909,23 @@
       const fresh = data.customers || [];
       lastListHash = listHash_(fresh);
       customers = fresh;
+      // BUG FIX (sync badge falsely disappeared, then "came back" on the
+      // next refresh): this used to swap in the server's fresh, freshly-
+      // sorted list and stop there — unlike every other place `customers`
+      // gets replaced wholesale (loadData, syncOutbox), it never called
+      // reapplyOutbox_() afterward. The server's response obviously has
+      // no idea about anything still sitting unsynced in THIS device's
+      // outbox, so any row with a genuinely still-pending edit lost its
+      // "Syncing…" badge (and, worse, its optimistic value) the moment a
+      // sort ran — not because the edit had actually finished, just
+      // because the marker tracking it got wiped. The very next refresh
+      // then correctly restored it (reapplyOutbox_ runs there), which is
+      // exactly what looked like "the syncing badge came back" — it never
+      // actually went away for a good reason, sorting just hid it for a
+      // while. Re-applying here closes that gap: a still-queued edit now
+      // stays visibly "Syncing" straight through a sort instead of
+      // flickering to a false "done" and back.
+      reapplyOutbox_();
       // Row numbers just moved underneath every customer, so a cache
       // entry keyed by "row 5" no longer necessarily describes the same
       // customer it did a moment ago — drop it all rather than risk

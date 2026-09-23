@@ -7942,6 +7942,37 @@
     </div>`;
   }
 
+  // ACCURACY FIX (header said "synced" while a row was still "Syncing"):
+  // #connStatus used to be set to "synced HH:MM:SS" directly, in five
+  // separate places, the instant a LIST READ succeeded — a manual
+  // refresh, a sort, or the periodic background version check — with NO
+  // check of whether the OUTBOX (queued writes not yet confirmed by the
+  // server) was actually empty. A read succeeding and a write actually
+  // reaching the server are two completely different things, so it was
+  // entirely possible for the header to say "synced" while a specific
+  // row's own badge still correctly said "Syncing…" for an edit that
+  // hadn't gone through yet — the header and the per-row truth could
+  // disagree. Every one of those five call sites now goes through this
+  // helper instead, which only ever claims "synced" when outbox.length
+  // is genuinely zero. If anything is still queued it reports the real
+  // count (or "needs your attention" for a conflict/error), so the
+  // header can never again say something the per-row badges contradict —
+  // this holds identically whether the connection is online or offline,
+  // since it's driven purely by outbox state, not by navigator.onLine or
+  // any read having merely succeeded.
+  function setConnSyncedStatus_(){
+    const el = document.getElementById('connStatus');
+    if(!el) return;
+    if(outbox.length){
+      const hasIssue = outbox.some(o => o.status === 'conflict' || o.status === 'error');
+      el.textContent = hasIssue
+        ? 'Some changes need your attention.'
+        : outbox.length + ' change' + (outbox.length === 1 ? '' : 's') + ' waiting — syncing…';
+    } else {
+      el.textContent = 'synced ' + new Date().toLocaleTimeString();
+    }
+  }
+
   function updateSyncUI(){
     const online = isOnline_();
     document.getElementById('netLabel').textContent = online ? 'Online' : 'Offline';
@@ -9396,11 +9427,11 @@
       reapplyOutbox_(); // re-layer anything still queued (conflict/error/pending) on top of the fresh merge
       saveLocalCache_(customers);
       render();
-      document.getElementById('connStatus').textContent = 'synced ' + new Date().toLocaleTimeString();
+      setConnSyncedStatus_();
     } else if(syncedAny){
       saveLocalCache_(customers);
       render();
-      document.getElementById('connStatus').textContent = 'synced ' + new Date().toLocaleTimeString();
+      setConnSyncedStatus_();
     }
 
     if(syncedAny && !outbox.length){
@@ -9953,7 +9984,7 @@
         saveLocalCache_(customers, sheetAtStart);
         render();
       }
-      document.getElementById('connStatus').textContent = 'synced ' + new Date().toLocaleTimeString();
+      setConnSyncedStatus_();
       updateSyncUI();
       hideStaleDataBanner_(); // real data landed — the cached snapshot it was covering for is gone
     }catch(err){
@@ -10885,7 +10916,7 @@
       rowHtmlCache.clear();
       saveLocalCache_(customers);
       render();
-      document.getElementById('connStatus').textContent = 'synced ' + new Date().toLocaleTimeString();
+      setConnSyncedStatus_();
       logActivity_('success', 'Branch sorted', `Sorted "${currentSheet}" by ${fieldLabel_(sortBy)} (${dir === 'desc' ? 'descending' : 'ascending'}).`);
     }catch(err){
       toast('Could not sort: ' + err.message);
@@ -12365,7 +12396,7 @@
         const v = await fetchListVersion_(currentSheet);
         if(typeof v.version === 'number' && v.version === lastKnownVersion_){
           lastVersionConfirmedAt_ = Date.now();
-          document.getElementById('connStatus').textContent = 'synced ' + new Date().toLocaleTimeString();
+          setConnSyncedStatus_();
           return; // confirmed nothing changed server-side — skip the full fetch
         }
       }catch(e){

@@ -4283,6 +4283,31 @@
   // just booted, or the last version check failed) — loadData() always
   // does a real fetch in that case.
   let lastKnownVersion_ = null;
+  // PERFORMANCE FIX (edits feeling slow to sync): every syncOutbox() pass
+  // used to spend a SEPARATE Apps Script round trip on the cheap
+  // 'listVersion' check before it was allowed to send the actual write —
+  // so saving even a single field meant two sequential full Apps Script
+  // exec cycles back to back (redirect + script boot cost paid twice),
+  // not one. Since a normal Apps Script round trip is easily 0.5-2s even
+  // warm, that alone roughly doubled how long a single edit felt like it
+  // took to save. lastVersionConfirmedAt_ records the last moment
+  // lastKnownVersion_ was actually verified fresh against the server
+  // (from a real list load, a successful version-match check, or a sync
+  // pass that just pulled the full list) — see VERSION_FRESH_WINDOW_MS
+  // below. If that happened very recently, syncOutbox() now trusts it
+  // instead of re-asking the server "did anything change?" milliseconds
+  // later, cutting a normal single-edit save to one round trip again.
+  let lastVersionConfirmedAt_ = 0;
+  // How long a version confirmation is trusted before syncOutbox() will
+  // spend a fresh round trip re-checking it. Deliberately short — this
+  // only skips the check when it's genuinely very unlikely anything
+  // could have changed (e.g. saving a field within a few seconds of the
+  // page having just loaded or synced), never for a stale page left open
+  // a while. A missed conflict inside this tiny window is still caught
+  // by the existing per-row identity/drift safety nets the first time
+  // they DO run, so this only trades a sliver of "how fresh is fresh
+  // enough" for a real, consistent latency win on the common case.
+  const VERSION_FRESH_WINDOW_MS = 8000;
   let activeRow = null;      // null while creating
   let modalMode = 'edit';    // 'edit' | 'create'
 
@@ -8676,16 +8701,25 @@
     let versionConfirmedCurrent = false;
     let listErr = null;
     try{
-      if(lastKnownVersion_ !== null){
+      // PERFORMANCE FIX: skip even the cheap listVersion round trip when
+      // we confirmed the version very recently — see
+      // lastVersionConfirmedAt_/VERSION_FRESH_WINDOW_MS above. This is
+      // what turns "save one field" back into a single network round
+      // trip in the common case of editing shortly after the page
+      // loaded or last synced.
+      if(lastKnownVersion_ !== null && (Date.now() - lastVersionConfirmedAt_) < VERSION_FRESH_WINDOW_MS){
+        versionConfirmedCurrent = true;
+      } else if(lastKnownVersion_ !== null){
         const v = await fetchListVersion_(currentSheet);
         if(typeof v.version === 'number' && v.version === lastKnownVersion_){
           versionConfirmedCurrent = true;
+          lastVersionConfirmedAt_ = Date.now();
         }
       }
       if(!versionConfirmedCurrent){
         const data = await fetchCustomerList_(currentSheet);
         serverList = data.customers || [];
-        if(typeof data.version === 'number') lastKnownVersion_ = data.version;
+        if(typeof data.version === 'number'){ lastKnownVersion_ = data.version; lastVersionConfirmedAt_ = Date.now(); }
       }
     }catch(e){ listErr = e; }
 
@@ -9047,6 +9081,12 @@
     // a full list pull it didn't actually need.
     if(versionConfirmedCurrent && syncedCount && lastKnownVersion_ !== null){
       lastKnownVersion_ += syncedCount;
+      // The version we now believe is current reflects the write(s) we
+      // just made ourselves, so it's fresh by definition — the next
+      // save moments later (a very common pattern: edit a few fields on
+      // a row in quick succession) can trust it too instead of paying
+      // for another version-check round trip.
+      lastVersionConfirmedAt_ = Date.now();
     }
 
     updateSyncUI();
@@ -9636,7 +9676,7 @@
       // 'listVersion'/bumpListVersion_ in the Apps Script), so a full
       // fetch always leaves the auto-refresh timer's version check
       // up to date too, with no extra round trip.
-      if(typeof data.version === 'number') lastKnownVersion_ = data.version;
+      if(typeof data.version === 'number'){ lastKnownVersion_ = data.version; lastVersionConfirmedAt_ = Date.now(); }
 
       const freshHash = listHash_(fresh);
       if(freshHash !== lastListHash){
@@ -12002,6 +12042,7 @@
       try{
         const v = await fetchListVersion_(currentSheet);
         if(typeof v.version === 'number' && v.version === lastKnownVersion_){
+          lastVersionConfirmedAt_ = Date.now();
           document.getElementById('connStatus').textContent = 'synced ' + new Date().toLocaleTimeString();
           return; // confirmed nothing changed server-side — skip the full fetch
         }

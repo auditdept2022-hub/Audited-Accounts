@@ -8856,12 +8856,24 @@
       if(!pendingUpdateBatch_.length) return;
       const items = pendingUpdateBatch_.splice(0, pendingUpdateBatch_.length);
 
+      // BUG FIX: every "put this back in the queue after a failed
+      // attempt" site in this function (and further down in the main
+      // loop) used to reset item.status to `undefined` instead of back
+      // to the literal string 'pending'. syncItemStatusMeta_ displays
+      // both the same way ("Queued"), so this was invisible in the UI —
+      // but findMergeableUpdate_ (the color-marker/quick-field "collapse
+      // repeated taps into one outbox item" coalescing logic) only
+      // matches items where `status === 'pending'` exactly. An item that
+      // failed once and came back as `undefined` silently stopped
+      // coalescing with further taps on that same row, which could pile
+      // up extra outbox entries for the same field during a flaky
+      // connection. Explicit 'pending' everywhere fixes that.
       if(hitConnectionError){
         // Something else in this same pass already hit a connection
         // problem — nothing further can be sent. Requeue exactly as
         // still-pending, same as the top-of-loop guard does for any
         // other item once that flag is set.
-        items.forEach(item => { item.status = undefined; remaining.push(item); });
+        items.forEach(item => { item.status = 'pending'; remaining.push(item); });
         return;
       }
 
@@ -8893,7 +8905,7 @@
 
       for(const chunk of chunks){
         if(hitConnectionError){
-          chunk.forEach(item => { item.status = undefined; remaining.push(item); });
+          chunk.forEach(item => { item.status = 'pending'; remaining.push(item); });
           continue;
         }
 
@@ -8910,14 +8922,14 @@
             hitConnectionError = true;
             hitBusyError = true;
             connErrMsg = 'Another save is in progress on this branch';
-            chunk.forEach(item => { item.status = undefined; remaining.push(item); });
+            chunk.forEach(item => { item.status = 'pending'; remaining.push(item); });
             continue;
           }
           if(isConnectionError_(chunkErr)){
             hitConnectionError = true;
             hitConnectionErrorIsTimeout = (chunkErr && chunkErr.name === 'AbortError');
             connErrMsg = connectionErrorLabel_(chunkErr);
-            chunk.forEach(item => { item.status = undefined; remaining.push(item); });
+            chunk.forEach(item => { item.status = 'pending'; remaining.push(item); });
             continue;
           }
           // The whole chunk was rejected outright (shouldn't normally
@@ -9140,8 +9152,40 @@
           // differ by nothing more than whitespace/line-ending shape and
           // still get flagged as a real conflict.
           const driftKeys = Object.keys(item.snapshot).filter(k => writtenKeys.has(k));
-          const drifted = driftKeys.some(k => normForCompare_(serverRow[k]) !== normForCompare_(item.snapshot[k]));
-          if(drifted){
+          const movedKeys = driftKeys.filter(k => normForCompare_(serverRow[k]) !== normForCompare_(item.snapshot[k]));
+
+          // ALREADY-APPLIED FIX (plain fields, e.g. the color marker): a
+          // field showing as "moved" from our old baseline isn't
+          // necessarily someone ELSE's edit — it's just as likely our OWN
+          // earlier write actually landed on the sheet, but the
+          // confirmation response never made it back (a sudden
+          // disconnect right as the save completed is exactly this
+          // case). remarkAlreadyOnServer_ above already protects remarks
+          // from this; plain WRITABLE_FIELDS (marker, customerStatus,
+          // paymentMode, unitStatus, amounts, etc.) had no equivalent
+          // check, so every one of them got flagged as a false
+          // "someone else changed this" conflict in that situation —
+          // which is what made a color-marker change (or any quick field
+          // edit) look like it got stuck/lost right after a flaky
+          // connection. If the sheet's current value for a moved field
+          // already matches the value THIS item is trying to write, it's
+          // our own write having already succeeded — accept it silently
+          // (refresh the snapshot so a later pass doesn't re-flag it)
+          // instead of freezing the item as a conflict with nothing left
+          // to resolve. Only a field whose server value differs from
+          // BOTH our old baseline AND what we're trying to write is a
+          // genuine third-party conflict.
+          const conflictKeys = movedKeys.filter(k => {
+            if(item.fields && Object.prototype.hasOwnProperty.call(item.fields, k)){
+              if(normForCompare_(serverRow[k]) === normForCompare_(item.fields[k])) return false;
+            }
+            return true;
+          });
+          movedKeys.forEach(k => {
+            if(!conflictKeys.includes(k)) item.snapshot[k] = serverRow[k];
+          });
+
+          if(conflictKeys.length){
             item.status = 'conflict';
             // Freeze what the sheet actually holds right now, so the
             // conflict banner can show it next to "your version" even
@@ -9151,9 +9195,8 @@
             remaining.push(item);
             if(!item._loggedConflict){
               item._loggedConflict = true;
-              const diffFields = driftKeys.filter(k => String(serverRow[k] ?? '') !== String(item.snapshot[k] ?? ''));
               logActivity_('warning', 'Sync conflict',
-                'Someone else changed this record before your offline edit synced (' + diffFields.map(fieldLabel_).join(', ') + ').',
+                'Someone else changed this record before your offline edit synced (' + conflictKeys.map(fieldLabel_).join(', ') + ').',
                 null, 'openSync');
             }
             continue;
@@ -9242,7 +9285,7 @@
           // itself. Requeue exactly like a connection hiccup — never a
           // permanent per-item error — and let the fast backoff retry
           // below take over instead of sitting until the next 20s tick.
-          item.status = undefined;
+          item.status = 'pending';
           hitConnectionError = true;
           hitBusyError = true;
           connErrMsg = 'Another save is in progress on this branch';
@@ -9253,7 +9296,7 @@
           // behind it) queued to retry as-is. Clear the 'syncing' flag
           // set just above so the popup shows it as queued again, not
           // stuck mid-spin.
-          item.status = undefined;
+          item.status = 'pending';
           hitConnectionError = true;
           hitConnectionErrorIsTimeout = (err && err.name === 'AbortError');
           connErrMsg = connectionErrorLabel_(err);
@@ -10065,7 +10108,33 @@
   // meant as an explicit "something looks stale/stuck, fix it now"
   // action, not the everyday refresh (that's the ⟳ button above, which
   // stays fast/data-only on purpose).
+  // BUG FIX (force-refresh could brick the app while offline): this
+  // function unregisters the service worker and wipes Cache Storage
+  // BEFORE navigating to a cache-busted URL — that cache-busting param is
+  // what guarantees a genuinely fresh shell when it works, but it also
+  // means the final navigate is a real network request with nothing left
+  // (no SW, no cache entry) able to serve it from local storage if that
+  // request fails. If this ran while genuinely offline, the result used
+  // to be: SW gone, cache gone, network request fails, and the browser
+  // shows its own native offline error page instead of the app — with no
+  // service worker left registered to recover on its own. The person
+  // would be stuck fully outside the app (unable to even see their still-
+  // safe, still-queued offline edits) until connectivity returned AND
+  // they manually reloaded again. Now checked against isOnline_() (the
+  // app's own vetted connection signal, not the unreliable
+  // navigator.onLine — see isOnline_'s own comment) before touching
+  // anything: if there's no real connection right now, this bails out
+  // with a toast instead of tearing down the one thing (the currently
+  // registered SW + its cached shell) that lets the app keep working
+  // offline at all. Nothing queued in the outbox is ever at risk either
+  // way — this only ever touches the SW registration and Cache Storage,
+  // never localStorage — but skipping the teardown while offline is what
+  // keeps the app itself usable in the meantime.
   async function hardRefreshEverything_(){
+    if(!isOnline_()){
+      toast('Force refresh needs a connection — you\u2019re offline right now. Your queued changes are safe and untouched; try again once you\u2019re back online.');
+      return;
+    }
     try{
       if('serviceWorker' in navigator){
         const regs = await navigator.serviceWorker.getRegistrations();
@@ -12452,6 +12521,27 @@
     const sentinelEl_ = document.getElementById('loadMoreSentinel');
     if(sentinelEl_) loadMoreObserver_.observe(sentinelEl_);
   }
+
+  // DATA-LOSS HARDENING (new): ask the browser to treat this origin's
+  // storage as "persistent" instead of "best-effort". Everything this
+  // app can't afford to lose (the offline outbox of unsynced edits, the
+  // activity outbox, saved drafts, the shared activity-log cache) all
+  // live in plain localStorage — which browsers are allowed to silently
+  // evict under storage pressure with ZERO warning to the page (this is
+  // especially aggressive on iOS Safari / home-screen PWAs, which will
+  // wipe an origin's storage entirely after ~7 days of no interaction if
+  // it was never granted persistence). navigator.storage.persist() asks
+  // the browser to exempt this origin from that automatic eviction. It's
+  // best-effort and may silently be denied (private browsing, an
+  // unsupported browser, or a browser that only grants it based on its
+  // own engagement heuristics) — there's no way to force it — but asking
+  // costs nothing and meaningfully lowers the odds of a queued-but-
+  // unsynced edit vanishing on a device that's carried this app for
+  // weeks. Safe to call every boot; the browser just no-ops if already
+  // granted.
+  try{
+    if(navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  }catch(e){ /* unsupported — nothing more to do */ }
 
   // Boot
   initBackGuard_(); // guard against swipe/back-gesture exits from first paint — see the note above, near handleBackGuardPopState_

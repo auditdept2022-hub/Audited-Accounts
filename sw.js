@@ -1,79 +1,102 @@
-// Minimal app-shell service worker.
-// Caches only the static shell (this file, the HTML, manifest, icons) —
-// NOT your live ledger data, which always comes fresh from the network.
+// App-shell service worker for Audited Accounts.
 //
-// STRATEGY (this is the fix for "my edits never show up until I reload
-// twice"): the HTML shell/navigation request now goes NETWORK-FIRST,
-// falling back to cache only when offline. The previous version served
-// the CACHED copy instantly on every load and only refreshed the cache
-// in the background for next time — so a change made to index.html was
-// always one reload behind, and if you kept editing + reloading once,
-// you'd never actually see your latest change. Static, rarely-changing
-// assets (manifest, icons) still use cache-first, since serving those
-// instantly from cache is a pure win and they don't need to be fresh.
+// Caches ONLY the static shell (index.html, manifest, icons) and the Google
+// Fonts files. Live ledger data (Apps Script calls) is cross-origin and is
+// never touched here — it always goes straight to the network, and the app
+// itself keeps its own offline copy + outbox in localStorage.
 //
-// Bump CACHE_NAME any time SHELL_FILES itself changes (e.g. you add a
-// new icon) so old cached entries for removed files get cleaned up by
-// the activate handler below — it's not what fixes staleness of
-// index.html's contents though; the network-first fetch handler is.
+// STRATEGY
+//  - Page navigation (the HTML): NETWORK-FIRST so an edit to index.html shows
+//    on the very next load. If the network is slow (> NAV_NETWORK_TIMEOUT_MS)
+//    or fails, the cached shell is served instantly instead of a blank
+//    screen; the real fetch keeps running and refreshes the cache for next
+//    time. Works with query strings (?_refresh=..., ?utm=..) when offline.
+//  - Manifest / icons: CACHE-FIRST (instant), refreshed in the background.
+//  - Google Fonts (CSS + font files): STALE-WHILE-REVALIDATE in their own
+//    cache, so the app keeps its look when offline.
+//  - Everything else same-origin: network, falling back to cache.
 //
-// FORCE REFRESH (new): network-first alone still isn't a guarantee the
-// VERY NEXT load is fresh — a stale HTTP-level cache of sw.js itself, a
-// half-updated registration, or simply not wanting to wait on any of
-// that can all still leave someone looking at an old shell. The
-// dashboard now has an explicit "Force refresh app" action (hamburger
-// menu, and a hard pull-to-reload) that bypasses this file entirely: it
-// unregisters every service worker for this origin, deletes every Cache
-// Storage entry directly from the page, then reloads with a cache-busting
-// URL. See hardRefreshEverything_() in index.html. This file's only
-// supporting role in that is the 'message' listener below, kept as a
-// second path to the same result for any tab still running old JS.
-const CACHE_NAME = 'audited-accounts-shell-v4';
-// SLOW-LOADING FIX: how long the network-first shell/navigation fetch is
-// given before falling back to the cached shell — see the fetch handler
-// below. Short enough that a hung/no-signal connection doesn't leave a
-// blank screen for long, generous enough not to fall back on an ordinary
-// brief hiccup.
-const NAV_NETWORK_TIMEOUT_MS = 4000;
-const SHELL_FILES = [
-  './',
-  './index.html',
+// v5 FIXES (vs v4)
+//  1. Install no longer fails if one icon is missing. cache.addAll() is
+//     all-or-nothing: a single 404 (e.g. icon-512.png not uploaded) made the
+//     whole install fail => NO service worker => NO offline at all. Now only
+//     index.html is mandatory; every other file is best-effort.
+//  2. The "is this a cache-first asset?" test was always true (the './' entry
+//     became '' and endsWith('') matches every URL), so the cache-first and
+//     network-first branches were not what the comments claimed. Replaced
+//     with an exact file-name check.
+//  3. Offline navigation to a URL with a query string (the Force-refresh
+//     reload adds ?_refresh=...) never matched the cache and showed the
+//     browser's offline page. Cache lookups now ignore the query string and
+//     fall back to index.html.
+//  4. Navigations are stored under ONE key, so cache-busting URLs no longer
+//     pile up copies of the 600 KB+ shell in Cache Storage.
+//  5. Google Fonts are cached for offline use.
+//
+// Bump CACHE_NAME whenever SHELL_FILES changes. FORCE REFRESH from the app
+// (hamburger menu) still works: it unregisters this worker and deletes all
+// caches from the page; the 'message' listener below is a second path.
+
+const CACHE_NAME = 'audited-accounts-shell-v5';
+const FONT_CACHE_NAME = 'audited-accounts-fonts-v1';
+const NAV_NETWORK_TIMEOUT_MS = 3000;
+
+// The one file that MUST be cached for the worker to be worth installing.
+const SHELL_PAGE = './index.html';
+// Best-effort extras (a missing one must never break install).
+const OPTIONAL_FILES = [
   './manifest.json',
   './icon-192.png',
-  './icon-512.png'
+  './icon-512.png',
+  './icon-512-maskable.png',
+  './apple-touch-icon.png'
 ];
 
-// Files that change rarely and are safe to serve instantly from cache
-// (falling back to network only on a cache miss).
-const CACHE_FIRST_FILES = new Set([
-  './manifest.json',
-  './icon-192.png',
-  './icon-512.png'
+// Exact file names served cache-first.
+const CACHE_FIRST_NAMES = new Set([
+  'manifest.json',
+  'icon-192.png',
+  'icon-512.png',
+  'icon-512-maskable.png',
+  'apple-touch-icon.png'
 ]);
 
-// FORCE-REFRESH HOOK: the dashboard's new "Force refresh app" button
-// (hamburger menu → Branch Profiles) and its hard pull-to-reload gesture
-// both call navigator.serviceWorker.getRegistrations() + caches.delete()
-// directly from the page itself — that's enough on its own, since Cache
-// Storage is shared, origin-scoped storage the page can read/write
-// without going through this file at all. This listener is a second,
-// belt-and-suspenders path for the same "wipe everything" action,
-// reachable even from a client the button rewrite hasn't reached yet
-// (an old tab still running JS from before this fix): postMessage
-// {type:'CLEAR_ALL'} to this SW's registration and it drops every cache
-// this worker owns.
+const FONT_HOSTS = new Set(['fonts.googleapis.com', 'fonts.gstatic.com']);
+
+function isCacheable_(response) {
+  return !!response && (response.ok || response.type === 'opaque');
+}
+
 self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'CLEAR_ALL') {
+  const type = event.data && event.data.type;
+  if (type === 'CLEAR_ALL') {
     event.waitUntil(
       caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n))))
     );
+  } else if (type === 'SKIP_WAITING') {
+    self.skipWaiting();
   }
 });
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_FILES))
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+
+    // Mandatory: the HTML shell. If this fails the install fails and the
+    // previous worker (if any) stays in charge — that's the right outcome.
+    const page = await fetch(SHELL_PAGE, { cache: 'reload' });
+    if (!page || !page.ok) throw new Error('Shell fetch failed: ' + (page && page.status));
+    await cache.put(SHELL_PAGE, page.clone());
+    await cache.put('./', page.clone()); // same document, served for the bare folder URL
+
+    // Best-effort: never let a missing icon block the install.
+    await Promise.all(OPTIONAL_FILES.map(async (file) => {
+      try {
+        const res = await fetch(file, { cache: 'reload' });
+        if (res && res.ok) await cache.put(file, res);
+      } catch (err) { /* offline-at-install or 404 — fine */ }
+    }));
+  })());
   self.skipWaiting();
 });
 
@@ -82,88 +105,127 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((names) =>
       Promise.all(
         names
-          .filter((name) => name !== CACHE_NAME)
+          .filter((name) => name !== CACHE_NAME && name !== FONT_CACHE_NAME)
           .map((name) => caches.delete(name))
       )
-    )
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-self.addEventListener('fetch', (event) => {
-  // Only handle same-origin GET requests for the shell; let everything
-  // else (API calls, Google Fonts, etc.) go straight to the network.
-  if (event.request.method !== 'GET') return;
+// Cached shell for any navigation, regardless of query string.
+async function cachedShell_(request) {
+  const cache = await caches.open(CACHE_NAME);
+  return (
+    (await cache.match(request, { ignoreSearch: true })) ||
+    (await cache.match(SHELL_PAGE)) ||
+    (await cache.match('./'))
+  );
+}
 
-  const url = new URL(event.request.url);
-  if (url.origin !== self.location.origin) return;
+function handleNavigation_(event) {
+  const request = event.request;
 
-  const path = url.pathname.endsWith('/') ? './' : '.' + url.pathname.slice(url.pathname.lastIndexOf('/'));
-  const isNavigation = event.request.mode === 'navigate';
-  const isCacheFirstAsset = CACHE_FIRST_FILES.has(path) || SHELL_FILES.some((f) => url.href.endsWith(f.replace('./', '')));
+  const networkPromise = fetch(request)
+    .then((response) => {
+      if (response && response.ok && response.type === 'basic') {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then((cache) => {
+          cache.put(SHELL_PAGE, copy.clone());
+          cache.put('./', copy);
+        }).catch(() => {});
+      }
+      return response;
+    })
+    .catch(() => null);
 
-  if (isNavigation || !isCacheFirstAsset) {
-    // NETWORK-FIRST, WITH A FAST FALLBACK (this is the fix for "loading
-    // very slow instead of loading the app when offline/no signal"): a
-    // bare fetch() has no timeout of its own — on a connection that's
-    // "on" but not actually moving packets (a very common phone state:
-    // mobile data toggled on, no real signal; or a captive portal), the
-    // browser can sit waiting far longer than anyone will tolerate before
-    // it gives up on its own, leaving a blank white screen instead of the
-    // app shell the whole time. NAV_NETWORK_TIMEOUT_MS races the network
-    // fetch against a short timer: whichever resolves first wins. If the
-    // timer wins, the cached shell is served immediately (instant app,
-    // exactly like being offline should feel) while the real fetch keeps
-    // running in the background and still refreshes the cache for next
-    // time if/when it eventually completes — so a genuinely fresh edit to
-    // index.html still shows up on the very next load, same as before,
-    // just without blocking THIS load on a connection that isn't working.
-    event.respondWith(
-      (async () => {
-        const networkPromise = fetch(event.request)
-          .then((response) => {
-            if (response && response.ok) {
-              const copy = response.clone();
-              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-            }
-            return response;
-          })
-          .catch(() => null);
+  // Let the background refresh finish even after we've answered from cache.
+  event.waitUntil(networkPromise);
 
-        const timeoutPromise = new Promise((resolve) => {
-          setTimeout(() => resolve(null), NAV_NETWORK_TIMEOUT_MS);
-        });
+  return (async () => {
+    const cached = await cachedShell_(request);
 
-        const winner = await Promise.race([networkPromise, timeoutPromise]);
-        if (winner) return winner;
+    // Nothing cached yet (very first visit): no fallback exists, so wait for
+    // the real network answer.
+    if (!cached) {
+      const first = await networkPromise;
+      return first || Response.error();
+    }
 
-        const cached = await caches.match(event.request);
-        if (cached) return cached;
+    // Cached shell available: give the network a short window to win.
+    let timer;
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(null), NAV_NETWORK_TIMEOUT_MS); });
+    const winner = await Promise.race([networkPromise, timeout]);
+    clearTimeout(timer);
 
-        // Nothing cached yet (first-ever load, already offline) — no fast
-        // fallback exists, so wait out whatever the real network call
-        // eventually returns instead of failing outright.
-        const late = await networkPromise;
-        return late || Response.error();
-      })()
-    );
-    return;
-  }
+    // Network answered with something usable -> fresh shell. Otherwise
+    // (timeout, offline, server error) -> instant cached shell.
+    return (winner && winner.ok) ? winner : cached;
+  })();
+}
 
-  // CACHE-FIRST for static assets that rarely change (manifest, icons):
-  // instant from cache, refreshed in the background for next time.
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const network = fetch(event.request)
+function handleCacheFirst_(event) {
+  return caches.match(event.request, { ignoreSearch: true }).then((cached) => {
+    const refresh = fetch(event.request)
+      .then((response) => {
+        if (response && response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)).catch(() => {});
+        }
+        return response;
+      })
+      .catch(() => cached);
+    if (cached) { event.waitUntil(refresh); return cached; }
+    return refresh;
+  });
+}
+
+function handleFonts_(event) {
+  return caches.open(FONT_CACHE_NAME).then((cache) =>
+    cache.match(event.request).then((cached) => {
+      const refresh = fetch(event.request)
         .then((response) => {
-          if (response && response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-          }
+          if (isCacheable_(response)) cache.put(event.request, response.clone()).catch(() => {});
           return response;
         })
         .catch(() => cached);
-      return cached || network;
+      if (cached) { event.waitUntil(refresh); return cached; }
+      return refresh;
     })
   );
+}
+
+function handleOtherSameOrigin_(event) {
+  return fetch(event.request).catch(async () => {
+    const cached = await caches.match(event.request, { ignoreSearch: true });
+    return cached || Response.error();
+  });
+}
+
+self.addEventListener('fetch', (event) => {
+  const request = event.request;
+  if (request.method !== 'GET') return;
+
+  const url = new URL(request.url);
+
+  // Google Fonts: cached for offline look-and-feel.
+  if (FONT_HOSTS.has(url.hostname)) {
+    event.respondWith(handleFonts_(event));
+    return;
+  }
+
+  // Everything else cross-origin (Apps Script API, CDNs): straight to network.
+  if (url.origin !== self.location.origin) return;
+
+  if (request.mode === 'navigate') {
+    event.respondWith(handleNavigation_(event));
+    return;
+  }
+
+  const fileName = url.pathname.slice(url.pathname.lastIndexOf('/') + 1);
+  if (CACHE_FIRST_NAMES.has(fileName)) {
+    event.respondWith(handleCacheFirst_(event));
+    return;
+  }
+
+  event.respondWith(handleOtherSameOrigin_(event));
 });

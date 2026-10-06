@@ -4291,6 +4291,11 @@
 
   let customers = [];
   let lastListHash = null; // tracks the last server list we actually rendered, so loadData() can skip re-rendering when nothing changed
+  // In-memory branch snapshots make branch switching instant even when the
+  // localStorage/IndexedDB read has not happened yet. Each branch keeps its
+  // last rendered server snapshot, hash and version. This is a UI cache only;
+  // durable localStorage/IndexedDB remains the offline source of truth.
+  const branchViewCache_ = new Map();
   // PERFORMANCE: tracks the cheap server-side version counter (see the
   // 'listVersion' backend action) for the branch currently on screen. The
   // auto-refresh timer checks this tiny counter BEFORE pulling the full
@@ -7658,11 +7663,37 @@
         return;
       }
     }
+    // Invalidate any in-flight request immediately. The old request may
+    // still finish in the background, but it can no longer be considered
+    // authoritative for the newly selected branch.
+    ++loadGeneration;
     currentSheet = name;
     saveCurrentSheet_();
-    customers = [];
-    lastListHash = null;
-    lastKnownVersion_ = null;
+
+    // DO NOT blank the table while switching. First restore the last branch
+    // snapshot from memory/localStorage synchronously, then let loadData()
+    // perform only the cheap version check. If the server version is the
+    // same, the visible list is left completely untouched. If it changed,
+    // only then is the full list replaced.
+    const instantSnapshot = branchViewCache_.get(name) || loadLocalCache_(name);
+    if(instantSnapshot && Array.isArray(instantSnapshot.customers)){
+      customers = instantSnapshot.customers.slice();
+      lastListHash = instantSnapshot.hash || listHash_(customers);
+      lastKnownVersion_ = (typeof instantSnapshot.version === 'number') ? instantSnapshot.version : null;
+      branchViewCache_.set(name, {
+        customers: customers.slice(),
+        hash: lastListHash,
+        version: lastKnownVersion_,
+        ts: instantSnapshot.ts || Date.now()
+      });
+      render();
+      document.getElementById('connStatus').textContent = 'Showing saved data';
+    } else {
+      customers = [];
+      lastListHash = null;
+      lastKnownVersion_ = null;
+      document.getElementById('tableBody').innerHTML = '<div class=\"rec\"><div class=\"empty-note\">No saved copy for this branch yet — connecting…</div></div>';
+    }
     // Row numbers are only unique WITHIN a branch — row 5 on the branch
     // we're leaving and row 5 on the branch we're entering describe two
     // completely unrelated customers. rowHtmlCache is keyed purely by
@@ -7674,8 +7705,11 @@
     // different place, so it needs the same clear.
     rowHtmlCache.clear();
     resetRenderLimit_(); // fresh branch = start painting its list from the top
-    document.getElementById('tableBody').innerHTML = '';
     await loadOutbox_();
+    // Reapply branch-specific queued edits on top of the instant snapshot.
+    // This is local-only and should never delay the branch switch on a
+    // network request.
+    if(customers.length){ reapplyOutbox_(); render(); }
     updateSyncUI();
     toast('Switched to ' + name + '.');
     // Not awaited: loadData() paints instantly from this branch's local
@@ -10073,10 +10107,30 @@
     // while the real fetch below runs quietly underneath it.
     let paintedFromCache = false;
     let cachedSnapshot = null;
-    if(customers.length === 0){
+    // A branch switch may already have restored an in-memory snapshot before
+    // this loadData() call began. Treat that exactly like durable cache: the
+    // list is already authoritative for its last-known version, so do only a
+    // version check and skip the full ledger fetch when nothing changed.
+    const memorySnapshot = branchViewCache_.get(sheetAtStart);
+    if(memorySnapshot && Array.isArray(memorySnapshot.customers)){
+      cachedSnapshot = memorySnapshot;
+      customers = memorySnapshot.customers.slice();
+      lastListHash = memorySnapshot.hash || listHash_(customers);
+      if(typeof memorySnapshot.version === 'number') lastKnownVersion_ = memorySnapshot.version;
+      paintedFromCache = true;
+    }
+    if(!paintedFromCache && customers.length === 0){
       cachedSnapshot = await loadDurableLocalCache_(sheetAtStart);
-      if(cachedSnapshot && cachedSnapshot.customers.length){
+      if(cachedSnapshot && Array.isArray(cachedSnapshot.customers)){
         customers = cachedSnapshot.customers;
+        lastListHash = listHash_(customers);
+        if(typeof cachedSnapshot.version === 'number') lastKnownVersion_ = cachedSnapshot.version;
+        branchViewCache_.set(sheetAtStart, {
+          customers: customers.slice(),
+          hash: lastListHash,
+          version: (typeof cachedSnapshot.version === 'number' ? cachedSnapshot.version : null),
+          ts: cachedSnapshot.ts || Date.now()
+        });
         reapplyOutbox_();
         paintedFromCache = true;
         render();
@@ -10191,6 +10245,12 @@
       if(typeof data.version === 'number'){ lastKnownVersion_ = data.version; lastVersionConfirmedAt_ = Date.now(); }
 
       const freshHash = listHash_(fresh);
+      branchViewCache_.set(sheetAtStart, {
+        customers: fresh.slice(),
+        hash: freshHash,
+        version: (typeof data.version === 'number' ? data.version : null),
+        ts: Date.now()
+      });
       if(freshHash !== lastListHash){
         lastListHash = freshHash;
         customers = fresh;

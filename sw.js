@@ -36,7 +36,7 @@
 // (hamburger menu) still works: it unregisters this worker and deletes all
 // caches from the page; the 'message' listener below is a second path.
 
-const CACHE_NAME = 'audited-accounts-shell-v11';
+const CACHE_NAME = 'audited-accounts-shell-v12';
 const FONT_CACHE_NAME = 'audited-accounts-fonts-v2';
 // The one file that MUST be cached for the worker to be worth installing.
 const SHELL_PAGE = './index.html';
@@ -130,7 +130,14 @@ function handleNavigation_(event) {
   // network refresh runs in the background and replaces the cached shell for
   // the next launch. This makes PWA reopen/reload instant in weak-signal
   // areas while still keeping the app shell current when online.
-  const refresh = fetch(request)
+  // SPEED FIX: this used to re-download the whole ~700 KB shell on EVERY
+  // launch, right alongside the data request on a cold/slow connection.
+  // 'no-cache' makes it a conditional request: when index.html hasn't
+  // changed the server answers 304 and nothing big crosses the wire, but a
+  // new deploy is still picked up for the next launch. Built from the shell
+  // URL (not the navigation request) so a cache-busting ?query can't make
+  // the revalidation miss.
+  const refresh = fetch(SHELL_PAGE, { cache: 'no-cache' })
     .then((response) => {
       if (response && response.ok && response.type === 'basic') {
         const copy = response.clone();

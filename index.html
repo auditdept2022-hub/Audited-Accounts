@@ -8481,7 +8481,7 @@
   // fails fast instead of leaving a blank skeleton on screen for up to
   // 90 seconds, but still long enough to ride out an ordinary quick
   // network hiccup.
-  const COLD_BOOT_TIMEOUT_MS = 12000;
+  const COLD_BOOT_TIMEOUT_MS = 20000; // was 12000: a real Apps Script cold start routinely takes 10-20s, so 12s aborted it and the retry restarted the wait
   async function fetchJson_(url, timeoutMs){
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs || FETCH_TIMEOUT_MS);

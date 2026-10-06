@@ -6901,10 +6901,24 @@
     API_URL = val;
     document.getElementById('setupPanel').style.display = 'none';
     document.getElementById('dashPanel').style.display = 'block';
-    await resolveInitialSheet_();
-    await loadOutbox_();
-    updateSyncUI();
-    loadData();
+    document.getElementById('connStatus').textContent = 'Connecting…';
+    document.getElementById('tableBody').innerHTML = skeletonHtml(6);
+
+    // Never hold the visible app behind listSheets() during a first connect.
+    // The backend may be cold, but the shell should become interactive now.
+    // resolveInitialSheet_ has a short timeout and can fall back to any
+    // previously cached branch list; loadData then handles the real data
+    // request and its cold-start retry policy underneath the UI.
+    (async () => {
+      await resolveInitialSheet_();
+      await loadOutbox_();
+      updateSyncUI();
+      await loadData();
+      if(outbox.length) syncOutbox();
+      schedulePrefetch_();
+      syncActivityLog_();
+      if(activityOutbox_.length) syncActivityOutbox_();
+    })();
   }
 
   // Apps Script Web Apps issue a 302 redirect on every request. Browsers
@@ -7004,7 +7018,11 @@
   // a 5-10x reduction for a list of customer records. Older browsers
   // without DecompressionStream simply don't send `gz=1` and get the
   // plain JSON they always got — fully backward compatible.
-  const GZIP_TRANSPORT_SUPPORTED = typeof DecompressionStream !== 'undefined';
+  // Keep the transport plain JSON by default. Apps Script deployments can be on an older revision
+  // while the browser shell is newer; using gz=1 in that mixed-version window can make a
+  // perfectly valid list response incompatible with the client. The cache still keeps the
+  // local copy compressed where supported, so this only makes the live API path conservative.
+  const GZIP_TRANSPORT_SUPPORTED = false;
 
   async function gunzipBase64ToJson_(b64){
     const binStr = atob(b64);
@@ -10146,8 +10164,16 @@
     // unchanged, the cached rows are already authoritative for that version.
     // If there is no connection, skip even that request and stay fully
     // offline — never make an offline branch switch wait for a fetch timeout.
-    if(paintedFromCache){
-      if(manualOfflineMode_ || !isOnline_()){
+    if(paintedFromCache && customers.length > 0){
+      // Do not trust navigator.onLine before this app has ever received a
+      // real server response. Some browsers/WebViews report false even
+      // while HTTPS requests work, and treating that hint as authoritative
+      // here creates a deadlock: cached data is shown, no request is made,
+      // hasRealConnResult_ never becomes true, and the app can remain stale
+      // until the user forces a reload. Manual Offline is the only hard
+      // gate before the first real result; otherwise make one real version
+      // request and let its outcome establish connectivity.
+      if(manualOfflineMode_ || (hasRealConnResult_ && !isOnline_())){
         document.getElementById('connStatus').textContent = 'Offline — showing saved data';
         hideStaleDataBanner_();
         updateSyncUI();
@@ -12883,11 +12909,43 @@
     document.getElementById('connStatus').textContent = 'Connecting…';
     document.getElementById('tableBody').innerHTML = skeletonHtml(6);
     (async () => {
-      await resolveInitialSheet_();
-      await loadOutbox_();
-      await loadActivityOutbox_();
-      updateSyncUI();
-      await loadData();
+      // COLD-START FIX: never make a returning user wait for Apps Script
+      // before showing the branch they already used. Resolve the branch
+      // entirely from local state first; only ask the server for listSheets
+      // when this device genuinely has no saved branch/profile list.
+      let bootSheet = null;
+      try{
+        const saved = localStorage.getItem(currentSheetKey_());
+        if(saved && saved.trim()) bootSheet = saved.trim();
+      }catch(e){}
+      if(!bootSheet){
+        const cachedSheets = loadSheetsCache_();
+        if(cachedSheets && Array.isArray(cachedSheets.sheets) && cachedSheets.sheets.length){
+          bootSheet = cachedSheets.sheets[0];
+        }
+      }
+      if(bootSheet){
+        currentSheet = bootSheet;
+        saveCurrentSheet_();
+        updateActiveProfileLabel_();
+        // Load the durable branch snapshot BEFORE touching the network.
+        // loadData() will paint it immediately and then do only a cheap
+        // version check; the Apps Script cold start therefore happens
+        // behind an already-usable screen.
+        await loadOutbox_();
+        await loadActivityOutbox_();
+        updateSyncUI();
+        await loadData();
+      }else{
+        // First-ever install / cleared storage: there is no local branch
+        // to paint, so this is the one case where listSheets must wake the
+        // Apps Script instance. The shell is already visible above.
+        await resolveInitialSheet_();
+        await loadOutbox_();
+        await loadActivityOutbox_();
+        updateSyncUI();
+        await loadData();
+      }
       if(outbox.length) syncOutbox();
       schedulePrefetch_();
       syncActivityLog_(); // pull the shared log so this device is caught up from first paint

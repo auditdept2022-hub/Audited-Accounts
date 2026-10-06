@@ -37,8 +37,8 @@
 // (hamburger menu) still works: it unregisters this worker and deletes all
 // caches from the page; the 'message' listener below is a second path.
 
-const CACHE_NAME = 'audited-accounts-shell-v5';
-const FONT_CACHE_NAME = 'audited-accounts-fonts-v1';
+const CACHE_NAME = 'audited-accounts-shell-v6';
+const FONT_CACHE_NAME = 'audited-accounts-fonts-v2';
 const NAV_NETWORK_TIMEOUT_MS = 3000;
 
 // The one file that MUST be cached for the worker to be worth installing.
@@ -71,7 +71,7 @@ self.addEventListener('message', (event) => {
   const type = event.data && event.data.type;
   if (type === 'CLEAR_ALL') {
     event.waitUntil(
-      caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n))))
+      caches.keys().then((names) => Promise.all(names.filter((n) => n.startsWith('audited-accounts-')).map((n) => caches.delete(n))))
     );
   } else if (type === 'SKIP_WAITING') {
     self.skipWaiting();
@@ -105,7 +105,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((names) =>
       Promise.all(
         names
-          .filter((name) => name !== CACHE_NAME && name !== FONT_CACHE_NAME)
+          .filter((name) => name.startsWith('audited-accounts-') && name !== CACHE_NAME && name !== FONT_CACHE_NAME)
           .map((name) => caches.delete(name))
       )
     ).then(() => self.clients.claim())

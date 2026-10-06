@@ -4035,21 +4035,27 @@
       // exactly what the server has whenever there's real uncertainty.
       let result;
       try{
+        const deleteSpecs = rows.map(r => {
+          const c = customers.find(x => x.row === r);
+          return { row: r, expect: c ? { customer: c.customer, engineNo: c.engineNo } : null };
+        });
         result = await runBatched_(
-          rows, 'batchDeleteCustomer', 'rows',
-          r => r,
-          'deleteCustomer', r => ({ row: r }),
+          deleteSpecs, 'batchDeleteCustomer', 'rows',
+          spec => spec,
+          'deleteCustomer', spec => ({ row: spec.row, expect: spec.expect }),
           rows.length, 0,
-          r => rowNameByRow.get(r),
+          spec => rowNameByRow.get(spec.row),
           null,
           text => { btn.textContent = text.replace('Importing', 'Deleting').replace('saved', 'deleted'); }
         );
-        if(result && !result.failed){
+        const failedSpecs = result.failedItems || [];
+        const failedRows = failedSpecs.map(s => s.row);
+        if(result && !result.failed && !(result.needsReload)){
           // Single pass instead of one applyConfirmedDelete_/filter/save
           // call per row — matters once the selection gets into the
           // hundreds, since each of those would otherwise re-scan and
           // re-persist the whole (still-large) customers array on its own.
-          const failedRowSet = new Set(result.failedItems || []);
+          const failedRowSet = new Set(failedRows);
           const succeededRowSet = new Set(rows.filter(r => !failedRowSet.has(r)));
           customers = customers.filter(c => !succeededRowSet.has(c.row));
           customers.forEach(c => { if(failedRowSet.has(c.row)) delete c._pendingDelete; });
@@ -4078,7 +4084,7 @@
       selectedRows.clear();
       render();
 
-      const failedRowSet = new Set(result.failedItems);
+      const failedRowSet = new Set((result.failedItems || []).map(s => s.row));
       const succeededRows = rows.filter(r => !failedRowSet.has(r));
       const doneNames = succeededRows.map(r => rowNameByRow.get(r));
       const failedNames = result.failedLabels;
@@ -4586,15 +4592,52 @@
     }
   }
 
+  // Journaled persistence for the outbox. localStorage writes are atomic one
+  // key at a time, but a crash/tab kill can still happen between two writes.
+  // Keep a pending journal copy until the primary copy is known to be written;
+  // on boot the journal wins. This closes the dangerous window where an edit
+  // was optimistically applied in memory but disappeared after a crash.
+  function outboxJournalKey_(){ return outboxKey_() + ':journal'; }
+
   function saveOutbox_(){
-    setStorageCritical_(outboxKey_(), JSON.stringify(outbox), 'your latest change');
+    const primaryKey = outboxKey_();
+    const journalKey = outboxJournalKey_();
+    const value = JSON.stringify(outbox);
+    if(!setStorageCritical_(journalKey, value, 'your latest change')){
+      throw new Error('This device could not safely store the queued change. Free some browser/device storage and try again.');
+    }
+    if(!setStorageCritical_(primaryKey, value, 'your latest change')){
+      // Leave the journal intact so a reload can recover the queued change.
+      throw new Error('This device could not safely store the queued change. Free some browser/device storage and try again.');
+    }
+    try{ localStorage.removeItem(journalKey); }catch(e){}
+    return true;
   }
 
   function loadOutbox_(){
     try{
-      const raw = localStorage.getItem(outboxKey_());
-      outbox = raw ? JSON.parse(raw) : [];
-    }catch(e){ outbox = []; }
+      const primaryKey = outboxKey_();
+      const journalKey = outboxJournalKey_();
+      const journal = localStorage.getItem(journalKey);
+      const raw = journal || localStorage.getItem(primaryKey);
+      if(!raw){ outbox = []; return; }
+      const parsed = JSON.parse(raw);
+      if(!Array.isArray(parsed)) throw new Error('Outbox is not an array');
+      outbox = parsed;
+      // Repair the primary copy if we recovered from the journal.
+      if(journal){
+        try{ localStorage.setItem(primaryKey, journal); localStorage.removeItem(journalKey); }catch(e){}
+      }
+    }catch(e){
+      // Never silently turn a corrupt outbox into an empty queue. Preserve
+      // the raw data under a recovery key so it can be diagnosed/recovered.
+      try{
+        const raw = localStorage.getItem(outboxJournalKey_()) || localStorage.getItem(outboxKey_());
+        if(raw) localStorage.setItem(outboxKey_()+':recovery', raw);
+      }catch(e2){}
+      outbox = [];
+      toast('Queued changes could not be read safely. Your recovery copy was kept on this device.');
+    }
   }
 
   function genId_(){ return 'o' + Date.now() + Math.random().toString(36).slice(2, 8); }
@@ -6687,9 +6730,26 @@
       while(true){
         if(control && control.cancelled) return;
         try{
-          await apiCallJson_(batchAction, payload);
-          succeeded += chunk.length;
-          done += chunk.length;
+          const data = await apiCallJson_(batchAction, payload);
+          const failedIndexes = Array.isArray(data && data.failedIndexes) ? data.failedIndexes : [];
+          if(failedIndexes.length){
+            const failedSet = new Set(failedIndexes.map(Number));
+            chunk.forEach((item, i) => {
+              if(failedSet.has(i)){
+                failed++;
+                failedItems.push(item);
+                if(getLabel && failedLabels.length < FAILED_LABELS_CAP){
+                  try{ failedLabels.push(getLabel(item) || 'row ' + item.row); }catch(e){}
+                }
+              } else {
+                succeeded++;
+              }
+              done++;
+            });
+          } else {
+            succeeded += chunk.length;
+            done += chunk.length;
+          }
           reportProgress();
           return;
         }catch(err){
@@ -8498,44 +8558,51 @@
     if(item.kind === 'update'){
       const mergeable = findMergeableUpdate_(item);
       if(mergeable){
+        const backup = JSON.parse(JSON.stringify(mergeable));
         Object.assign(mergeable.fields, item.fields);
         mergeable.changedKeys = Array.from(new Set(
           (mergeable.changedKeys || Object.keys(mergeable.fields))
             .concat(item.changedKeys || Object.keys(item.fields))
         ));
         mergeable.customerName = item.customerName || mergeable.customerName;
-        // Keep the EARLIEST snapshot values (the true baseline before any
-        // of the coalesced taps) — only fill in keys this item introduces
-        // that the merge target wasn't already tracking, so drift
-        // detection at sync time still compares against reality.
         if(item.snapshot){
           mergeable.snapshot = mergeable.snapshot || {};
           Object.keys(item.snapshot).forEach(k => {
             if(!(k in mergeable.snapshot)) mergeable.snapshot[k] = item.snapshot[k];
           });
         }
+        try{
+          saveOutbox_();
+        }catch(err){
+          Object.keys(mergeable).forEach(k => delete mergeable[k]);
+          Object.assign(mergeable, backup);
+          throw err;
+        }
         applyOptimisticUpdate_(item);
         render();
-        saveOutbox_();
         updateSyncUI();
+        syncOutbox();
         return { queued: true, merged: true };
       }
+    }
+
+    // Persist the durable intent BEFORE applying it optimistically. If storage
+    // is unavailable, the user gets an error and the in-memory UI is untouched.
+    // If the browser crashes after this point, boot replays the persisted outbox.
+    outbox.push(item);
+    try{
+      saveOutbox_();
+    }catch(err){
+      outbox.pop();
+      throw err;
     }
 
     if(item.kind === 'create') applyOptimisticCreate_(item);
     else if(item.kind === 'update') applyOptimisticUpdate_(item);
     else if(item.kind === 'delete') applyOptimisticDelete_(item);
     render();
-
-    outbox.push(item);
-    saveOutbox_();
     updateSyncUI();
-
-    // Fire-and-forget: don't await this. syncOutbox() checks
-    // navigator.onLine and isSyncing itself, so calling it here
-    // unconditionally is safe whether we're online or not right now.
     syncOutbox();
-
     return { queued: true };
   }
 
@@ -8591,7 +8658,7 @@
       return { row: data.row, deduped: !!data._deduped };
     }
     if(item.kind === 'delete'){
-      const data = await apiCallJson_('deleteCustomer', { row: item.row, opId: item.id });
+      const data = await apiCallJson_('deleteCustomer', { row: item.row, expect: item.expect || null, opId: item.id });
       return { row: item.row, deduped: !!(data && data._deduped) };
     }
   }
@@ -12144,7 +12211,7 @@
 
     try{
       const snapshotForUndo = c ? Object.assign({}, c) : null;
-      const item = { id: genId_(), kind: 'delete', row: activeRow, status: 'pending', customerName: c ? c.customer : null };
+      const item = { id: genId_(), kind: 'delete', row: activeRow, expect: c ? { customer: c.customer, engineNo: c.engineNo } : null, status: 'pending', customerName: c ? c.customer : null };
       await queueOrSend_(item);
       toast('Customer deleted — syncing…');
       logActivity_('success', 'Customer deleted', label + ' removed from "' + currentSheet + '".', null, undefined, snapshotForUndo ? {

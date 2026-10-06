@@ -7038,7 +7038,7 @@
   // with its own res.json() (no timeout, raw parse errors).
   function fetchCustomerList_(sheetName, timeoutMs){
     const gzParam = GZIP_TRANSPORT_SUPPORTED ? '&gz=1' : '';
-    return fetchJsonRetry_(API_URL + '?action=list&sheet=' + encodeURIComponent(sheetName) + gzParam + '&_=' + Date.now(), timeoutMs);
+    return fetchJsonRetry_(API_URL + '?action=list&sheet=' + encodeURIComponent(sheetName) + gzParam + '&_=' + Date.now(), timeoutMs, true);
   }
 
   // PERFORMANCE: the cheap counterpart to fetchCustomerList_ above. The
@@ -7050,7 +7050,7 @@
   // not free) list fetch — see the 'listVersion' action in the Apps
   // Script backend.
   function fetchListVersion_(sheetName){
-    return fetchJsonRetry_(API_URL + '?action=listVersion&sheet=' + encodeURIComponent(sheetName) + '&_=' + Date.now());
+    return fetchJsonRetry_(API_URL + '?action=listVersion&sheet=' + encodeURIComponent(sheetName) + '&_=' + Date.now(), undefined, true);
   }
 
   // ---- Branch profiles: menu, switch, create, rename, delete ----------
@@ -7685,6 +7685,7 @@
     // still finish in the background, but it can no longer be considered
     // authoritative for the newly selected branch.
     ++loadGeneration;
+    abortInflightReads_(); // free the load lock now so the new branch's load starts immediately
     currentSheet = name;
     saveCurrentSheet_();
 
@@ -8482,13 +8483,26 @@
   // 90 seconds, but still long enough to ride out an ordinary quick
   // network hiccup.
   const COLD_BOOT_TIMEOUT_MS = 20000; // was 12000: a real Apps Script cold start routinely takes 10-20s, so 12s aborted it and the retry restarted the wait
-  async function fetchJson_(url, timeoutMs){
+  // STUCK-ON-SWITCH FIX: list/version reads are registered here so switching
+  // branches can cancel them at once. Before, the new branch's load was queued
+  // behind the old branch's in-flight request (up to the full timeout, longer
+  // on a cold start) and the screen sat on "No saved copy for this branch yet
+  // — connecting…" until that old request finally gave up.
+  const inflightReadAborts_ = new Set();
+  function abortInflightReads_(){
+    inflightReadAborts_.forEach(c => { c.__ours = true; try{ c.abort(); }catch(e){} });
+    inflightReadAborts_.clear();
+  }
+  async function fetchJson_(url, timeoutMs, trackAbort){
     const controller = new AbortController();
+    if(trackAbort) inflightReadAborts_.add(controller);
     const timer = setTimeout(() => controller.abort(), timeoutMs || FETCH_TIMEOUT_MS);
     let res;
     try{
       res = await fetch(url, { cache: 'no-store', signal: controller.signal });
     } catch(fetchErr){
+      inflightReadAborts_.delete(controller);
+      if(controller.__ours){ clearTimeout(timer); throw fetchErr; } // cancelled by a branch switch — not a connection failure
       // AUTO-OFFLINE FIX: this is a genuine failure to reach the server
       // at all (network unreachable, DNS, or our own timeout firing) —
       // exactly the "not transmitting" case. Mark it before rethrowing
@@ -8498,7 +8512,8 @@
       throw fetchErr;
     }
     clearTimeout(timer);
-    const text = await res.text();
+    let text;
+    try{ text = await res.text(); } finally { inflightReadAborts_.delete(controller); }
     let data;
     try{
       data = JSON.parse(text);
@@ -8546,14 +8561,14 @@
   //     then the Apps Script instance is usually warm, so that retry is
   //     fast, instead of silently waiting through a second full timeout
   //     they can't see.
-  async function fetchJsonRetry_(url, timeoutMs){
+  async function fetchJsonRetry_(url, timeoutMs, trackAbort){
     try{
-      return await fetchJson_(url, timeoutMs);
+      return await fetchJson_(url, timeoutMs, trackAbort);
     }catch(err){
       if(err && err.name === 'AbortError') throw err; // timeout — don't pile on another wait
       if(!isConnectionError_(err)) throw err; // a real application error — retrying won't change it
       await new Promise(r => setTimeout(r, 400));
-      return fetchJson_(url, timeoutMs);
+      return fetchJson_(url, timeoutMs, trackAbort);
     }
   }
 

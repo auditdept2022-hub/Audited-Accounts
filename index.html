@@ -7038,7 +7038,10 @@
   // with its own res.json() (no timeout, raw parse errors).
   function fetchCustomerList_(sheetName, timeoutMs){
     const gzParam = GZIP_TRANSPORT_SUPPORTED ? '&gz=1' : '';
-    return fetchJsonRetry_(API_URL + '?action=list&sheet=' + encodeURIComponent(sheetName) + gzParam + '&_=' + Date.now(), timeoutMs, true);
+    // Full customer reads intentionally bypass the Apps Script CacheService
+    // so a branch that was empty when cached cannot keep returning an empty
+    // list after data was added directly in Google Sheets.
+    return fetchJsonRetry_(API_URL + '?action=list&sheet=' + encodeURIComponent(sheetName) + gzParam + '&fresh=1&_=' + Date.now(), timeoutMs, true);
   }
 
   // PERFORMANCE: the cheap counterpart to fetchCustomerList_ above. The
@@ -10179,7 +10182,7 @@
     // unchanged, the cached rows are already authoritative for that version.
     // If there is no connection, skip even that request and stay fully
     // offline — never make an offline branch switch wait for a fetch timeout.
-    if(paintedFromCache && cachedSnapshot){
+    if(paintedFromCache && cachedSnapshot && cachedSnapshot.customers.length > 0){
       // Do not trust navigator.onLine before this app has ever received a
       // real server response. Some browsers/WebViews report false even
       // while HTTPS requests work, and treating that hint as authoritative
@@ -10300,7 +10303,12 @@
         version: (typeof data.version === 'number' ? data.version : null),
         ts: Date.now()
       });
-      if(freshHash !== lastListHash){
+      // IMPORTANT: a successful sync must paint the list even when the
+      // hash happens to match. This can occur after a branch switch, a
+      // stale DOM/skeleton, or a previous render failure: the data is
+      // already in memory but the customer cards are not on screen.
+      const listNeedsPaint_ = !document.querySelector('#tableBody .rec');
+      if(freshHash !== lastListHash || customers.length === 0 || listNeedsPaint_){
         lastListHash = freshHash;
         customers = fresh;
         reapplyOutbox_(); // keep still-unsynced offline edits visible on top of the fresh server data
@@ -11413,7 +11421,8 @@
   // swapping or moving individual row elements here is always safe — it
   // never orphans an event listener.
   function patchTableBody_(container, filtered, parts, sigs){
-    const existing = new Map();
+    try{
+      const existing = new Map();
     Array.from(container.children).forEach(el => {
       const r = Number(el.dataset.row);
       if(!isNaN(r) && !existing.has(r)){
@@ -11473,7 +11482,15 @@
 
     // Anything left in `existing` is a row that's no longer in the
     // filtered/live list at all — remove its element.
-    existing.forEach(el => el.remove());
+      existing.forEach(el => el.remove());
+    }catch(err){
+      // DOM reconciliation is only an optimization. If a browser/WebView
+      // rejects an insert/replace operation, never leave a successfully
+      // loaded dataset invisible. Fall back to the original full paint.
+      console.warn('List DOM patch failed; falling back to full paint:', err);
+      container.innerHTML = parts.join('');
+      Array.from(container.children).forEach((el, i) => { el.__aaSig = sigs[i]; });
+    }
   }
 
   // ---- Progressive row rendering (large-branch performance) -------------

@@ -6,11 +6,10 @@
 // itself keeps its own offline copy + outbox in localStorage.
 //
 // STRATEGY
-//  - Page navigation (the HTML): NETWORK-FIRST so an edit to index.html shows
-//    on the very next load. If the network is slow (> NAV_NETWORK_TIMEOUT_MS)
-//    or fails, the cached shell is served instantly instead of a blank
-//    screen; the real fetch keeps running and refreshes the cache for next
-//    time. Works with query strings (?_refresh=..., ?utm=..) when offline.
+//  - Page navigation (the HTML): OFFLINE-FIRST / stale-while-revalidate.
+//    A cached shell is returned immediately; a network refresh updates the
+//    cached shell in the background for the next launch. This avoids making
+//    every PWA reopen wait on a weak/cold connection.
 //  - Manifest / icons: CACHE-FIRST (instant), refreshed in the background.
 //  - Google Fonts (CSS + font files): STALE-WHILE-REVALIDATE in their own
 //    cache, so the app keeps its look when offline.
@@ -37,10 +36,8 @@
 // (hamburger menu) still works: it unregisters this worker and deletes all
 // caches from the page; the 'message' listener below is a second path.
 
-const CACHE_NAME = 'audited-accounts-shell-v6';
+const CACHE_NAME = 'audited-accounts-shell-v7';
 const FONT_CACHE_NAME = 'audited-accounts-fonts-v2';
-const NAV_NETWORK_TIMEOUT_MS = 3000;
-
 // The one file that MUST be cached for the worker to be worth installing.
 const SHELL_PAGE = './index.html';
 // Best-effort extras (a missing one must never break install).
@@ -125,7 +122,12 @@ async function cachedShell_(request) {
 function handleNavigation_(event) {
   const request = event.request;
 
-  const networkPromise = fetch(request)
+  // OFFLINE-FIRST NAVIGATION: once the shell exists, return it immediately
+  // instead of waiting up to NAV_NETWORK_TIMEOUT_MS for the network. The
+  // network refresh runs in the background and replaces the cached shell for
+  // the next launch. This makes PWA reopen/reload instant in weak-signal
+  // areas while still keeping the app shell current when online.
+  const refresh = fetch(request)
     .then((response) => {
       if (response && response.ok && response.type === 'basic') {
         const copy = response.clone();
@@ -138,28 +140,13 @@ function handleNavigation_(event) {
     })
     .catch(() => null);
 
-  // Let the background refresh finish even after we've answered from cache.
-  event.waitUntil(networkPromise);
+  event.waitUntil(refresh);
 
   return (async () => {
     const cached = await cachedShell_(request);
-
-    // Nothing cached yet (very first visit): no fallback exists, so wait for
-    // the real network answer.
-    if (!cached) {
-      const first = await networkPromise;
-      return first || Response.error();
-    }
-
-    // Cached shell available: give the network a short window to win.
-    let timer;
-    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(null), NAV_NETWORK_TIMEOUT_MS); });
-    const winner = await Promise.race([networkPromise, timeout]);
-    clearTimeout(timer);
-
-    // Network answered with something usable -> fresh shell. Otherwise
-    // (timeout, offline, server error) -> instant cached shell.
-    return (winner && winner.ok) ? winner : cached;
+    if (cached) return cached;
+    const first = await refresh;
+    return first || Response.error();
   })();
 }
 

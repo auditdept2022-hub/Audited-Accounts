@@ -2477,13 +2477,25 @@
   function activityOutboxKey_(){ return 'aa_activity_outbox_v1:' + API_URL; }
 
   function saveActivityOutbox_(){
-    setStorageCritical_(activityOutboxKey_(), JSON.stringify(activityOutbox_), 'your activity log entry');
+    const value = JSON.stringify(activityOutbox_);
+    setStorageCritical_(activityOutboxKey_(), value, 'your activity log entry');
+    // Secondary durable copy. Activity entries are already mirrored to the
+    // server when online, but this prevents a local activity queue from
+    // disappearing if browser storage pressure evicts localStorage offline.
+    void offlinePut_('activity-outbox|' + API_URL, { version: 1, ts: Date.now(), entries: JSON.parse(value) });
   }
 
-  function loadActivityOutbox_(){
+  async function loadActivityOutbox_(){
     try{
+      const durable = await offlineGet_('activity-outbox|' + API_URL);
+      if(durable && Array.isArray(durable.entries)){
+        activityOutbox_ = durable.entries;
+        try{ localStorage.setItem(activityOutboxKey_(), JSON.stringify(activityOutbox_)); }catch(e){}
+        return;
+      }
       const raw = localStorage.getItem(activityOutboxKey_());
       activityOutbox_ = raw ? JSON.parse(raw) : [];
+      await offlinePut_('activity-outbox|' + API_URL, { version: 1, ts: Date.now(), entries: activityOutbox_ });
     }catch(e){ activityOutbox_ = []; }
   }
 
@@ -4599,38 +4611,52 @@
   // was optimistically applied in memory but disappeared after a crash.
   function outboxJournalKey_(){ return outboxKey_() + ':journal'; }
 
-  function saveOutbox_(){
+  async function saveOutbox_(){
     const primaryKey = outboxKey_();
     const journalKey = outboxJournalKey_();
     const value = JSON.stringify(outbox);
-    if(!setStorageCritical_(journalKey, value, 'your latest change')){
+
+    // IDB is the durable primary. Await the transaction before allowing the
+    // UI action to complete, so a sudden app/tab close cannot race a pending
+    // local write. localStorage remains a compatibility/recovery mirror.
+    const durable = await offlinePut_(offlineOutboxKey_(), {
+      version: 2, ts: Date.now(), outbox: JSON.parse(value)
+    });
+    if(!durable && !setStorageCritical_(journalKey, value, 'your latest change')){
       throw new Error('This device could not safely store the queued change. Free some browser/device storage and try again.');
     }
     if(!setStorageCritical_(primaryKey, value, 'your latest change')){
-      // Leave the journal intact so a reload can recover the queued change.
-      throw new Error('This device could not safely store the queued change. Free some browser/device storage and try again.');
+      if(!durable) throw new Error('This device could not safely store the queued change. Free some browser/device storage and try again.');
     }
     try{ localStorage.removeItem(journalKey); }catch(e){}
     return true;
   }
 
-  function loadOutbox_(){
+  async function loadOutbox_(){
     try{
       const primaryKey = outboxKey_();
       const journalKey = outboxJournalKey_();
+      const durable = await offlineGet_(offlineOutboxKey_());
       const journal = localStorage.getItem(journalKey);
       const raw = journal || localStorage.getItem(primaryKey);
+
+      if(durable && Array.isArray(durable.outbox)){
+        outbox = durable.outbox;
+        // If localStorage has a newer journal than IDB, prefer the journal;
+        // otherwise rehydrate the fast mirror from durable storage.
+        if(!journal){
+          try{ localStorage.setItem(primaryKey, JSON.stringify(outbox)); }catch(e){}
+        }
+        return;
+      }
       if(!raw){ outbox = []; return; }
       const parsed = JSON.parse(raw);
       if(!Array.isArray(parsed)) throw new Error('Outbox is not an array');
       outbox = parsed;
-      // Repair the primary copy if we recovered from the journal.
-      if(journal){
-        try{ localStorage.setItem(primaryKey, journal); localStorage.removeItem(journalKey); }catch(e){}
-      }
+      // Migrate an older localStorage-only outbox into durable storage.
+      await offlinePut_(offlineOutboxKey_(), { version: 2, ts: Date.now(), outbox: parsed });
+      if(journal){ try{ localStorage.setItem(primaryKey, journal); localStorage.removeItem(journalKey); }catch(e){} }
     }catch(e){
-      // Never silently turn a corrupt outbox into an empty queue. Preserve
-      // the raw data under a recovery key so it can be diagnosed/recovered.
       try{
         const raw = localStorage.getItem(outboxJournalKey_()) || localStorage.getItem(outboxKey_());
         if(raw) localStorage.setItem(outboxKey_()+':recovery', raw);
@@ -6294,7 +6320,7 @@
 
     try{
       await apiCallJsonRetryOnce_('clearBranchData', { name: branchName });
-      purgeBranchLocalState_(branchName);
+      await purgeBranchLocalState_(branchName);
     }catch(err){
       // Distinguish a genuine "no connection at all" (TypeError) from a
       // timeout/cold-start (AbortError) or a bad/HTML response
@@ -6871,7 +6897,7 @@
     document.getElementById('setupPanel').style.display = 'none';
     document.getElementById('dashPanel').style.display = 'block';
     await resolveInitialSheet_();
-    loadOutbox_();
+    await loadOutbox_();
     updateSyncUI();
     loadData();
   }
@@ -7290,7 +7316,7 @@
     if(!ok) return;
 
     outbox = [];
-    saveOutbox_();
+    await saveOutbox_();
     isSyncing = false;
     lastSyncPausedKey_ = null;
     syncColdStartRetries = 0;
@@ -7649,7 +7675,7 @@
     rowHtmlCache.clear();
     resetRenderLimit_(); // fresh branch = start painting its list from the top
     document.getElementById('tableBody').innerHTML = '';
-    loadOutbox_();
+    await loadOutbox_();
     updateSyncUI();
     toast('Switched to ' + name + '.');
     // Not awaited: loadData() paints instantly from this branch's local
@@ -7755,7 +7781,7 @@
     if(!await appConfirm('Delete branch "' + name + '" and all its data? This cannot be undone.', { danger: true, title: 'Delete branch?', confirmText: 'Delete' })) return;
     try{
       await apiCallJsonRetryOnce_('deleteSheet', { name });
-      purgeBranchLocalState_(name);
+      await purgeBranchLocalState_(name);
       toast('Deleted "' + name + '".');
       logActivity_('success', 'Branch deleted', '"' + name + '" and all its records were removed.');
       if(currentSheet === name){
@@ -7765,7 +7791,7 @@
         customers = [];
         lastListHash = null;
         lastKnownVersion_ = null;
-        loadOutbox_();
+        await loadOutbox_();
         updateSyncUI();
         await loadData();
       }
@@ -7794,12 +7820,13 @@
   // every fresh fetch), making the clear look like it silently undid
   // itself — and worse, those queued writes would eventually sync back
   // to the sheet too.
-  function purgeBranchLocalState_(name){
+  async function purgeBranchLocalState_(name){
     const outboxKeyForName = 'aa_outbox_v1:' + API_URL + ':' + name;
     try{ localStorage.removeItem(outboxKeyForName); }catch(e){ /* noop */ }
+    await offlineDelete_('outbox|' + API_URL + '|' + name);
     if(currentSheet === name){
       outbox = [];
-      saveOutbox_();
+      await saveOutbox_();
     }
     // A deleted branch shouldn't linger in the pinned list.
     const pinned = loadPinnedBranches_();
@@ -7835,7 +7862,7 @@
     try{
       const result = await apiCallJsonRetryOnce_('clearBranchData', { name });
       const n = (result && typeof result.cleared === 'number') ? result.cleared : null;
-      purgeBranchLocalState_(name);
+      await purgeBranchLocalState_(name);
       toast('Cleared ' + (n !== null ? n + ' record' + (n === 1 ? '' : 's') : 'all records') + ' from "' + name + '".');
       logActivity_('success', 'Cleared branch data', 'Removed ' + (n !== null ? n + ' record' + (n === 1 ? '' : 's') : 'all records') + ' from "' + name + '".', null, undefined, undoSnapshots ? {
         kind: 'recreateMany',
@@ -8572,7 +8599,7 @@
           });
         }
         try{
-          saveOutbox_();
+          await saveOutbox_();
         }catch(err){
           Object.keys(mergeable).forEach(k => delete mergeable[k]);
           Object.assign(mergeable, backup);
@@ -8591,7 +8618,7 @@
     // If the browser crashes after this point, boot replays the persisted outbox.
     outbox.push(item);
     try{
-      saveOutbox_();
+      await saveOutbox_();
     }catch(err){
       outbox.pop();
       throw err;
@@ -9422,7 +9449,7 @@
     await flushUpdateBatch_();
 
     outbox = remaining;
-    saveOutbox_();
+    await saveOutbox_();
     isSyncing = false;
 
     // FEATURE: batch progress ("12/20") + a clear, explicit completion
@@ -9637,7 +9664,7 @@
     if(opt) opt.classList.add('is-checked');
   });
 
-  function applyConflictPick(id){
+  async function applyConflictPick(id){
     const item = outbox.find(o => o.id === id);
     if(!item) return;
     const snap = item.serverSnapshot;
@@ -9674,7 +9701,7 @@
     // the sync that follows falls back to a real reload for this item
     // instead of trusting a local patch that might be stale.
     item._needsFreshPull = true;
-    saveOutbox_();
+    await saveOutbox_();
     updateSyncUI();
     syncOutbox();
     toast('Saved your picks — syncing…');
@@ -9695,7 +9722,7 @@
       outbox = outbox.filter(o => o.id !== id);
       const c = customers.find(x => x.row === item.row);
       if(c){ delete c._pending; delete c._pendingDelete; }
-      saveOutbox_();
+      await saveOutbox_();
       updateSyncUI();
       await loadData();
       toast('Discarded your offline change.');
@@ -9706,7 +9733,7 @@
       // cause (e.g. redeployed the script, freed up a column name).
       item.status = 'pending';
       delete item.error;
-      saveOutbox_();
+      await saveOutbox_();
       updateSyncUI();
       syncOutbox();
       logActivity_('info', 'Retrying queued change', label + ': retrying the save that previously failed.');
@@ -9719,7 +9746,7 @@
       item.status = 'pending';
       delete item.snapshot;
       delete item.serverSnapshot;
-      saveOutbox_();
+      await saveOutbox_();
       updateSyncUI();
       syncOutbox();
       logActivity_('info', 'Sync conflict resolved', label + ': kept your offline change, overwriting what was on the sheet.');
@@ -9776,32 +9803,105 @@
   // on boot, while a fresh copy is quietly fetched in the background and
   // swapped in the moment it arrives. The only thing that still waits on
   // the network is the very first load on a given browser/device.
-  const LOCAL_CACHE_PREFIX = 'aa_cache_v1:';
+  const LOCAL_CACHE_PREFIX = 'aa_cache_v2:';
+
+  // Durable offline store. localStorage remains as a fast synchronous L1
+  // cache, but IndexedDB is the L2 store for anything we must be able to
+  // recover after browser storage pressure, PWA eviction, or a crash.
+  // The old app relied on localStorage alone, which is not strong enough for
+  // an app whose primary job is preserving field edits with no signal.
+  const OFFLINE_DB_NAME = 'audited-accounts-offline-v2';
+  const OFFLINE_DB_VERSION = 1;
+  let offlineDbPromise_ = null;
+
+  function offlineDb_(){
+    if(offlineDbPromise_) return offlineDbPromise_;
+    if(!('indexedDB' in window)) return Promise.resolve(null);
+    offlineDbPromise_ = new Promise((resolve, reject) => {
+      const req = indexedDB.open(OFFLINE_DB_NAME, OFFLINE_DB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if(!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error || new Error('IndexedDB unavailable'));
+      req.onblocked = () => reject(new Error('IndexedDB upgrade blocked'));
+    }).catch(err => {
+      console.warn('Offline store unavailable:', err);
+      return null;
+    });
+    return offlineDbPromise_;
+  }
+
+  async function offlineGet_(key){
+    const db = await offlineDb_();
+    if(!db) return null;
+    return new Promise(resolve => {
+      try{
+        const tx = db.transaction('kv', 'readonly');
+        const req = tx.objectStore('kv').get(key);
+        req.onsuccess = () => resolve(req.result == null ? null : req.result);
+        req.onerror = () => resolve(null);
+      }catch(e){ resolve(null); }
+    });
+  }
+
+  async function offlinePut_(key, value){
+    const db = await offlineDb_();
+    if(!db) return false;
+    return new Promise(resolve => {
+      try{
+        const tx = db.transaction('kv', 'readwrite');
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = tx.onabort = () => resolve(false);
+        tx.objectStore('kv').put(value, key);
+      }catch(e){ resolve(false); }
+    });
+  }
+
+  async function offlineDelete_(key){
+    const db = await offlineDb_();
+    if(!db) return false;
+    return new Promise(resolve => {
+      try{
+        const tx = db.transaction('kv', 'readwrite');
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = tx.onabort = () => resolve(false);
+        tx.objectStore('kv').delete(key);
+      }catch(e){ resolve(false); }
+    });
+  }
+
+  function offlineCacheKey_(sheet){
+    return 'cache|' + API_URL + '|' + (sheet || currentSheet);
+  }
+  function offlineOutboxKey_(){
+    return 'outbox|' + API_URL + '|' + currentSheet;
+  }
 
   function localCacheKey_(sheet){
     return LOCAL_CACHE_PREFIX + API_URL + ':' + (sheet || currentSheet);
   }
 
-  // `sheet` defaults to currentSheet everywhere it's omitted (every
-  // existing call site), but accepting it explicitly lets loadData()
-  // safely cache a late/stale response under the branch it actually
-  // belongs to without touching the branch currently on screen.
-  function saveLocalCache_(list, sheet){
+  // `sheet` defaults to currentSheet everywhere it's omitted. `version` is
+  // the server branch version that produced this snapshot. That lets a
+  // branch switch paint instantly and then do a tiny version check instead
+  // of downloading the entire ledger again when nothing changed.
+  function saveLocalCache_(list, sheet, version){
+    const record = { customers: list, ts: Date.now(), version: (typeof version === 'number' ? version : (typeof lastKnownVersion_ === 'number' ? lastKnownVersion_ : null)) };
     const key = localCacheKey_(sheet);
-    const value = JSON.stringify({ customers: list, ts: Date.now() });
+    const value = JSON.stringify(record);
     try{
       localStorage.setItem(key, value);
     }catch(e){
-      // Purely a speed optimization, not a source of truth, so this never
-      // warns the user — but still worth one cleanup+retry attempt (see
-      // freeUpCacheSpace_ above) so a pile-up of OTHER branches' cached
-      // lists doesn't leave the branch actually on screen with no cache at
-      // all, which would otherwise turn every reopen into a full network
-      // wait instead of an instant paint.
       if(isQuotaError_(e) && freeUpCacheSpace_()){
-        try{ localStorage.setItem(key, value); }catch(e2){ /* still full — fine, falls back to network */ }
+        try{ localStorage.setItem(key, value); }catch(e2){}
       }
     }
+    // Do not await this from paint paths: IDB is the durable backup, not a
+    // reason to make a branch switch wait. Critical writes use the same DB
+    // but await their transaction before reporting success.
+    void offlinePut_(offlineCacheKey_(sheet), record);
   }
 
   function loadLocalCache_(sheet){
@@ -9814,6 +9914,16 @@
     }catch(e){
       return null;
     }
+  }
+
+  async function loadDurableLocalCache_(sheet){
+    const fast = loadLocalCache_(sheet);
+    if(fast) return fast;
+    const durable = await offlineGet_(offlineCacheKey_(sheet));
+    if(!durable || !Array.isArray(durable.customers)) return null;
+    // Rehydrate L1 so subsequent switches are synchronous/instant.
+    try{ localStorage.setItem(localCacheKey_(sheet), JSON.stringify(durable)); }catch(e){}
+    return durable;
   }
 
   // ---- Background branch prefetch ----------------------------------------
@@ -9863,7 +9973,7 @@
       if(cached && (Date.now() - cached.ts) < PREFETCH_STALE_MS) continue; // already warm enough
       try{
         const data = await fetchCustomerList_(name);
-        saveLocalCache_(data.customers || [], name);
+        saveLocalCache_(data.customers || [], name, (data && typeof data.version === 'number') ? data.version : null);
       }catch(e){
         // best-effort — this branch just stays as slow as it was before
       }
@@ -9962,23 +10072,60 @@
     // tab). The user sees their ledger right away instead of a skeleton,
     // while the real fetch below runs quietly underneath it.
     let paintedFromCache = false;
+    let cachedSnapshot = null;
     if(customers.length === 0){
-      const cached = loadLocalCache_(sheetAtStart);
-      if(cached && cached.customers.length){
-        customers = cached.customers;
+      cachedSnapshot = await loadDurableLocalCache_(sheetAtStart);
+      if(cachedSnapshot && cachedSnapshot.customers.length){
+        customers = cachedSnapshot.customers;
+        reapplyOutbox_();
         paintedFromCache = true;
         render();
         document.getElementById('connStatus').textContent =
-          'showing cached data from ' + new Date(cached.ts).toLocaleTimeString() + ' — syncing…';
-        // Hard-to-miss version of the same message, sitting right above
-        // the account list (see the .stale-data-banner comment near its
-        // CSS) — the small header text above is easy to miss, especially
-        // on a slow connection where this can sit visible for 10-30+
-        // seconds (most common on the Android/PWA-Builder-packaged app,
-        // which pays a fresh connection-setup cost on every reopen).
-        // Cleared by hideStaleDataBanner_() the moment the real fetch
-        // below actually lands, succeeds or fails.
-        showStaleDataBanner_(cached.ts);
+          'Showing saved data from ' + new Date(cachedSnapshot.ts).toLocaleTimeString();
+        showStaleDataBanner_(cachedSnapshot.ts);
+      }
+    }
+
+    // FAST SWITCH PATH: once a branch has a snapshot with the server version
+    // that produced it, a branch switch does NOT need to download the whole
+    // ledger again. One tiny version request is enough. If the version is
+    // unchanged, the cached rows are already authoritative for that version.
+    // If there is no connection, skip even that request and stay fully
+    // offline — never make an offline branch switch wait for a fetch timeout.
+    if(paintedFromCache){
+      if(manualOfflineMode_ || !isOnline_()){
+        document.getElementById('connStatus').textContent = 'Offline — showing saved data';
+        hideStaleDataBanner_();
+        updateSyncUI();
+        return;
+      }
+      if(cachedSnapshot && typeof cachedSnapshot.version === 'number'){
+        try{
+          const versionData = await fetchListVersion_(sheetAtStart);
+          if(sheetAtStart !== currentSheet || myGen !== loadGeneration) return;
+          const remoteVersion = Number(versionData && versionData.version);
+          lastKnownVersion_ = Number.isFinite(remoteVersion) ? remoteVersion : cachedSnapshot.version;
+          lastVersionConfirmedAt_ = Date.now();
+          if(remoteVersion === cachedSnapshot.version){
+            setConnSyncedStatus_();
+            hideStaleDataBanner_();
+            updateSyncUI();
+            return;
+          }
+          document.getElementById('connStatus').textContent = 'New data found — updating…';
+        }catch(versionErr){
+          // If the tiny check cannot reach the backend, the cached data is
+          // still usable. Do not immediately follow it with another full
+          // request; that was the source of the long offline wait.
+          if(isConnectionError_(versionErr) || versionErr.name === 'AbortError'){
+            document.getElementById('connStatus').textContent = 'Offline/unstable connection — showing saved data';
+            hideStaleDataBanner_();
+            updateSyncUI();
+            return;
+          }
+          // Application/config errors still deserve the normal full fetch
+          // path so the real error can be surfaced.
+        }
       }
     }
     // SLOW-LOADING FIX: true only when there's genuinely nothing to show
@@ -10025,7 +10172,7 @@
       // that branch is opened — but never paint it over whatever the
       // user is looking at now.
       if(sheetAtStart !== currentSheet || myGen !== loadGeneration){
-        saveLocalCache_(fresh, sheetAtStart);
+        saveLocalCache_(fresh, sheetAtStart, (data && typeof data.version === 'number') ? data.version : null);
         hideStaleDataBanner_(); // this fetch is for a branch that's no longer on screen — whatever's showing now (a newer load, or nothing) owns the banner instead
         return;
       }
@@ -10048,7 +10195,7 @@
         lastListHash = freshHash;
         customers = fresh;
         reapplyOutbox_(); // keep still-unsynced offline edits visible on top of the fresh server data
-        saveLocalCache_(customers, sheetAtStart);
+        saveLocalCache_(customers, sheetAtStart, (data && typeof data.version === 'number') ? data.version : null);
         render();
       }
       setConnSyncedStatus_();
@@ -12677,8 +12824,8 @@
     document.getElementById('tableBody').innerHTML = skeletonHtml(6);
     (async () => {
       await resolveInitialSheet_();
-      loadOutbox_();
-      loadActivityOutbox_();
+      await loadOutbox_();
+      await loadActivityOutbox_();
       updateSyncUI();
       await loadData();
       if(outbox.length) syncOutbox();

@@ -9877,7 +9877,7 @@
   // recover after browser storage pressure, PWA eviction, or a crash.
   // The old app relied on localStorage alone, which is not strong enough for
   // an app whose primary job is preserving field edits with no signal.
-  const OFFLINE_DB_NAME = 'audited-accounts-offline-v2';
+  const OFFLINE_DB_NAME = 'audited-accounts-offline-v3';
   const OFFLINE_DB_VERSION = 1;
   let offlineDbPromise_ = null;
 
@@ -10179,7 +10179,7 @@
     // unchanged, the cached rows are already authoritative for that version.
     // If there is no connection, skip even that request and stay fully
     // offline — never make an offline branch switch wait for a fetch timeout.
-    if(paintedFromCache && customers.length > 0){
+    if(paintedFromCache && cachedSnapshot){
       // Do not trust navigator.onLine before this app has ever received a
       // real server response. Some browsers/WebViews report false even
       // while HTTPS requests work, and treating that hint as authoritative
@@ -10213,8 +10213,9 @@
           // still usable. Do not immediately follow it with another full
           // request; that was the source of the long offline wait.
           if(isConnectionError_(versionErr) || versionErr.name === 'AbortError'){
-            document.getElementById('connStatus').textContent = 'Offline/unstable connection — showing saved data';
-            hideStaleDataBanner_();
+            document.getElementById('connStatus').textContent =
+              'Offline/unstable connection — showing saved data';
+            if(cachedSnapshot.ts) showStaleDataBanner_(cachedSnapshot.ts);
             updateSyncUI();
             return;
           }
@@ -10259,7 +10260,14 @@
       // full FETCH_TIMEOUT_MS — a slow-but-working cold start shouldn't
       // be cut off just because the first attempt was quick to fail.
       const data = await fetchCustomerList_(sheetAtStart, coldBootNoCache ? COLD_BOOT_TIMEOUT_MS : undefined);
-      const fresh = data.customers || [];
+
+      // DATA-INTEGRITY GUARD: never interpret a malformed/partial Apps Script
+      // response as an empty ledger. Empty is valid only when the server
+      // explicitly returns a customers array.
+      if(!data || !Array.isArray(data.customers)){
+        throw new Error('Server returned an invalid account-list response. The saved local copy was kept.');
+      }
+      const fresh = data.customers;
 
       // The branch on screen (or a newer load) may have moved on while
       // this was in flight. Still cache the result under the branch it
@@ -10366,7 +10374,7 @@
       // `customers.length > 0` is accurate across the whole retry chain:
       // switching branches clears `customers` immediately, so a non-empty
       // list here can only mean data for THIS sheet is genuinely visible.
-      const hasDataOnScreen = customers.length > 0;
+      const hasDataOnScreen = customers.length > 0 || !!cachedSnapshot;
       // Both branches below are TERMINAL for this call (no further retry
       // queued), so the stale-data banner comes down either way — leaving
       // it up here would mean it just sits there forever since nothing
@@ -10376,7 +10384,7 @@
       hideStaleDataBanner_();
       if(hasDataOnScreen){
         document.getElementById('connStatus').textContent =
-          'Sync failed — showing cached data. (' + friendly + ')';
+          'Sync failed — showing saved data. (' + friendly + ')';
         // Deliberately NO toast here. The person already has correct,
         // usable data on screen; a popup error for "the background
         // refresh is still waiting on a slow Apps Script cold start" is

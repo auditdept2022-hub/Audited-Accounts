@@ -36,7 +36,7 @@
 // (hamburger menu) still works: it unregisters this worker and deletes all
 // caches from the page; the 'message' listener below is a second path.
 
-const CACHE_NAME = 'audited-accounts-shell-v9';
+const CACHE_NAME = 'audited-accounts-shell-v10';
 const FONT_CACHE_NAME = 'audited-accounts-fonts-v2';
 // The one file that MUST be cached for the worker to be worth installing.
 const SHELL_PAGE = './index.html';
@@ -85,6 +85,9 @@ self.addEventListener('install', (event) => {
     if (!page || !page.ok) throw new Error('Shell fetch failed: ' + (page && page.status));
     await cache.put(SHELL_PAGE, page.clone());
     await cache.put('./', page.clone()); // same document, served for the bare folder URL
+    try {
+      await cache.put(new Request(new URL(SHELL_PAGE, self.location.href).href), page.clone());
+    } catch (err) { /* relative keys above are sufficient on normal hosts */ }
 
     // Best-effort: never let a missing icon block the install.
     await Promise.all(OPTIONAL_FILES.map(async (file) => {

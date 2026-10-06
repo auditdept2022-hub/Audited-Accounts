@@ -15,7 +15,7 @@
 //    cache, so the app keeps its look when offline.
 //  - Everything else same-origin: network, falling back to cache.
 //
-// v5 FIXES (vs v4)
+// v6 FIXES (vs v5)
 //  1. Install no longer fails if one icon is missing. cache.addAll() is
 //     all-or-nothing: a single 404 (e.g. icon-512.png not uploaded) made the
 //     whole install fail => NO service worker => NO offline at all. Now only
@@ -36,7 +36,7 @@
 // (hamburger menu) still works: it unregisters this worker and deletes all
 // caches from the page; the 'message' listener below is a second path.
 
-const CACHE_NAME = 'audited-accounts-shell-v12';
+const CACHE_NAME = 'audited-accounts-shell-v13';
 const FONT_CACHE_NAME = 'audited-accounts-fonts-v2';
 // The one file that MUST be cached for the worker to be worth installing.
 const SHELL_PAGE = './index.html';

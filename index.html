@@ -4430,7 +4430,7 @@
   // trust navigator.onLine for exactly that reason (see isConnectionError_'s
   // note and pushActivityToServer_'s note above) — this was the one place
   // that still did, and because nearly every reconnect path
-  // (autoRefreshTick_, keepWarmPing_, the visibility-change reconnect) is
+  // (autoRefreshTick_, probeConnection_, the visibility-change reconnect) is
   // gated behind isOnline_(), a stuck-false navigator.onLine created a
   // deadlock: the app believed it was offline, so it never attempted a
   // real request that could have proven otherwise — and the manual
@@ -4444,7 +4444,7 @@
   // had no fast way back to "Online" — every regular poller
   // (autoRefreshTick_, activityPollTick_) intentionally stays paused while
   // isOnline_() is false (so a real outage doesn't get hammered with
-  // requests), and the only thing left probing was keepWarmPing_() on its
+  // requests), and the only thing left probing is probeConnection_() on its
   // plain 6-minute interval. That meant a single transient hiccup (one
   // slow cold start, one dropped request) could leave the app reading
   // "Offline" for up to 6 minutes even though the connection came right
@@ -4461,7 +4461,7 @@
   // even on a genuinely fine connection): markConnResult_ used to flip
   // realConnFailing_ (and therefore the header dot + the manual toggle's
   // visual state, since both read isOnline_()) on the very FIRST failed
-  // request. The 6-minute keep-warm ping is the main thing feeding this —
+  // request. The 6-minute reconnect probe is the main thing feeding this —
   // it's capped at PING_TIMEOUT_MS, and Apps Script's own cold-start
   // window (see the top-of-file note in Code.gs) is documented as 5-30s,
   // so a perfectly normal cold start could easily outrun a short ping
@@ -4487,7 +4487,7 @@
       // flipping the UI on unconfirmed evidence or sitting silent until
       // the next scheduled 6-minute ping.
       if(connFailStreak_ === 0 || manualOfflineMode_ || !API_URL || document.hidden) return;
-      keepWarmPing_(); // its own success/failure feeds back through markConnResult_ below
+      probeConnection_(); // its own success/failure feeds back through markConnResult_ below
     }, reconnectProbeDelayMs_);
   }
   function clearReconnectProbe_(){
@@ -4527,6 +4527,29 @@
     if(hasRealConnResult_) return !realConnFailing_;
     return navigator.onLine;
   }
+  // A reconnect probe is used ONLY after a real request failed (or when the
+  // app becomes visible again). It is not a periodic server-cache maintenance request and
+  // it never loads customer data. This keeps connectivity recovery cheap
+  // without creating the constant background traffic that made the app
+  // feel like it was forever syncing.
+  const RECONNECT_PROBE_TIMEOUT_MS = 12000;
+  function probeConnection_(){
+    if(!API_URL || manualOfflineMode_ || document.hidden) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), RECONNECT_PROBE_TIMEOUT_MS);
+    fetch(API_URL + '?action=ping&_=' + Date.now(), { cache:'no-store', signal: controller.signal })
+      .then(res => {
+        clearTimeout(timer);
+        const ok = !!(res && res.ok);
+        markConnResult_(ok);
+        if(ok && !document.hidden && !isLoading && !document.getElementById('overlay').classList.contains('open')){
+          setTimeout(() => {
+            if(!isLoading && isOnline_()) loadData({ background:true });
+          }, 50);
+        }
+      })
+      .catch(() => { clearTimeout(timer); markConnResult_(false); });
+  }
   function toggleManualOffline_(){
     manualOfflineMode_ = !manualOfflineMode_;
     try{ localStorage.setItem('aa_manualOffline_v1', manualOfflineMode_ ? '1' : '0'); }catch(e){}
@@ -4537,8 +4560,7 @@
       // kick off a real sync pass, guarded the same way everywhere else
       // in the app guards it (don't yank data out from under an open
       // modal or an already-running load).
-      keepWarmPing_();
-      if(!isLoading && !document.getElementById('overlay').classList.contains('open')){
+        if(!isLoading && !document.getElementById('overlay').classList.contains('open')){
         loadData();
       }
       if(outbox.length) syncOutbox();
@@ -6938,7 +6960,6 @@
       updateSyncUI();
       await loadData();
       if(outbox.length) syncOutbox();
-      schedulePrefetch_();
       syncActivityLog_();
       if(activityOutbox_.length) syncActivityOutbox_();
     })();
@@ -7061,7 +7082,7 @@
   // with its own res.json() (no timeout, raw parse errors).
   // SPEED FIX: this used to send fresh=1 on EVERY read, which makes the
   // backend skip its list cache and re-read the whole sheet (all columns +
-  // row backgrounds) each time. That threw away the cache the keep-warm
+  // row backgrounds) each time. That threw away the cache the server-cache maintenance
   // trigger primes every few minutes, so every launch / refresh / branch
   // switch paid a full sheet read on top of any cold start. Now only an
   // explicit request (⟳ tap, periodic safety-net reload) sets `fresh`.
@@ -7536,7 +7557,6 @@
     if(cached && cached.sheets.length){
       profilesCache_ = cached.sheets;
       renderProfileList_(profilesCache_);
-      schedulePrefetch_();
     } else if(!isColdStartRetry){
       listEl.innerHTML = '<div class="profile-skeleton"></div><div class="profile-skeleton"></div><div class="profile-skeleton"></div>';
     }
@@ -7557,7 +7577,6 @@
       saveSheetsCache_(profilesCache_);
       if(changed) renderProfileList_(profilesCache_);
       else updateProfileCount_();
-      schedulePrefetch_();
       if(refreshBtn){ refreshBtn.classList.remove('spinning'); refreshBtn.disabled = false; }
     }catch(err){
       // Same reasoning as loadData()'s AbortError branch: a timeout here
@@ -7707,7 +7726,8 @@
     if(searchInput && searchInput.value.trim()) filterProfileList_(searchInput.value);
   }
 
-  async function switchProfile_(name){
+  async function switchProfile_(name, options){
+    options = options || {};
     closeProfileMenu();
     if(name === currentSheet) return;
     if(outbox.length){
@@ -7745,8 +7765,22 @@
     } else {
       customers = [];
       lastListHash = null;
-      lastKnownVersion_ = null;
-      document.getElementById('tableBody').innerHTML = '<div class=\"rec\"><div class=\"empty-note\">No saved copy for this branch yet — connecting…</div></div>';
+      lastKnownVersion_ = (typeof options.knownVersion === 'number') ? options.knownVersion : null;
+      // BRAND-NEW EMPTY BRANCH: we already know this tab was just created
+      // and contains zero customer rows, so do not make a pointless full
+      // list request just to receive `{customers: []}`. Keep an explicit
+      // versioned empty snapshot locally. The normal version poll will later
+      // notice the first real write (local or another device) and only then
+      // trigger the full list load.
+      if(options.skipInitialSync){
+        branchViewCache_.set(name, { customers: [], hash: listHash_([]), version: lastKnownVersion_, ts: Date.now() });
+        saveLocalCache_([], name, lastKnownVersion_);
+        document.getElementById('tableBody').innerHTML = '';
+        render();
+        document.getElementById('connStatus').textContent = 'New branch — ready for data';
+      } else {
+        document.getElementById('tableBody').innerHTML = '<div class=\"rec\"><div class=\"empty-note\">No saved data yet — checking for data…</div></div>';
+      }
     }
     // Row numbers are only unique WITHIN a branch — row 5 on the branch
     // we're leaving and row 5 on the branch we're entering describe two
@@ -7773,7 +7807,7 @@
     // and swaps in fresh data — or, if you flip branches again quickly,
     // is safely discarded by the generation/sheet guard inside loadData()
     // instead of racing onto the screen.
-    loadData();
+    if(!options.skipInitialSync) loadData();
   }
 
   // Creates a brand-new, blank branch tab with the standard set of
@@ -7789,7 +7823,7 @@
     const name = input.value.trim();
     if(!name){ toast('Enter a branch name first.'); return; }
     try{
-      await apiCallJsonRetryOnce_('createSheet', { name });
+      const createResult_ = await apiCallJsonRetryOnce_('createSheet', { name });
       input.value = '';
       toast('Branch "' + name + '" created.');
       logActivity_('success', 'Branch created', '"' + name + '" was added.');
@@ -7807,7 +7841,7 @@
         profilesCache_ = profilesCache_.concat([name]);
         saveSheetsCache_(profilesCache_);
       }
-      await switchProfile_(name);
+      await switchProfile_(name, { skipInitialSync: true, knownVersion: Number(createResult_ && createResult_.version) || 0 });
       openProfileMenu();
       renderProfileList_(profilesCache_);
       loadProfiles_();
@@ -9896,6 +9930,8 @@
   // the lock a newer load now holds.
   let loadStartedAt_ = 0;
   let loadToken_ = 0;
+  let refreshUiTimer_ = null;
+  const REFRESH_UI_MAX_MS = 8000;
   // Longest legitimate single load: version check (20s) + full list (30s) +
   // slack. Anything older than this is a leaked lock, not a slow request.
   const LOAD_WATCHDOG_MS = 75 * 1000;
@@ -10062,88 +10098,6 @@
     return durable;
   }
 
-  // ---- Background branch prefetch ----------------------------------------
-  //
-  // Switching branches used to always cost a live Apps Script round trip
-  // the first time a branch was opened in a session — on a 150-300 row
-  // branch, combined with an Apps Script cold start, that's exactly the
-  // "varies a lot, sometimes just errors out" behavior. loadData() already
-  // paints instantly from a branch's LOCAL cache (loadLocalCache_) when one
-  // exists; this is what keeps that cache warm for branches you HAVEN'T
-  // opened yet this session, so by the time you actually switch to one,
-  // there's already something to paint instantly instead of a blank
-  // skeleton waiting on the network.
-  //
-  // Deliberately conservative so it never competes with something the
-  // person is actually waiting on:
-  //   - runs at most once per page load (prefetchedOnce_)
-  //   - skips a branch entirely if its local cache is already fresh
-  //     (PREFETCH_STALE_MS) — most sessions won't need to fetch anything
-  //   - fetches one branch at a time with a pause between each, and bails
-  //     immediately the moment a real load starts (isLoading), so it never
-  //     queues up behind/ahead of something the user is looking at
-  //   - every failure is silently swallowed — this is a pure speed
-  //     optimization; a branch that fails to prefetch just falls back to
-  //     the exact same on-demand fetch it would have done anyway
-  // REPEATED-LOADING FIX: this used to re-download EVERY other branch on
-  // every launch (anything whose saved copy was older than 3 minutes —
-  // i.e. practically all of them), one full sheet read each, right behind
-  // the load the person was actually waiting on. With a couple dozen
-  // branches that is a constant stream of "loading again and again" and it
-  // competes with real requests on a cold Apps Script instance. A branch
-  // that already has a saved copy does NOT need prefetching at all: opening
-  // it paints that copy instantly and does a tiny version check. Only
-  // branches with NOTHING saved benefit, so only those are fetched — capped,
-  // and skipped on data-saver / very slow connections.
-  const PREFETCH_MAX_BRANCHES = 6;
-  const PREFETCH_GAP_MS = 1200;
-  let prefetchedOnce_ = false;
-
-  function schedulePrefetch_(){
-    if(prefetchedOnce_) return;
-    const candidates = (profilesCache_ && profilesCache_.length)
-      ? profilesCache_
-      : ((loadSheetsCache_() || {}).sheets || []);
-    if(!candidates.length) return; // nothing known yet — try again next time schedulePrefetch_ is called (e.g. once the ☰ menu has loaded the list)
-    // Data-saver or a 2G/slow-2G link: never spend the person's bandwidth on
-    // branches they haven't asked for.
-    try{
-      const conn = navigator.connection;
-      if(conn && (conn.saveData || /(^|-)2g$/.test(String(conn.effectiveType || '')))){ prefetchedOnce_ = true; return; }
-    }catch(e){ /* no Network Information API — carry on */ }
-    prefetchedOnce_ = true;
-    // Wait until the screen is settled and the browser is idle, so this can
-    // never compete with the branch on screen finishing its first paint/sync.
-    const start = () => prefetchOtherBranches_(candidates);
-    setTimeout(() => {
-      if('requestIdleCallback' in window) requestIdleCallback(start, { timeout: 8000 });
-      else start();
-    }, 6000);
-  }
-
-  async function prefetchOtherBranches_(names){
-    let fetched = 0;
-    for(const name of names){
-      if(fetched >= PREFETCH_MAX_BRANCHES) return;
-      if(name === currentSheet) continue;
-      // Stop the moment anything real is happening, or the tab is hidden /
-      // the app is offline — this is a pure nice-to-have.
-      if(isLoading || document.hidden || isSyncing || !isOnline_()) return;
-      if(loadLocalCache_(name)) continue; // already has a saved copy — opening it is instant, no prefetch needed
-      try{
-        const data = await fetchCustomerList_(name);
-        if(Array.isArray(data && data.customers)){
-          saveLocalCache_(data.customers, name, (typeof data.version === 'number') ? data.version : null);
-        }
-        fetched++;
-      }catch(e){
-        // best-effort — this branch just stays as slow as it was before
-        return; // a failure usually means the server is struggling; don't pile on
-      }
-      await new Promise(r => setTimeout(r, PREFETCH_GAP_MS));
-    }
-  }
-
   // isColdStartRetryCount is INTERNAL ONLY — set by loadData itself when
   // it re-calls itself after a timeout (see the AbortError branch in the
   // catch block below). Every real call site in this file calls
@@ -10243,14 +10197,20 @@
     const myLoadToken = ++loadToken_;
     // Background refreshes stay silent. The button only spins for a load the
     // person asked for, or when there is genuinely nothing on screen yet.
-    const quietLoad = !!opts.background && customers.length > 0;
+    const quietLoad = !!opts.background;
+    if(refreshUiTimer_){ clearTimeout(refreshUiTimer_); refreshUiTimer_ = null; }
     updateRefreshLock_(!quietLoad);
-    // Counts as satisfying the periodic forced-reload safety net (see
-    // AUTO_REFRESH_FORCE_MS below) — any real full list fetch, whatever
-    // triggered it, is just as good at picking up a direct-in-Sheets
-    // formatting change as the dedicated forced tick would have been, so
-    // there's no need to also force a redundant one shortly after.
-    lastForcedReloadAt_ = Date.now();
+    if(!quietLoad){
+      const uiToken_ = myLoadToken;
+      refreshUiTimer_ = setTimeout(() => {
+        if(loadToken_ === uiToken_){
+          updateRefreshLock_(false);
+          const btn_ = document.getElementById('hdrSyncBtn');
+          if(btn_) btn_.title = 'Refresh available — previous check is still finishing in the background';
+        }
+      }, REFRESH_UI_MAX_MS);
+    }
+    // A load that reaches the server confirms the current branch version.
 
     // Captured now, not read again after the await below — if the user
     // switches branches while this request is in flight, currentSheet
@@ -10360,7 +10320,7 @@
     // refresh, retry after a timeout, or a tick that already saw a newer
     // version) skips the cheap version probe and goes to the full list.
     const wantsFullRead_ = !!(opts.fresh || opts.skipVersionCheck);
-    if(paintedFromCache && cachedSnapshot && cachedSnapshot.customers.length > 0){
+    if(paintedFromCache && cachedSnapshot && typeof cachedSnapshot.version === 'number'){
       // Do not trust navigator.onLine before this app has ever received a
       // real server response. Some browsers/WebViews report false even
       // while HTTPS requests work, and treating that hint as authoritative
@@ -10408,8 +10368,13 @@
             updateSyncUI();
             return;
           }
-          // Application/config errors still deserve the normal full fetch
-          // path so the real error can be surfaced.
+          // A server/application error is NOT evidence that the data changed.
+          // Do not turn it into another expensive full list read; preserve the
+          // saved snapshot and surface the error quietly until the next check.
+          document.getElementById('connStatus').textContent =
+            'Showing saved data — update check failed: ' + (versionErr.message || 'unknown error');
+          updateSyncUI();
+          return;
         }
       }
     }
@@ -10451,7 +10416,7 @@
       // be cut off just because the first attempt was quick to fail.
       // `fresh` is only requested for an explicit ⟳ tap / the periodic safety
       // net. Everything else reads through the server's list cache, which the
-      // keep-warm trigger keeps primed and which every write invalidates — so
+      // server-side cache can be primed by the optional maintenance trigger and which every write invalidates — so
       // a normal load no longer pays a full sheet read on Apps Script.
       const data = await fetchCustomerList_(sheetAtStart, coldBootNoCache ? COLD_BOOT_TIMEOUT_MS : undefined, !!opts.fresh);
 
@@ -10635,8 +10600,11 @@
       // already gave the lock away, a newer load may be running now and must
       // not have its lock yanked by a late-finishing ghost.)
       if(loadToken_ === myLoadToken){
+        if(refreshUiTimer_){ clearTimeout(refreshUiTimer_); refreshUiTimer_ = null; }
         isLoading = false;
         updateRefreshLock_(false);
+        const btn_ = document.getElementById('hdrSyncBtn');
+        if(btn_) btn_.title = 'Check for new data';
         if(reloadQueued){
           reloadQueued = false;
           loadData(queuedOpts_); // run the single coalesced follow-up now that the lock is free
@@ -10659,11 +10627,12 @@
   // Wired to the ⟳ button. A plain wrapper around loadData(), but keeping
   // it separate from the auto-refresh/switch-branch call sites makes the
   // intent at each call site explicit.
-  // An explicit ⟳ tap means "show me what is on the sheet right now": it
-  // skips the cheap version probe and reads the live sheet (fresh), so it
-  // also picks up formatting-only changes made directly in Sheets.
+  // An explicit ⟳ tap means "check for changes". It uses the same cheap
+  // version probe as background sync and only downloads the full customer
+  // list when the server version has actually advanced. Use the separate
+  // Force Refresh action when a true cache-bypass is intentionally needed.
   function manualRefresh_(){
-    loadData({ fresh: true, skipVersionCheck: true });
+    loadData({ background: false });
   }
 
   // ---- Force refresh app (clear cache) ---------------------------------
@@ -12930,8 +12899,6 @@
   // backend's list cache TTL (5 minutes — see CACHE_TTL_SECONDS in
   // Code.gs) so this forced fetch reliably lands on a re-read of the
   // live sheet rather than the same stale cached copy.
-  const AUTO_REFRESH_FORCE_MS = 10 * 60 * 1000;
-  let lastForcedReloadAt_ = 0;
   function scheduleAutoRefresh_(){
     setTimeout(autoRefreshTick_, AUTO_REFRESH_MS + Math.round(Math.random() * AUTO_REFRESH_JITTER_MS));
   }
@@ -12956,17 +12923,12 @@
     // is exactly what can starve that struggling request of bandwidth
     // and make the app never quite finish loading. Self-healing from an
     // auto-detected failure is instead handled by ONE lightweight prober
-    // (keepWarmPing_ below — a genuine no-op on the server) rather than
+    // (the reconnect probe below — a genuine no-op on the server) rather than
     // by every poller retrying in parallel.
     if(!isOnline_()) return;
 
-    if(Date.now() - lastForcedReloadAt_ >= AUTO_REFRESH_FORCE_MS){
-      lastForcedReloadAt_ = Date.now();
-      // Silent safety-net: reads the live sheet (fresh) to catch changes the
-      // version counter can't see, without spinning the ⟳ button.
-      loadData({ background: true, fresh: true, skipVersionCheck: true });
-      return;
-    }
+    // No periodic blind full reload: quiet branches perform only a version check.
+    // A full customer-list read happens only after the server version changes.
 
     if(versionCheckInFlight_) return; // previous check is still out there — don't stack another on top of it
 
@@ -12978,91 +12940,48 @@
     // session — this turns "get everything" into "ask one number,
     // confirm nothing changed", which is what actually makes periodic
     // sync feel instant instead of a background pulse of laggy
-    // multi-second fetches. Any failure (offline blip, old backend that
-    // doesn't know this action yet) just falls through to the exact
-    // same full loadData() this always did.
+    // multi-second fetches. If the version probe fails, leave the saved
+    // data alone and try the probe again on the next scheduled tick; do
+    // not punish a quiet branch with an unnecessary full list read.
     if(lastKnownVersion_ !== null){
       versionCheckInFlight_ = true;
       try{
-        const v = await fetchListVersion_(currentSheet);
+        const v = await fetchListVersion_(currentSheet, VERSION_CHECK_TIMEOUT_MS);
         if(typeof v.version === 'number' && v.version === lastKnownVersion_){
           lastVersionConfirmedAt_ = Date.now();
-          // Only touch the status line if it isn't already showing "synced":
-          // rewriting the clock text every tick made the header look like it
-          // was reloading over and over.
           const st_ = document.getElementById('connStatus');
           if(st_ && !/^synced/.test(st_.textContent)) setConnSyncedStatus_();
           return; // confirmed nothing changed server-side — skip the full fetch
         }
+        // The version changed: THIS is the only normal reason to perform
+        // a full background customer-list read.
+        loadData({ background: true, skipVersionCheck: true });
+        return;
       }catch(e){
-        // version check itself failed — fall through to a normal full load
+        // A failed probe is not evidence that the data changed. Keep the
+        // saved snapshot on screen and wait for the next probe/reconnect.
+        return;
       }finally{
         versionCheckInFlight_ = false;
       }
     }
-    // We already know (or couldn't confirm) the version is stale: go straight
-    // to the list instead of having loadData() repeat the same version probe.
+    // Legacy/unknown snapshots have no trusted server version. Do one full
+    // read to establish the version, then all future checks are version-only.
     loadData({ background: true, skipVersionCheck: true });
   }
   scheduleAutoRefresh_();
 
-  // PERFORMANCE FIX: keep-warm ping. Apps Script spins an idle Web App
-  // deployment down after a period of inactivity — the NEXT request
-  // after that is the "cold start" (the 10-30s stall behind "Sync
-  // paused — the request took too long…"). This fires a trivial, no-op
-  // 'ping' request (see doGet's ping branch — it never touches the
-  // spreadsheet, so it's essentially instant on the server) every 6
-  // minutes while the tab is open, visible, and online, purely to keep
-  // an instance warm so the person's NEXT real action (opening the app,
-  // saving an edit) doesn't have to pay the cold-start cost itself.
-  // Silently ignored on failure — this is a best-effort optimization,
-  // never something that should surface an error or retry.
-  // SELF-HEAL FIX: only pauses for the deliberate manual toggle now (was
-  // gated on the full isOnline_(), which also blocked this the moment
-  // realConnFailing_ was auto-detected true — see the matching note on
-  // autoRefreshTick_ above). This ping's own outcome is now fed into
-  // markConnResult_ too, so even on a quiet tab with nothing else to
-  // sync, this becomes a small periodic connectivity probe that can
-  // clear a stuck "Offline" reading on its own, every 6 minutes, with no
-  // action needed from the person.
-  // SLOW-CONNECTION NOTE: capped at PING_TIMEOUT_MS (well under the main
-  // FETCH_TIMEOUT_MS) via AbortController so a single slow attempt can't
-  // sit dangling until the next 6-minute tick fires another on top of
-  // it — this is the ONLY poller allowed to keep probing during an
-  // auto-detected failure (see autoRefreshTick_/activityPollTick_/the
-  // visibilitychange handler, which all stay paused in that state), so
-  // it's kept as cheap and self-limiting as possible on purpose.
-  const KEEP_WARM_MS = 6 * 60 * 1000;
-  // FLAPPING FIX: was 10000. Apps Script's own documented cold-start
-  // window (see the top-of-file note in Code.gs) is 5-30s — a 10s cap on
-  // this "is the connection actually up?" probe meant a perfectly normal
-  // cold start alone could regularly read as a dead connection. Raised to
-  // 20s so a real cold start has room to finish before this ping gives
-  // up; genuine outages still get caught (see connFailStreak_ above,
-  // which now also requires a second confirming failure before the UI
-  // ever shows "Offline").
-  const PING_TIMEOUT_MS = 20000;
-  function keepWarmPing_(){
-    if(!API_URL || document.hidden || manualOfflineMode_) return;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), PING_TIMEOUT_MS);
-    fetch(API_URL + '?action=ping&_=' + Date.now(), { cache: 'no-store', signal: controller.signal })
-      .then(res => { clearTimeout(timer); if(res && res.ok) markConnResult_(true); })
-      .catch(() => { clearTimeout(timer); markConnResult_(false); });
-  }
-  setInterval(keepWarmPing_, KEEP_WARM_MS);
-
   // PERFORMANCE FIX: reopening the app after it's been backgrounded
   // (switching apps, screen off, PWA relaunch) used to do nothing at all
   // until the next AUTO_REFRESH_MS tick — up to 5 minutes later — because
-  // the auto-refresh and keep-warm timers above both bail out early via
+  // the auto-refresh and server-cache maintenance timers above both bail out early via
   // `document.hidden` while the tab isn't visible, and neither one fires
   // the instant it becomes visible again either. That's very likely a big
   // part of "sync feels slow": the person reopens the app, is looking
   // straight at old cached data, and nothing visibly happens for minutes.
   // Fix: the moment the tab becomes visible again after having been
   // hidden for more than VISIBILITY_STALE_MS, immediately fire a
-  // keep-warm ping (starts waking a cold Apps Script instance right away
+  // reconnect probe (starts waking a cold Apps Script instance right away
   // instead of waiting for it to be needed) and kick off a real
   // loadData()/syncOutbox() pass — subject to the exact same guards
   // (isLoading, no modal open) everything else here already respects, so
@@ -13081,15 +13000,12 @@
     // behalf while they've deliberately switched to Offline — reopening
     // the tab/app shouldn't quietly start talking to the network again
     // just because it was backgrounded for a while.
-    // SLOW-CONNECTION NOTE: keepWarmPing_() below always fires regardless
-    // of the auto-detected realConnFailing_ state (it has its own, much
-    // lighter gate — see its comment) since reopening the app is a good
-    // moment for that one cheap probe to notice a failure has cleared.
+    // One cheap probe is enough to re-establish connectivity; it does not
+    // load customer data itself.
     // The heavier loadData()/syncOutbox() calls stay gated on the full
     // isOnline_() though, so a genuinely slow connection doesn't get a
-    // full list refresh piled on top of whatever the keep-warm ping is
+    // full list refresh piled on top of whatever the reconnect probe is
     // still waiting on.
-    keepWarmPing_();
     if(!isOnline_()) return;
     releaseStuckLoad_();
     if(!isLoading && !document.getElementById('overlay').classList.contains('open')){
@@ -13124,7 +13040,7 @@
     // auto-detected), same reasoning as autoRefreshTick_ above — this is
     // a real network request competing for bandwidth, so it backs off
     // while a failure is auto-detected rather than piling on. The
-    // lightweight keepWarmPing_() is what clears that state again.
+    // lightweight probeConnection_() is what clears that state again.
     if(!API_URL || document.hidden || !isOnline_()) return;
     checkActivityVersion_();
   }
@@ -13213,10 +13129,10 @@
         // localStorage, before awaiting anything (opening IndexedDB for the
         // outbox can take a noticeable moment on a phone). loadData() then
         // finds this in branchViewCache_ and does only a cheap version check,
-        // so the Apps Script cold start happens behind a usable screen.
+        // so any Apps Script startup delay happens behind a usable screen.
         try{
           const snap = loadLocalCache_(bootSheet);
-          if(snap && Array.isArray(snap.customers) && snap.customers.length){
+          if(snap && Array.isArray(snap.customers)){
             customers = snap.customers.slice();
             lastListHash = listHash_(customers);
             const snapVersion = (typeof snap.version === 'number') ? snap.version : null;
@@ -13249,7 +13165,6 @@
         await activityOutboxReady2_;
       }
       if(outbox.length) syncOutbox();
-      schedulePrefetch_();
       // Catch the shared log up AFTER the ledger is on screen and settled,
       // and only download it if the server says it changed (one tiny request
       // on a quiet log instead of the whole log on every launch).

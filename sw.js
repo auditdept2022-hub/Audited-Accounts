@@ -36,7 +36,7 @@
 // (hamburger menu) still works: it unregisters this worker and deletes all
 // caches from the page; the 'message' listener below is a second path.
 
-const CACHE_NAME = 'audited-accounts-shell-v10';
+const CACHE_NAME = 'audited-accounts-shell-v11';
 const FONT_CACHE_NAME = 'audited-accounts-fonts-v2';
 // The one file that MUST be cached for the worker to be worth installing.
 const SHELL_PAGE = './index.html';

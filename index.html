@@ -3738,6 +3738,10 @@
   // never accidentally tied to (or inherits problems from) whatever
   // another branch happens to look like right now.
   let currentSheet = null;
+  // First-install bootstrap payload: one Apps Script request returns both the
+  // branch list and the first branch's customers, avoiding two serial cold
+  // starts (listSheets -> list). Consumed once by loadData().
+  let bootstrapSnapshot_ = null;
 
   // ---- Customer color markers ("Select" button on each card) -----------
   //
@@ -7096,17 +7100,17 @@
       if(v && v.trim()){ currentSheet = v.trim(); updateActiveProfileLabel_(); return; }
     }catch(e){ /* ignore, fall through to asking the backend */ }
     try{
-      // SLOW-BOOT FIX: only 12s here (vs the usual 30s FETCH_TIMEOUT_MS)
-      // — this call gates the very first thing the person sees, and
-      // there's already a safe, useful fallback right below (the last
-      // cached branch list) for exactly this case. Better to fall back
-      // quickly and let the background loadData()/prefetch calls catch
-      // up once the server responds, than to make a first-time visitor
-      // wait the full cold-start timeout before seeing anything at all.
-      const data = await apiCallJsonRead_('listSheets', {}, 12000);
-      const sheets = data.sheets || [];
+      // FIRST-BOOT FIX: use one bootstrap request that returns BOTH the
+      // branch list and the first branch's data. The old sequence woke Apps
+      // Script for listSheets and then immediately woke/queried it again for
+      // list, doubling the cold-start pain on a fresh device.
+      const data = await apiCallJsonRead_('bootstrap', {}, 20000);
+      const sheets = Array.isArray(data && data.sheets) ? data.sheets : [];
       saveSheetsCache_(sheets);
-      currentSheet = sheets[0] || null;
+      currentSheet = (data && data.sheet) || sheets[0] || null;
+      if(currentSheet && data && data.snapshot && Array.isArray(data.snapshot.customers)){
+        bootstrapSnapshot_ = data.snapshot;
+      }
     }catch(e){
       // No saved preference AND the network call failed (e.g. first-ever
       // visit happens to be offline) — fall back to whatever branch list
@@ -10143,12 +10147,36 @@
     // while the real fetch below runs quietly underneath it.
     let paintedFromCache = false;
     let cachedSnapshot = null;
+    let skipVersionCheck_ = false;
+    // Consume the first-boot snapshot produced by the single bootstrap
+    // request. This is already a server-authenticated list, so paint it
+    // immediately and skip the second full list request on first install.
+    if(bootstrapSnapshot_ && sheetAtStart === currentSheet && Array.isArray(bootstrapSnapshot_.customers)){
+      cachedSnapshot = bootstrapSnapshot_;
+      customers = bootstrapSnapshot_.customers.slice();
+      lastListHash = listHash_(customers);
+      if(typeof bootstrapSnapshot_.version === 'number') lastKnownVersion_ = bootstrapSnapshot_.version;
+      branchViewCache_.set(sheetAtStart, {
+        customers: customers.slice(),
+        hash: lastListHash,
+        version: (typeof bootstrapSnapshot_.version === 'number' ? bootstrapSnapshot_.version : null),
+        ts: Date.now()
+      });
+      reapplyOutbox_();
+      paintedFromCache = true;
+      bootstrapSnapshot_ = null;
+      skipVersionCheck_ = true;
+      saveLocalCache_(customers, sheetAtStart, (typeof cachedSnapshot.version === 'number' ? cachedSnapshot.version : null));
+      render();
+      document.getElementById('connStatus').textContent = 'Connected — showing current data';
+      hideStaleDataBanner_();
+    }
     // A branch switch may already have restored an in-memory snapshot before
     // this loadData() call began. Treat that exactly like durable cache: the
     // list is already authoritative for its last-known version, so do only a
     // version check and skip the full ledger fetch when nothing changed.
     const memorySnapshot = branchViewCache_.get(sheetAtStart);
-    if(memorySnapshot && Array.isArray(memorySnapshot.customers)){
+    if(!paintedFromCache && memorySnapshot && Array.isArray(memorySnapshot.customers)){
       cachedSnapshot = memorySnapshot;
       customers = memorySnapshot.customers.slice();
       lastListHash = memorySnapshot.hash || listHash_(customers);
@@ -11639,18 +11667,20 @@
       rowHtmlCache.set(c.row, { sig, html });
     }
 
-    // Patch the live DOM in place instead of replacing it wholesale.
-    // Previously this did one `tableBody.innerHTML = parts.join('')` every
-    // render — cheap to build (thanks to rowHtmlCache above) but still a
-    // full teardown/rebuild of every row's actual DOM node on every call,
-    // even the ones whose HTML string didn't change at all. That's what
-    // caused a "flash"/full refresh feel on every sync even when only one
-    // customer actually changed. patchTableBody_ below walks the existing
-    // DOM by row number and only replaces the specific node(s) whose
-    // signature changed, reorders nodes that moved (e.g. after a sort),
-    // removes rows that are gone, and leaves everything else — its exact
-    // DOM node, scroll position, any CSS transition mid-flight — untouched.
-    patchTableBody_(document.getElementById('tableBody'), toRender, parts, sigs);
+    // STABILITY-FIRST RENDER: always paint the computed list deterministically.
+    // The previous keyed DOM reconciler was clever but could leave a blank
+    // table when a skeleton/partial DOM state got out of sync with the row
+    // map. The header counters could still show the correct total while the
+    // cards were invisible — exactly the failure mode users were seeing.
+    // This app normally renders only the first 80 cards, so a direct paint is
+    // cheap and, most importantly, cannot strand valid data in memory.
+    const tableBody = document.getElementById('tableBody');
+    if(tableBody){
+      tableBody.innerHTML = parts.join('');
+      Array.from(tableBody.children).forEach((el, i) => {
+        if(el && el.dataset && el.dataset.row) el.__aaSig = sigs[i];
+      });
+    }
 
     // Checkbox "checked" state is intentionally NOT part of rowSignature_/
     // the per-row HTML cache above (selecting/deselecting shouldn't force

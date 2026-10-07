@@ -9085,6 +9085,7 @@
     const completedOutboxIds = new Set();
     let syncedAny = false;
     let syncedCount = 0; // how many items actually completed this pass — see lastKnownVersion_ bump below
+    let lastVTo_ = null; // exact branch version the backend reported after our last write (vTo)
     let needsFullReload = false; // set true only if an item can't be trusted to patch in locally (see below)
     let hitConnectionError = false;
     let hitConnectionErrorIsTimeout = false;
@@ -9234,6 +9235,7 @@
           continue;
         }
 
+        if(data && typeof data.vTo === 'number') lastVTo_ = data.vTo;
         const results = (data && data.results) || [];
         const byOpId = {};
         results.forEach(r => { if(r && r.opId) byOpId[r.opId] = r; });
@@ -9542,6 +9544,7 @@
         renderSyncList_();
 
         const result = await sendOne_(item);
+        if(result && typeof result.vTo === 'number') lastVTo_ = result.vTo;
 
         if(item.kind === 'create'){
           // Fix up local optimistic row + any later queued items that
@@ -9667,6 +9670,11 @@
     // a full list pull it didn't actually need.
     if(versionConfirmedCurrent && syncedCount && lastKnownVersion_ !== null){
       lastKnownVersion_ += syncedCount;
+      // Remember it for the next app open / branch switch — but ONLY when the
+      // backend's exact vTo agrees with our count (nobody else wrote in
+      // between). Otherwise forget it, so the next open verifies for real.
+      if(lastVTo_ !== null && lastVTo_ === lastKnownVersion_) rememberVersion_(currentSheet, lastKnownVersion_);
+      else forgetVersion_(currentSheet);
       // The version we now believe is current reflects the write(s) we
       // just made ourselves, so it's fresh by definition — the next
       // save moments later (a very common pattern: edit a few fields on
@@ -10222,7 +10230,9 @@
         paintedFromCache = true;
         render();
         document.getElementById('connStatus').textContent =
-          'showing cached data from ' + new Date(cached.ts).toLocaleTimeString() + ' — syncing…';
+          (recallVersion_(sheetAtStart) !== null
+            ? 'showing saved data from ' + new Date(cached.ts).toLocaleTimeString() + ' — checking for changes…'
+            : 'showing cached data from ' + new Date(cached.ts).toLocaleTimeString() + ' — syncing…');
         // Hard-to-miss version of the same message, sitting right above
         // the account list (see the .stale-data-banner comment near its
         // CSS) — the small header text above is easy to miss, especially

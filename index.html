@@ -4421,7 +4421,7 @@
   // request succeeds again.
   let reconnectProbeTimer_ = null;
   let reconnectProbeDelayMs_ = 3000;
-  const RECONNECT_PROBE_MAX_MS = 15000;
+  const RECONNECT_PROBE_MAX_MS = 30000;
   // FLAPPING FIX (header/toggle flipping Online→Offline→Online on its own
   // even on a genuinely fine connection): markConnResult_ used to flip
   // realConnFailing_ (and therefore the header dot + the manual toggle's
@@ -4506,11 +4506,19 @@
       if(!isLoading && !document.getElementById('overlay').classList.contains('open')){
         loadData();
       }
-      if(outbox.length) syncOutbox();
+      if(hasSyncableOutbox_()) syncOutbox();
       toast('Back Online — syncing…');
     } else {
       toast('Switched to Offline — sync paused until you switch back.');
     }
+  }
+  // True only when the queue holds something that can actually be sent.
+  // 'conflict' (waiting for the person's decision) and 'error' (rejected by
+  // the server) items are NOT retried by timers — they would just fail the
+  // same way and cost an Apps Script call every 20s forever. They are still
+  // retried by "Retry now" and by any pass that has real pending work.
+  function hasSyncableOutbox_(){
+    return outbox.some(o => o.status !== 'conflict' && o.status !== 'error');
   }
   let isSyncing = false;
   // Timestamp of the most recent syncOutbox() start — used only as a
@@ -9959,7 +9967,7 @@
   // syncOutbox()/syncActivityOutbox_() above: this timer is what's meant
   // to be the safety net that eventually gets a stuck queue moving again,
   // so it can't be the thing that's disabled by an unreliable flag.
-  setInterval(() => { if(outbox.length) syncOutbox(); }, 20000);
+  setInterval(() => { if(hasSyncableOutbox_()) syncOutbox(); }, 20000);
   setInterval(() => { if(activityOutbox_.length) syncActivityOutbox_(); }, 20000);
 
   let isLoading = false;
@@ -10058,6 +10066,7 @@
   let prefetchedOnce_ = false;
 
   function schedulePrefetch_(){
+    if(!BACKGROUND_POLLING_ENABLED) return; // QUIET-MODE: no background download of every other branch
     if(prefetchedOnce_) return;
     const candidates = (profilesCache_ && profilesCache_.length)
       ? profilesCache_
@@ -12622,6 +12631,16 @@
   // checking more often is still effectively free on a quiet branch — the
   // real cost only shows up when something actually changed, which is
   // exactly when you want the full list pulled sooner rather than later.
+  // QUIET-MODE (fewer Apps Script calls): when false (the default) NOTHING in
+  // the background talks to Apps Script on a timer — no 10s list check, no 20s
+  // activity check, no 6-minute keep-warm ping, no forced 6-minute reload and
+  // no prefetch of the other branches. The app only calls Apps Script when
+  // something actually happens: it opens, you save/queue an edit, you tap
+  // Refresh, you open the activity log, you switch branch, the tab comes back
+  // after being away (ONE tiny version-number check; the full list is only
+  // downloaded if that number moved), or the connection returns. Set to true
+  // to bring the old always-polling behaviour back.
+  const BACKGROUND_POLLING_ENABLED = false;
   const AUTO_REFRESH_MS = 10 * 1000;
   const AUTO_REFRESH_JITTER_MS = 3 * 1000;
   let versionCheckInFlight_ = false;
@@ -12647,10 +12666,17 @@
   const AUTO_REFRESH_FORCE_MS = 6 * 60 * 1000;
   let lastForcedReloadAt_ = 0;
   function scheduleAutoRefresh_(){
+    if(!BACKGROUND_POLLING_ENABLED) return;
     setTimeout(autoRefreshTick_, AUTO_REFRESH_MS + Math.round(Math.random() * AUTO_REFRESH_JITTER_MS));
   }
   async function autoRefreshTick_(){
     scheduleAutoRefresh_(); // always queue the next tick first, regardless of outcome below
+    return checkForChanges_();
+  }
+  // One-shot "did anything change?" check. Called by the (optional) timer
+  // above and by the tab-resume handler below. Costs one tiny version-number
+  // request; the full list is only downloaded when that number moved.
+  async function checkForChanges_(){
     if(!API_URL) return;
     if(isLoading) return;
     if(document.hidden) return;
@@ -12673,7 +12699,7 @@
     // by every poller retrying in parallel.
     if(!isOnline_()) return;
 
-    if(Date.now() - lastForcedReloadAt_ >= AUTO_REFRESH_FORCE_MS){
+    if(BACKGROUND_POLLING_ENABLED && Date.now() - lastForcedReloadAt_ >= AUTO_REFRESH_FORCE_MS){
       lastForcedReloadAt_ = Date.now();
       loadData();
       return;
@@ -12755,7 +12781,7 @@
       .then(res => { clearTimeout(timer); if(res && res.ok) markConnResult_(true); })
       .catch(() => { clearTimeout(timer); markConnResult_(false); });
   }
-  setInterval(keepWarmPing_, KEEP_WARM_MS);
+  if(BACKGROUND_POLLING_ENABLED) setInterval(keepWarmPing_, KEEP_WARM_MS);
 
   // PERFORMANCE FIX: reopening the app after it's been backgrounded
   // (switching apps, screen off, PWA relaunch) used to do nothing at all
@@ -12794,12 +12820,13 @@
     // isOnline_() though, so a genuinely slow connection doesn't get a
     // full list refresh piled on top of whatever the keep-warm ping is
     // still waiting on.
-    keepWarmPing_();
-    if(!isOnline_()) return;
-    if(!isLoading && !document.getElementById('overlay').classList.contains('open')){
-      loadData();
-    }
-    if(outbox.length) syncOutbox();
+    // QUIET-MODE: if the connection is known-bad, one cheap probe to see
+    // whether it has recovered; otherwise ONE version-number check (full list
+    // only if something changed) plus the activity-log version check.
+    if(!isOnline_()){ keepWarmPing_(); return; }
+    checkForChanges_();
+    checkActivityVersion_();
+    if(hasSyncableOutbox_()) syncOutbox();
   });
 
   // Light background poll for the shared activity log, so a change made
@@ -12820,6 +12847,7 @@
   const ACTIVITY_POLL_MS = 20 * 1000;
   const ACTIVITY_POLL_JITTER_MS = 4 * 1000;
   function scheduleActivityPoll_(){
+    if(!BACKGROUND_POLLING_ENABLED) return;
     setTimeout(activityPollTick_, ACTIVITY_POLL_MS + Math.round(Math.random() * ACTIVITY_POLL_JITTER_MS));
   }
   function activityPollTick_(){

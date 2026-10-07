@@ -5888,7 +5888,20 @@
         let anyHeaderFound = false;
         matrices.forEach(matrix => {
           let { records, headerFound } = detectHeaderAndParseRows_(matrix);
-          if(!headerFound || !records.length){
+          // An STA ledger (Customer + Beg Bal + Adv + TTL columns) ALSO
+          // satisfies the flat-table detector (customer + engine + MA +
+          // Beg Bal + "Adv" alias), so the flat parser used to win and
+          // only ever read Adv — it has no alias for the TTL column, so
+          // Due This Month / Penalty Due were never imported, and the
+          // "BNEW - OD" section headers were read as customers. If the
+          // STA layout is present WITH a TTL column and the flat parse
+          // found no Due This Month at all, use the STA parser instead.
+          let preferSta = false;
+          if(headerFound && records.length && !records.some(rec => rec.dueThisMonth !== undefined)){
+            const sta = findAccountsHeaderRow_(matrix);
+            if(sta && sta.cols.ttl1 !== undefined) preferSta = true;
+          }
+          if(preferSta || !headerFound || !records.length){
             // Shape 1 didn't work (or found no data) — try the STA-ledger
             // shape as a fallback before giving up on this sheet.
             const staRecords = parseAccountsMatrix_(matrix);
@@ -6348,8 +6361,11 @@
         else if(cols.term === undefined && /^(term|terms)$/i.test(norm)) cols.term = idx;
         else if(cols.ma === undefined && /^(ma|monthly\s*amortization)$/i.test(norm)) cols.ma = idx;
         else if(cols.begBal === undefined && /beg.*bal|beginning.*bal|begin.*balance/i.test(norm)) cols.begBal = idx;
-        else if(/^ttl(?:\s*\d+)?$/i.test(norm) || /^total$/i.test(norm)) ttlIdxs.push(idx);
-        else if(cols.adv === undefined && /^(adv|advance|payment\s*\(?adv\)?$)/i.test(norm)) cols.adv = idx;
+        else if(/^(?:ttl|total|tot)\.?(?:\s*(?:due|amt|amount))?(?:\s*\d+)?$/i.test(norm)) ttlIdxs.push(idx);
+        // Adv column: "Adv", "Adv.", "Advance", "Advances", "Adv Payment",
+        // "Payment (Adv)", "Advance Pmt", ... — any short header whose
+        // words are only adv/advance/payment/pmt/pay/amt.
+        else if(cols.adv === undefined && /^(?:adv(?:ance)?s?\.?|(?:adv(?:ance)?s?\.?\s*(?:payment|pmt|pay|amt|amount)s?)|(?:(?:payment|pmt|pay)s?\s*\(?\s*adv(?:ance)?s?\.?\s*\)?))$/i.test(norm)) cols.adv = idx;
       });
       // Needs a customer column, a beginning-balance column, and the
       // "Adv" column — specific enough to this report shape that it
@@ -6360,6 +6376,28 @@
       if(cols.customer !== undefined && cols.begBal !== undefined && cols.adv !== undefined){
         if(ttlIdxs.length >= 1) cols.ttl1 = ttlIdxs[0];
         if(ttlIdxs.length >= 2) cols.ttl2 = ttlIdxs[1];
+        // Some ledgers put a group label ("Due This Month", "Penalty")
+        // in a merged cell on the row(s) ABOVE the CU/OD/DEL/TTL header.
+        // When such a label sits over a TTL column, trust it over plain
+        // left-to-right order so Due This Month always reads the right
+        // TTL block.
+        let dueIdx, penIdx;
+        ttlIdxs.forEach(tIdx => {
+          for(let up = 1; up <= 2 && r - up >= 0; up++){
+            const above = matrix[r - up] || [];
+            let label = '';
+            for(let k = tIdx; k >= Math.max(0, tIdx - 6); k--){
+              const t = normHeader_(above[k]);
+              if(t){ label = t; break; }
+            }
+            if(!label) continue;
+            if(dueIdx === undefined && /due.*month|this\s*(?:month|mo\b)|current\s*due/.test(label)) dueIdx = tIdx;
+            else if(penIdx === undefined && /penalt|surcharge/.test(label)) penIdx = tIdx;
+            break;
+          }
+        });
+        if(dueIdx !== undefined) cols.ttl1 = dueIdx;
+        if(penIdx !== undefined && penIdx !== cols.ttl1) cols.ttl2 = penIdx;
         return { headerRow: r, cols };
       }
     }

@@ -5315,7 +5315,7 @@
   const PDF_Y_LINE_TOLERANCE = 3; // points; fragments within this y-distance are treated as the same line
 
   function pdfClusterLines_(items){
-    const sorted = items.slice().sort((a, b) => b.y - a.y || a.x - b.x); // top-to-bottom, then left-to-right
+    const sorted = items.slice().sort((a, b) => a.y - b.y || a.x - b.x); // top-to-bottom in PDF coordinates (y grows upward), then left-to-right
     const lines = [];
     sorted.forEach(it => {
       if(!it.str || !it.str.trim()) return;
@@ -5324,7 +5324,7 @@
       line.items.push(it);
     });
     lines.forEach(l => l.items.sort((a, b) => a.x - b.x));
-    lines.sort((a, b) => b.y - a.y);
+    lines.sort((a, b) => a.y - b.y);
     return lines;
   }
 
@@ -5436,6 +5436,390 @@
     return best || [];
   }
 
+  // ---- Dedicated Accounts Receivable PDF parser -----------------------
+  //
+  // The aging PDF used by this branch is NOT a normal flat table. Its
+  // headers are printed on two different y-levels: "Due This" / "Payment"
+  // on the upper line, then "Customer Name" / "Engine No" / "MA" /
+  // "Month" / "(Age)" / "(Adv)" / "Penalty Due" / "Penalty Pmt" /
+  // "Collector" on the lower line. A generic y-line bucket therefore loses
+  // the Due This Month and Payment (Adv) labels entirely (it starts at the
+  // Customer line). This parser treats the report as a named-column PDF
+  // and derives numeric column bands from BOTH header levels.
+  const AR_PDF_SECTION_RE = /^(?:30\s*days|60\s*days|advanced|current|over\s*90\s*days)$/i;
+
+  function pdfArLineText_(line){
+    return (line && line.items ? line.items : []).map(it => String(it.str || '').trim()).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function pdfArFindHeaderBand_(lines, startAt){
+    // Only inspect the CURRENT line for the customer header. Scanning ahead
+    // causes the parser to skip valid data rows when the next section's
+    // header happens to fall within the look-ahead window.
+    const max = Math.min(lines.length, startAt + 1);
+    for(let i = startAt; i < max; i++){
+      const text = pdfArLineText_(lines[i]);
+      if(!/\bcustomer\b/i.test(text) || !/\bengine\b/i.test(text)) continue;
+
+      const baseY = lines[i].y;
+      const bandLines = lines.filter((l, li) => li >= Math.max(0, i - 2) && li <= Math.min(lines.length - 1, i + 1) && Math.abs(l.y - baseY) <= 24);
+      const words = [];
+      bandLines.forEach(l => (l.items || []).forEach(it => {
+        const t = String(it.str || '').trim();
+        if(t) words.push({ x: it.x, y: it.y, text: t });
+      }));
+      const lower = words.map(w => ({ x:w.x, text:w.text.toLowerCase() }));
+      const customerW = lower.find(w => w.text === 'customer');
+      const engineW = lower.find(w => w.text === 'engine');
+      const maW = lower.find(w => /^ma$/.test(w.text));
+      const dueWs = lower.filter(w => w.text === 'due').sort((a,b)=>a.x-b.x);
+      const paymentWs = lower.filter(w => w.text === 'payment').sort((a,b)=>a.x-b.x);
+      const penaltyWs = lower.filter(w => w.text === 'penalty').sort((a,b)=>a.x-b.x);
+      const collectorW = lower.find(w => w.text === 'collector');
+      if(!customerW || !engineW || !maW || !dueWs.length || paymentWs.length < 2 || penaltyWs.length < 2 || !collectorW) continue;
+
+      const anchors = {
+        customer: customerW.x,
+        engine: engineW.x,
+        ma: maW.x,
+        due: dueWs[0].x,
+        payAge: paymentWs[0].x,
+        // The report has an unlabeled numeric Age column between Payment
+        // (Age) and Payment (Adv). Its values sit ~24 points before the
+        // Payment (Adv) column start, so keep it as a distinct band rather
+        // than letting the Age value be mistaken for Payment (Adv).
+        age: paymentWs[1].x - 24,
+        payAdv: paymentWs[1].x,
+        penaltyDue: penaltyWs[0].x,
+        penaltyPmt: penaltyWs[1].x,
+        collector: collectorW.x
+      };
+      return { headerLine: i, endLine: i, anchors };
+    }
+    return null;
+  }
+
+  function pdfArIsNumericCell_(s){
+    if(s === null || s === undefined) return false;
+    const t = String(s).trim();
+    if(!t) return false;
+    return !isNaN(parseNum_(t));
+  }
+
+  function pdfArColumnIndex_(x, anchors){
+    // Use the actual DATA-value starts for this fixed-width aging report.
+    // Header words are left-aligned while money cells are right-aligned, so
+    // the value sits a few points to the right of its header anchor. The
+    // report also contains an unlabeled Age value between Payment (Age) and
+    // Payment (Adv); keeping that band separate prevents Age from being
+    // imported as Payment (Adv).
+    const cuts = [
+      anchors.ma - 3,
+      anchors.due + 7,
+      anchors.payAge + 7,
+      anchors.age || (anchors.payAdv - 24),
+      anchors.payAdv + 23,
+      anchors.penaltyDue + 19,
+      anchors.penaltyPmt + 14,
+      anchors.collector
+    ];
+    for(let i = 0; i < cuts.length - 1; i++){
+      const mid = (cuts[i] + cuts[i + 1]) / 2;
+      if(x < mid) return i; // 0=MA, 1=Due, 2=Payment Age, 3=Age, 4=Payment Adv, 5=Penalty Due, 6=Penalty Pmt
+    }
+    return 6;
+  }
+
+  function pdfArExistingEngineCandidates_(leftText){
+    const hay = normalizeEngine_(leftText);
+    if(!hay) return [];
+    const out = [];
+    const seen = {};
+    customers.forEach(c => {
+      const eng = normalizeEngine_(c.engineNo || '');
+      if(!eng || eng.length < 7 || !/\d/.test(eng)) return;
+      if(hay.indexOf(eng) >= 0 && !seen[eng]) { seen[eng] = true; out.push(eng); }
+    });
+    return out.sort((a,b)=>b.length-a.length);
+  }
+
+  function pdfArEngineLikeCandidates_(text){
+    const out = [];
+    const seen = {};
+    const src = String(text || '').toUpperCase().replace(/[‐‑‒–—−]/g, '-');
+    const add = v => {
+      const k = normalizeEngine_(v);
+      if(!k || k.length < 8 || k.length > 20 || !/\d/.test(k) || !/^[A-Z]{2,4}\d/.test(k) || seen[k]) return;
+      seen[k] = true; out.push(k);
+    };
+    // Whole tokens first (normal separated engine cells).
+    src.split(/\s+/).forEach(tok => {
+      if(/[A-Z]/.test(tok) && /\d/.test(tok)) add(tok);
+      const m = tok.match(/[A-Z]{2,4}\d[A-Z0-9-]{5,}/g) || [];
+      m.forEach(add);
+      // Also test every possible engine start in a concatenated name+engine
+      // token; this recovers e.g. "JAVIERJA69E7297187".
+      for(let i=0;i<tok.length;i++){
+        if(!/[A-Z]/.test(tok[i])) continue;
+        for(let n=2;n<=4;n++){
+          const head = tok.slice(i, i+n);
+          if(!/^[A-Z]+$/.test(head)) continue;
+          const rest = tok.slice(i+n);
+          if(!/^\d[A-Z0-9-]{5,}$/.test(rest)) continue;
+          add(head + rest);
+        }
+      }
+    });
+    return out;
+  }
+
+  function pdfArResolveNameEngine_(leftTokens, anchors){
+    const leftText = leftTokens.map(t => t.str).join(' ').replace(/\s+/g, ' ').trim();
+    const existingEngs = pdfArExistingEngineCandidates_(leftText);
+    const heuristicEngs = pdfArEngineLikeCandidates_(leftText);
+    const candidates = existingEngs.concat(heuristicEngs).filter((v,i,a)=>a.indexOf(v)===i);
+    let best = null;
+    const nameKeys = {};
+    customers.forEach(c => {
+      const nk = normalizeName_(c.customer || '');
+      const ck = normalizeNameCompact_(c.customer || '');
+      if(nk) nameKeys[nk] = true;
+      if(ck) nameKeys[ck] = true;
+    });
+
+    candidates.forEach(engNorm => {
+      let candidateTokens = [];
+      let found = false;
+      for(const tok of leftTokens){
+        const raw = String(tok.str || '');
+        const normRaw = normalizeEngine_(raw);
+        if(normRaw === engNorm){ found = true; continue; }
+        const pos = normRaw.indexOf(engNorm);
+        if(pos >= 0){
+          const prefixNorm = normRaw.slice(0, pos);
+          // Preserve the original text before the embedded engine where
+          // possible. In the actual report this is "JAVIER" + "JA69...".
+          if(prefixNorm){
+            const rawUpper = raw.toUpperCase();
+            const rawEngPos = rawUpper.replace(/[^A-Z0-9-]/g, '').indexOf(engNorm);
+            if(rawEngPos > 0) candidateTokens.push({ str: raw.slice(0, rawEngPos), x: tok.x });
+          }
+          found = true;
+          continue;
+        }
+        candidateTokens.push(tok);
+      }
+      if(!found) return;
+      const name = candidateTokens.map(t => t.str).join(' ').replace(/\s+/g, ' ').trim();
+      const nk = normalizeName_(name), ck = normalizeNameCompact_(name);
+      let score = 0;
+      if(existingEngs.indexOf(engNorm) >= 0) score += 1000;
+      if(nameKeys[nk]) score += 500;
+      if(nameKeys[ck]) score += 450;
+      if(nk) score += 10;
+      // Prefer engine strings that start at the realistic engine region when
+      // there are otherwise equivalent heuristic candidates.
+      if(leftTokens.some(t => t.x >= anchors.engine - 25 && t.x < anchors.ma && /\d/.test(String(t.str||'')))) score += 20;
+      score -= Math.abs(12 - engNorm.length);
+      if(!best || score > best.score) best = { engineNo: engNorm, customer: name, score };
+    });
+
+    if(best) return best;
+    // Fallback for a normal separated engine cell even when it doesn't match
+    // a currently loaded customer.
+    const fallback = leftTokens.find(t => t.x >= anchors.engine - 25 && t.x < anchors.ma && /\d/.test(String(t.str || '')));
+    const eng = fallback ? String(fallback.str || '').trim() : '';
+    const nameTokens = fallback ? leftTokens.filter(t => t !== fallback) : leftTokens;
+    return { engineNo: eng, customer: nameTokens.map(t => t.str).join(' ').replace(/\s+/g, ' ').trim(), score: 0 };
+  }
+
+  function pdfArParseDataLine_(line, anchors, pendingName){
+    const items = (line && line.items ? line.items : []).filter(it => it && String(it.str || '').trim());
+    if(!items.length) return null;
+    const text = pdfArLineText_(line);
+    if(!text || AR_PDF_SECTION_RE.test(text) || /account\/s|grand\s+total|^total\b/i.test(text)) return null;
+
+    const financial = { ma:undefined, dueThisMonth:undefined, paymentAdv:undefined, penaltyDue:undefined };
+    let numericCount = 0;
+    items.forEach(it => {
+      const raw = String(it.str || '').trim();
+      if(!pdfArIsNumericCell_(raw)) return;
+      const idx = pdfArColumnIndex_(it.x, anchors);
+      const n = parseNum_(raw);
+      if(idx === 0 && financial.ma === undefined){ financial.ma = n; numericCount++; }
+      else if(idx === 1 && financial.dueThisMonth === undefined){ financial.dueThisMonth = n; numericCount++; }
+      else if(idx === 4 && financial.paymentAdv === undefined){ financial.paymentAdv = n; numericCount++; }
+      else if(idx === 5 && financial.penaltyDue === undefined){ financial.penaltyDue = n; numericCount++; }
+    });
+    if(numericCount < 2) return null;
+
+    const leftTokens = items.filter(it => it.x < ((anchors.engine + anchors.ma) / 2));
+    const resolved = pdfArResolveNameEngine_(leftTokens, anchors);
+    let customer = String(resolved.customer || '').trim();
+    let engineNo = String(resolved.engineNo || '').trim();
+    if(!customer && pendingName) customer = pendingName;
+    if(!customer) return null;
+
+    // A row containing the source account's name but an engine suffix that
+    // the PDF exporter glued to the last name token is valid. Strip the
+    // engine only when it was actually detected; the resolver already does
+    // this for the combined-token case.
+    return {
+      customer,
+      engineNo,
+      // A numeric 0.00 is a REAL source value and must be preserved.
+      dueThisMonth: financial.dueThisMonth,
+      paymentAdv: financial.paymentAdv,
+      penaltyDue: financial.penaltyDue,
+      _isBalanceRow: true
+    };
+  }
+
+  function pdfArLooksLikeWrappedCustomer_(line, anchors){
+    const text = pdfArLineText_(line);
+    if(!text || !/,/.test(text) || AR_PDF_SECTION_RE.test(text) || /account\/s|grand\s+total|^total\b/i.test(text)) return false;
+    const items = (line.items || []).filter(it => it.x < ((anchors.engine + anchors.ma) / 2));
+    return items.length > 0 && !items.some(it => /\d/.test(String(it.str || '')));
+  }
+
+  function pdfArFindInitialStatus_(lines, headerLine){
+    for(let i = Math.max(0, headerLine - 2); i < headerLine; i++){
+      const t = pdfArLineText_(lines[i]);
+      if(AR_PDF_SECTION_RE.test(t)) return t.toUpperCase();
+    }
+    return '';
+  }
+
+  // Returns parsed balance rows from the actual Accounts Receivable aging
+  // report, preserving the section as customerStatus and all three balance
+  // fields (including explicit 0.00 values).
+  function pdfArParseTotalLine_(line, anchors){
+    const text = pdfArLineText_(line);
+    if(!/account\/s/i.test(text)) return null;
+    const m = text.match(/(\d+)\s*account\/s/i);
+    if(!m) return null;
+    const out = { accountCount: Number(m[1]), dueThisMonth:undefined, paymentAdv:undefined, penaltyDue:undefined };
+    (line.items || []).forEach(it => {
+      const raw = String(it.str || '').trim();
+      if(!pdfArIsNumericCell_(raw)) return;
+      const idx = pdfArColumnIndex_(it.x, anchors);
+      const n = parseNum_(raw);
+      if(idx === 1 && out.dueThisMonth === undefined) out.dueThisMonth = n;
+      else if(idx === 4 && out.paymentAdv === undefined) out.paymentAdv = n;
+      else if(idx === 5 && out.penaltyDue === undefined) out.penaltyDue = n;
+    });
+    return out;
+  }
+
+  function pdfArParsePage_(items, inheritedStatus, inheritedAnchors){
+    const lines = pdfClusterLines_(items);
+    let status = inheritedStatus || '';
+    let activeAnchors = inheritedAnchors || null;
+    let pendingName = '';
+    let foundHeader = false;
+    const records = [];
+    const reportedTotals = [];
+
+    for(let i=0; i<lines.length; i++){
+      const text = pdfArLineText_(lines[i]);
+      if(activeAnchors){
+        const total = pdfArParseTotalLine_(lines[i], activeAnchors);
+        if(total) reportedTotals.push(total);
+      }
+      if(AR_PDF_SECTION_RE.test(text)){
+        status = text.toUpperCase();
+        pendingName = '';
+        continue;
+      }
+      const header = pdfArFindHeaderBand_(lines, i);
+      if(header){
+        foundHeader = true;
+        activeAnchors = header.anchors;
+        const priorStatus = pdfArFindInitialStatus_(lines, header.headerLine);
+        if(priorStatus) status = priorStatus;
+        pendingName = '';
+        i = header.endLine;
+        // The upper/lower header pair is consumed together by the header-band
+        // detector; the next loop iteration is the first data row.
+        continue;
+      }
+      const parsed = activeAnchors ? pdfArParseDataLine_(lines[i], activeAnchors, pendingName) : null;
+      if(parsed){
+        parsed.customerStatus = status;
+        delete parsed._isBalanceRow;
+        records.push(parsed);
+        pendingName = '';
+        continue;
+      }
+      if(activeAnchors){
+        // Wrapped customer name: the exporter sometimes moves the engine and
+        // numbers onto the next visual line. Keep the name until that next
+        // line is parsed.
+        if(pdfArLooksLikeWrappedCustomer_(lines[i], activeAnchors)) pendingName = text;
+        else if(/^(?:motowheels|accounts receivable|supporting document|for the month|print date|page\s*:)/i.test(text)) pendingName = '';
+      }
+    }
+    return { records, status, foundHeader, anchors: activeAnchors, reportedTotals };
+  }
+
+  async function parseAccountsReceivablePdf_(file){
+    await ensurePdfJsLoaded_();
+    const buf = await readFileAsArrayBuffer_(file);
+    const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+    let records = [];
+    let status = '';
+    let anchors = null;
+    let reportSeen = false;
+    let reportedTotals = [];
+    for(let p = 1; p <= doc.numPages; p++){
+      const page = await doc.getPage(p);
+      const content = await page.getTextContent();
+      const items = content.items.map(it => ({ str: it.str, x: it.transform[4], y: it.transform[5] }));
+      const pageText = items.map(it => String(it.str || '')).join(' ').toLowerCase();
+      if(/accounts\s+receivable/.test(pageText) || /supporting\s+document\s+for\s+aging\s+summary/.test(pageText) || /due\s+this/.test(pageText) && /payment/.test(pageText) && /penalty/.test(pageText)) reportSeen = true;
+      const parsed = pdfArParsePage_(items, status, anchors);
+      if(parsed.foundHeader) reportSeen = true;
+      status = parsed.status || status;
+      anchors = parsed.anchors || anchors;
+      if(parsed.reportedTotals && parsed.reportedTotals.length) reportedTotals = reportedTotals.concat(parsed.reportedTotals);
+      records = records.concat(parsed.records);
+    }
+
+    // Treat the largest Account/s total as the report grand total. This is a
+    // guardrail, not a source of values: the import only proceeds when the
+    // parsed row count and the three balances agree with the printed grand
+    // total. That means a future font/layout change that drops a column or
+    // page cannot silently produce a partial import.
+    if(reportSeen && records.length && reportedTotals.length){
+      const grand = reportedTotals.reduce((best, t) => !best || t.accountCount > best.accountCount ? t : best, null);
+      const sum = records.reduce((a, r) => {
+        a.count++;
+        a.due += Number(r.dueThisMonth || 0);
+        a.adv += Number(r.paymentAdv || 0);
+        a.pen += Number(r.penaltyDue || 0);
+        return a;
+      }, { count:0, due:0, adv:0, pen:0 });
+      const close = (a,b) => Math.abs(Number(a || 0) - Number(b || 0)) < 0.01;
+      if(!grand || grand.accountCount !== sum.count ||
+         !close(grand.dueThisMonth, sum.due) ||
+         !close(grand.paymentAdv, sum.adv) ||
+         !close(grand.penaltyDue, sum.pen)){
+        throw new Error(
+          'Accounts Receivable PDF validation failed: parsed ' + sum.count +
+          ' rows / Due This Month ₱' + sum.due.toFixed(2) +
+          ' / Payment (Adv) ₱' + sum.adv.toFixed(2) +
+          ' / Penalty Due ₱' + sum.pen.toFixed(2) +
+          ', but the printed grand total is ' + (grand ? grand.accountCount : '?') +
+          ' rows / Due This Month ₱' + Number(grand && grand.dueThisMonth || 0).toFixed(2) +
+          ' / Payment (Adv) ₱' + Number(grand && grand.paymentAdv || 0).toFixed(2) +
+          ' / Penalty Due ₱' + Number(grand && grand.penaltyDue || 0).toFixed(2) +
+          '. Nothing was imported.'
+        );
+      }
+    }
+    return reportSeen ? records : [];
+  }
+
   async function pdfToMatrices_(file){
     await ensurePdfJsLoaded_();
     const buf = await readFileAsArrayBuffer_(file);
@@ -5472,67 +5856,84 @@
     return '';
   }
 
-  function detectHeaderAndParseRows_(matrix){
-    const maxScan = Math.min(30, matrix.length);
-    let bestRow = -1, bestMap = null, bestScore = -1, bestBlankCols = null;
+  function combinedHeaderText_(matrix, startRow, bandLen, col){
+    const parts = [];
+    for(let r = startRow; r < Math.min(matrix.length, startRow + bandLen); r++){
+      const v = (matrix[r] || [])[col];
+      if(v !== undefined && v !== null && String(v).trim() !== '') parts.push(String(v).trim());
+    }
+    return parts.join(' ').replace(/\s+/g, ' ').trim();
+  }
 
-    for(let r = 0; r < maxScan; r++){
-      const row = matrix[r] || [];
-      const map = {};
-      const blankCols = [];
-      let score = 0, hasCustomer = false, hasFinancial = false;
-      row.forEach((cell, idx) => {
-        const norm = normHeader_(cell);
-        let key = importFieldKeyForHeader_(norm);
-        // Loose fallback for the customer column only: any header text
-        // that contains the word "customer" — e.g. this app's OWN sheet
-        // header "Acct Type/Status Customer" (see COLS.CUSTOMER in the
-        // Apps Script backend), or a direct Google Sheets export of a
-        // branch, or "Customer Details", etc. — is accepted even though
-        // it isn't one of FIELD_ALIASES.customer's exact phrases. Without
-        // this, any file whose header came straight from the live sheet
-        // (rather than this app's own Export button, which always writes
-        // the plain "Customer Name" label) fails to have its Customer
-        // column recognized at all, which makes EVERY row in the file
-        // silently fail to import — not just one customer. This mirrors
-        // the same loose `indexOf('customer') !== -1` matching
-        // findAccountsHeaderRow_ already uses for the Import Accounts
-        // flow below.
-        if(!key && /\bcustomer\b/.test(norm)) key = 'customer';
-        if(key && map[key] === undefined){
-          map[key] = idx;
-          score++;
-          if(key === 'customer') hasCustomer = true;
-          if(key === 'dueThisMonth' || key === 'paymentAdv' || key === 'penaltyDue' || key === 'auditorRemarks') hasFinancial = true;
-        } else if(!key && !norm){
-          blankCols.push(idx); // untitled column — candidate for an unlabeled name column (see fallback below)
+  function importFieldKeyForHeader_(norm){
+    let key = ALIAS_TO_FIELD[norm];
+    if(key) return key;
+    if(!norm) return '';
+    if(/(?:^|\b)(?:customer|cust)(?:\b|$)/.test(norm) && !/status/.test(norm)) return 'customer';
+    if(/(?:engine|eng)(?:\s|[-_./#])*?(?:no|number|num|#)\b/.test(norm) || /^engine\b/.test(norm)) return 'engineNo';
+    if(/(?:due|amount due).*(?:this|current|monthly|month|mo\b|mth\b)|(?:this|current|monthly|month|mo\b|mth\b).*due/.test(norm) && !/date/.test(norm)) return 'dueThisMonth';
+    if(/(?:payment|paid|paymnt).*(?:adv|advance)|(?:adv|advance).*(?:payment)|^(?:adv|advance)$/.test(norm)) return 'paymentAdv';
+    if(/(?:penalty).*(?:due|amount)|(?:due|amount).*(?:penalty)|^penalty$/.test(norm)) return 'penaltyDue';
+    if(/\bauditor\b.*\bremarks?\b|\baudit(?:or)?\b.*\bremarks?\b/.test(norm)) return 'auditorRemarks';
+    return '';
+  }
+
+  function detectHeaderAndParseRows_(matrix){
+    if(!matrix || !matrix.length) return { records: [], headerFound: false };
+    const maxScan = Math.min(60, matrix.length);
+    let best = null;
+
+    // Many real exports use a two-row/three-row header: a grouped heading on
+    // one row and the actual field name on the next. Evaluate 1-, 2-, and
+    // 3-row header bands and match against the COMBINED column text. This
+    // catches both flat tables and multi-level financial headers without
+    // requiring the source file to have the exact same wording as the app.
+    for(let startRow = 0; startRow < maxScan; startRow++){
+      for(let bandLen = 1; bandLen <= 3 && startRow + bandLen <= matrix.length; bandLen++){
+        const colCount = Math.max(...matrix.slice(startRow, startRow + bandLen).map(r => (r || []).length), 0);
+        const map = {};
+        const blankCols = [];
+        let score = 0, hasCustomer = false, hasFinancial = false;
+        for(let idx = 0; idx < colCount; idx++){
+          const norm = normHeader_(combinedHeaderText_(matrix, startRow, bandLen, idx));
+          let key = importFieldKeyForHeader_(norm);
+          if(!key && /\bcustomer\b/.test(norm) && !/customer\s*status|status.*customer/.test(norm)) key = 'customer';
+          if(key && map[key] === undefined){
+            map[key] = idx;
+            score++;
+            if(key === 'customer') hasCustomer = true;
+            if(key === 'dueThisMonth' || key === 'paymentAdv' || key === 'penaltyDue' || key === 'auditorRemarks') hasFinancial = true;
+          } else if(!key && !norm){
+            blankCols.push(idx);
+          }
         }
-      });
-      // Some audit sheets (e.g. a branch's own tracker) leave the name
-      // column's header blank entirely instead of writing "Customer" —
-      // still accept the row as a header if it otherwise looks like one
-      // (several recognizable fields, including a balance/remark column),
-      // and let the fallback below recover the name column from a blank
-      // header cell.
-      const qualifies = hasCustomer ? (hasFinancial || score >= 3) : (hasFinancial && score >= 2 && blankCols.length);
-      if(qualifies && score > bestScore){
-        bestScore = score; bestRow = r; bestMap = map; bestBlankCols = blankCols;
+        const qualifies = hasCustomer ? (hasFinancial || score >= 3) : (hasFinancial && score >= 2 && blankCols.length);
+        if(!qualifies) continue;
+        // Prefer the strongest mapping; when equally strong, prefer the
+        // shortest band because it leaves fewer rows incorrectly consumed.
+        const rank = score * 100 - (bandLen - 1) * 2;
+        if(!best || rank > best.rank){
+          best = { startRow, bandLen, map, blankCols, rank };
+        }
       }
     }
-    if(bestRow === -1) return { records: [], headerFound: false };
+    if(!best) return { records: [], headerFound: false };
 
-    // Fallback: header row matched real fields but no explicit "Customer
-    // Name" column — try the leftmost untitled column whose first couple
-    // of data rows actually look like names (non-empty text, not a bare
-    // number/date), and adopt it as the customer column.
-    if(bestMap.customer === undefined && bestBlankCols && bestBlankCols.length){
-      for(const idx of bestBlankCols){
+    let bestMap = best.map;
+    const bestRow = best.startRow;
+    const bestDataStart = best.startRow + best.bandLen;
+
+    // Header bands frequently leave the customer/name header cell blank.
+    // Recover a unique text column by inspecting the first few data rows.
+    if(bestMap.customer === undefined && best.blankCols.length){
+      for(const idx of best.blankCols){
         let looksLikeNames = 0, checked = 0;
-        for(let r = bestRow + 1; r < Math.min(bestRow + 6, matrix.length); r++){
+        for(let r = bestDataStart; r < Math.min(bestDataStart + 6, matrix.length); r++){
           const v = (matrix[r] || [])[idx];
-          if(v === undefined || v === null || v === '') continue;
+          if(v === undefined || v === null || String(v).trim() === '') continue;
           checked++;
-          if(typeof v === 'string' && v.trim() && isNaN(Number(v.trim()))) looksLikeNames++;
+          const str = String(v).trim();
+          if(str && !/^[\d,.\-+₱$€£₹()\s]+$/.test(str) && isNaN(Number(str))) looksLikeNames++;
         }
         if(checked && looksLikeNames === checked){ bestMap.customer = idx; break; }
       }
@@ -5541,13 +5942,17 @@
 
     const NUMERIC_KEYS = ['ma', 'begBal', 'dueThisMonth', 'paymentAdv', 'penaltyDue'];
     const records = [];
-    for(let r = bestRow + 1; r < matrix.length; r++){
+    for(let r = bestDataStart; r < matrix.length; r++){
       const row = matrix[r] || [];
       const rec = {};
       Object.keys(bestMap).forEach(key => {
         const raw = row[bestMap[key]];
         if(NUMERIC_KEYS.indexOf(key) !== -1){
-          if(raw === undefined || raw === null || String(raw).trim() === '') { rec[key] = 0; return; }
+          // IMPORTANT: a blank source balance means "not supplied", NOT zero.
+          // Import Balances must not erase a real existing value simply because
+          // another source row left that cell empty. Import Accounts applies
+          // its own explicit zero-default after parsing.
+          if(raw === undefined || raw === null || String(raw).trim() === '') return;
           const n = parseNum_(raw);
           if(!isNaN(n)) rec[key] = n;
           return;
@@ -5556,21 +5961,14 @@
         if(key === 'releaseDate' && Object.prototype.toString.call(raw) === '[object Date]'){
           rec[key] = Utilities_formatDateLocal_(raw);
         } else {
-          const s = String(raw).trim();
-          if(s) rec[key] = s;
+          const str = String(raw).trim();
+          if(str) rec[key] = str;
         }
       });
       if(!rec.customer) continue;
-      if(typeof row[bestMap.customer] === 'number') continue; // e.g. sub-total rows put a count here, not a name
-      // Summary rows, not customers. Anchored-at-start would miss PDF
-      // reconstructions where a leading row-count and the label land in
-      // the same cell (e.g. "4 Sub Total for Status", "182 Grand
-      // Total") — search the whole cell instead of just its start.
-      if(/(sub[\s-]?total|grand[\s-]?total)/i.test(rec.customer)) continue;
-      if(/^[\d,.\s-]+$/.test(rec.customer)) continue; // a bare number in the name column is a stray count/total, never a real customer
-      // A row counts as real customer data if it carries a balance figure
-      // OR an auditor remark — an audit sheet (like Sta. Rosa's) often has
-      // a remark with no balance columns filled in at all for that visit.
+      if(typeof row[bestMap.customer] === 'number') continue;
+      if(/(sub[\s-]?total|grand[\s-]?total|report[\s-]?total)/i.test(rec.customer)) continue;
+      if(/^[\d,.\s\-+()]+$/.test(rec.customer)) continue;
       const hasBalance = ['dueThisMonth', 'paymentAdv', 'penaltyDue'].some(k => rec[k] !== undefined);
       const hasRemark = !!(rec.auditorRemarks && String(rec.auditorRemarks).trim());
       if(!hasBalance && !hasRemark) continue;
@@ -5873,11 +6271,17 @@
           // that's even attempted.
           matrices = (await excelToMatrices_(file)).map(s => s.matrix);
         } else if(ext === 'pdf'){
-          // Best-effort text-position table reconstruction — see the
-          // comment above pdfToMatrices_ for how/why this can be less
-          // reliable than CSV/Excel for an unusual layout. The resulting
-          // matrix still goes through the same shape-1/shape-2 detection
-          // below (plain headers, or the STA-style ledger fallback).
+          // This branch has a dedicated parser for the Accounts Receivable
+          // aging report used by the branch. It reads the two-level PDF
+          // header directly so Due This Month and Payment (Adv) cannot be
+          // dropped by a generic y-line/table reconstruction. Only fall
+          // back to the generic PDF matrix parser when this isn't that
+          // report format.
+          const agingPdfRecords = await parseAccountsReceivablePdf_(file);
+          if(agingPdfRecords.length){
+            allRecords = allRecords.concat(agingPdfRecords);
+            continue;
+          }
           matrices = (await pdfToMatrices_(file)).map(s => s.matrix);
         } else {
           toast(file.name + ': unsupported file type (use .csv, .xls, .xlsx, or .pdf).');
@@ -5887,34 +6291,31 @@
         let fileRecords = [];
         let anyHeaderFound = false;
         matrices.forEach(matrix => {
-          let { records, headerFound } = detectHeaderAndParseRows_(matrix);
-          // An STA ledger (Customer + Beg Bal + Adv + TTL columns) ALSO
-          // satisfies the flat-table detector (customer + engine + MA +
-          // Beg Bal + "Adv" alias), so the flat parser used to win and
-          // only ever read Adv — it has no alias for the TTL column, so
-          // Due This Month / Penalty Due were never imported, and the
-          // "BNEW - OD" section headers were read as customers. If the
-          // STA layout is present WITH a TTL column and the flat parse
-          // found no Due This Month at all, use the STA parser instead.
-          let preferSta = false;
-          if(headerFound && records.length && !records.some(rec => rec.dueThisMonth !== undefined)){
-            const sta = findAccountsHeaderRow_(matrix);
-            if(sta && sta.cols.ttl1 !== undefined) preferSta = true;
-          }
-          if(preferSta || !headerFound || !records.length){
-            // Shape 1 didn't work (or found no data) — try the STA-ledger
-            // shape as a fallback before giving up on this sheet.
-            const staRecords = parseAccountsMatrix_(matrix);
-            if(staRecords.length){
-              records = staRecords.map(r => ({
-                customer: r.customer,
-                engineNo: r.engineNo,
-                dueThisMonth: r.dueThisMonth,
-                paymentAdv: r.paymentAdv,
-                penaltyDue: r.penaltyDue
-              }));
-              headerFound = true;
-            }
+          // IMPORTANT: STA reports can partially resemble a normal flat table
+          // (especially because they have an Adv column). If the generic parser
+          // runs first, it may successfully return rows containing only Adv and
+          // the true TTL columns (Due This Month / Penalty Due) are then lost.
+          // Always test the STA shape first and prefer it whenever it actually
+          // exposes at least one balance column.
+          const staRecords = parseAccountsMatrix_(matrix);
+          const staBalanceRecords = staRecords.filter(r =>
+            r && (r.dueThisMonth !== undefined || r.paymentAdv !== undefined || r.penaltyDue !== undefined)
+          );
+          let records = [];
+          let headerFound = false;
+          if(staBalanceRecords.length){
+            records = staBalanceRecords.map(r => {
+              const out = { customer: r.customer, engineNo: r.engineNo };
+              if(r.dueThisMonth !== undefined) out.dueThisMonth = r.dueThisMonth;
+              if(r.paymentAdv !== undefined) out.paymentAdv = r.paymentAdv;
+              if(r.penaltyDue !== undefined) out.penaltyDue = r.penaltyDue;
+              return out;
+            });
+            headerFound = true;
+          } else {
+            const generic = detectHeaderAndParseRows_(matrix);
+            records = generic.records;
+            headerFound = generic.headerFound;
           }
           if(headerFound) anyHeaderFound = true;
           fileRecords = fileRecords.concat(records);
@@ -6053,6 +6454,55 @@
         const tokenKey = normalizeNameTokenKey_(rec.customer);
         const byToken = tokenKey ? tokenNameIndex[tokenKey] : null;
         if(byToken && byToken.length === 1){ matches = byToken; loose = true; }
+      }
+
+      // 6) Conservative typo rescue — ONLY when the source has no engine
+      // number, and ONLY when exactly one live customer is within a very
+      // small edit distance. This catches ordinary one-/two-character
+      // misspellings without using broad fuzzy matching that could move a
+      // payment to the wrong person. Names must be reasonably long and share
+      // the same first character and near-identical length.
+      if((!matches || !matches.length) && nameKey && !engKey){
+        const srcCompact = normalizeNameCompact_(rec.customer);
+        if(srcCompact.length >= 8){
+          const seen = [];
+          const maxDist = srcCompact.length >= 12 ? 2 : 1;
+          const first = srcCompact.charAt(0);
+          const candidateMap = {};
+          customers.forEach(c => {
+            const ck = normalizeNameCompact_(c.customer);
+            if(!ck || ck.charAt(0) !== first || Math.abs(ck.length - srcCompact.length) > 2) return;
+            candidateMap[ck] = candidateMap[ck] || [];
+            candidateMap[ck].push(c);
+          });
+          function editDistanceCapped_(a,b,cap){
+            if(a === b) return 0;
+            if(Math.abs(a.length-b.length) > cap) return cap + 1;
+            let prev = new Array(b.length + 1);
+            for(let j=0;j<=b.length;j++) prev[j]=j;
+            for(let i=1;i<=a.length;i++){
+              let cur = new Array(b.length + 1); cur[0]=i;
+              let rowMin = cur[0];
+              for(let j=1;j<=b.length;j++){
+                const cost = a.charAt(i-1) === b.charAt(j-1) ? 0 : 1;
+                cur[j] = Math.min(prev[j] + 1, cur[j-1] + 1, prev[j-1] + cost);
+                if(cur[j] < rowMin) rowMin = cur[j];
+              }
+              if(rowMin > cap) return cap + 1;
+              prev = cur;
+            }
+            return prev[b.length];
+          }
+          Object.keys(candidateMap).forEach(ck => {
+            const d = editDistanceCapped_(srcCompact, ck, maxDist);
+            if(d <= maxDist) seen.push.apply(seen, candidateMap[ck]);
+          });
+          // Deduplicate candidate objects by row; one unique candidate only.
+          const uniq = {};
+          seen.forEach(c => { uniq[c.row] = c; });
+          const fuzzy = Object.keys(uniq).map(k => uniq[k]);
+          if(fuzzy.length === 1){ matches = fuzzy; loose = true; }
+        }
       }
 
       if(!matches || !matches.length){
@@ -6323,10 +6773,10 @@
   // No, Release/Rstr Date, Due Date, Term, MA, Beg Bal — plus Customer
   // Status, which is DERIVED from whichever section header the row
   // currently falls under (deriveStatusFromSection_ below turns e.g.
-  // "BNEW - OD" into "OD - BN"). The file's own balance/TTL/Adv columns
-  // are never read into a record at all: Due This Month, Payment (Adv)
-  // and Penalty Due are always written as 0 (use Import Balances
-  // afterward to fill them in), and Unit status, Payment mode, Date of
+  // "BNEW - OD" into "OD - BN"). The file's balance/TTL/Adv columns are
+  // also captured when present, so Due This Month, Payment (Adv) and
+  // Penalty Due survive Import Accounts directly. Unit status, Payment mode,
+  // Date of
   // Audit, Auditor Remarks, Previous Audit Remarks are always left
   // blank.
   //
@@ -6345,63 +6795,40 @@
   // fragment matches) since these reports don't always word things
   // identically.
   function findAccountsHeaderRow_(matrix){
-    const maxScan = Math.min(15, matrix.length);
-    for(let r = 0; r < maxScan; r++){
-      const row = matrix[r] || [];
-      const cols = {};
-      const ttlIdxs = [];
-      row.forEach((cell, idx) => {
-        const norm = normHeader_(cell);
-        if(!norm) return;
-        if(cols.customer === undefined && /customer|cust/i.test(norm)) cols.customer = idx;
-        else if(cols.release === undefined && /(release|restruct|rstr)/i.test(norm)) cols.release = idx;
-        else if(cols.model === undefined && /^(model|unit\s*model)$/i.test(norm)) cols.model = idx;
-        else if(cols.engine === undefined && /engine|eng\s*(no|number|#)/i.test(norm)) cols.engine = idx;
-        else if(cols.dueDate === undefined && /due.*date|date.*due/i.test(norm)) cols.dueDate = idx;
-        else if(cols.term === undefined && /^(term|terms)$/i.test(norm)) cols.term = idx;
-        else if(cols.ma === undefined && /^(ma|monthly\s*amortization)$/i.test(norm)) cols.ma = idx;
-        else if(cols.begBal === undefined && /beg.*bal|beginning.*bal|begin.*balance/i.test(norm)) cols.begBal = idx;
-        else if(/^(?:ttl|total|tot)\.?(?:\s*(?:due|amt|amount))?(?:\s*\d+)?$/i.test(norm)) ttlIdxs.push(idx);
-        // Adv column: "Adv", "Adv.", "Advance", "Advances", "Adv Payment",
-        // "Payment (Adv)", "Advance Pmt", ... — any short header whose
-        // words are only adv/advance/payment/pmt/pay/amt.
-        else if(cols.adv === undefined && /^(?:adv(?:ance)?s?\.?|(?:adv(?:ance)?s?\.?\s*(?:payment|pmt|pay|amt|amount)s?)|(?:(?:payment|pmt|pay)s?\s*\(?\s*adv(?:ance)?s?\.?\s*\)?))$/i.test(norm)) cols.adv = idx;
-      });
-      // Needs a customer column, a beginning-balance column, and the
-      // "Adv" column — specific enough to this report shape that it
-      // won't misfire on an ordinary Balances/Remarks file. The TTL
-      // columns are optional now (this flow no longer reads balance
-      // figures from the file at all), so their presence/absence
-      // doesn't affect whether the header row is recognized.
-      if(cols.customer !== undefined && cols.begBal !== undefined && cols.adv !== undefined){
+    if(!matrix || !matrix.length) return null;
+    const maxScan = Math.min(30, matrix.length);
+    let best = null;
+    for(let startRow = 0; startRow < maxScan; startRow++){
+      for(let bandLen = 1; bandLen <= 3 && startRow + bandLen <= matrix.length; bandLen++){
+        const colCount = Math.max(...matrix.slice(startRow, startRow + bandLen).map(r => (r || []).length), 0);
+        const cols = {};
+        const ttlIdxs = [];
+        for(let idx = 0; idx < colCount; idx++){
+          const norm = normHeader_(combinedHeaderText_(matrix, startRow, bandLen, idx));
+          if(!norm) continue;
+          if(cols.customer === undefined && /customer(?!\s*status\b)|\bcust\b/i.test(norm)) cols.customer = idx;
+          else if(cols.release === undefined && /(release|restruct|rstr)/i.test(norm)) cols.release = idx;
+          else if(cols.model === undefined && /^(model|unit\s*model|vehicle\s*model)$/i.test(norm)) cols.model = idx;
+          else if(cols.engine === undefined && /engine|eng\s*(no|number|#)/i.test(norm)) cols.engine = idx;
+          else if(cols.dueDate === undefined && /due\s*date|date\s*due|maturity\s*date/i.test(norm)) cols.dueDate = idx;
+          else if(cols.term === undefined && /^(term|terms)$/i.test(norm)) cols.term = idx;
+          else if(cols.ma === undefined && /^(ma|ma\s*\(.*\)|monthly\s*amortization)$/i.test(norm)) cols.ma = idx;
+          else if(cols.begBal === undefined && /beg.*bal|beginning.*bal|begin.*balance/i.test(norm)) cols.begBal = idx;
+          else if(/^ttl(?:\s*\d+)?$/i.test(norm) || /^total$/i.test(norm) || /(^|\s)ttl\s*$/i.test(norm)) ttlIdxs.push(idx);
+          else if(cols.adv === undefined && /^(adv|advance|payment\s*\(?\s*adv(?:ance)?\s*\)?)$/i.test(norm)) cols.adv = idx;
+        }
         if(ttlIdxs.length >= 1) cols.ttl1 = ttlIdxs[0];
         if(ttlIdxs.length >= 2) cols.ttl2 = ttlIdxs[1];
-        // Some ledgers put a group label ("Due This Month", "Penalty")
-        // in a merged cell on the row(s) ABOVE the CU/OD/DEL/TTL header.
-        // When such a label sits over a TTL column, trust it over plain
-        // left-to-right order so Due This Month always reads the right
-        // TTL block.
-        let dueIdx, penIdx;
-        ttlIdxs.forEach(tIdx => {
-          for(let up = 1; up <= 2 && r - up >= 0; up++){
-            const above = matrix[r - up] || [];
-            let label = '';
-            for(let k = tIdx; k >= Math.max(0, tIdx - 6); k--){
-              const t = normHeader_(above[k]);
-              if(t){ label = t; break; }
-            }
-            if(!label) continue;
-            if(dueIdx === undefined && /due.*month|this\s*(?:month|mo\b)|current\s*due/.test(label)) dueIdx = tIdx;
-            else if(penIdx === undefined && /penalt|surcharge/.test(label)) penIdx = tIdx;
-            break;
-          }
-        });
-        if(dueIdx !== undefined) cols.ttl1 = dueIdx;
-        if(penIdx !== undefined && penIdx !== cols.ttl1) cols.ttl2 = penIdx;
-        return { headerRow: r, cols };
+        // Accounts reports normally have Beg Bal; some balance-only STA
+        // exports omit it. A customer + Adv + TTL shape is still uniquely
+        // enough to recognize the ledger format.
+        if(cols.customer === undefined || cols.adv === undefined || (cols.begBal === undefined && ttlIdxs.length < 1)) continue;
+        const score = 3 + (cols.begBal !== undefined) + (cols.release !== undefined) + (cols.model !== undefined) + (cols.engine !== undefined) + (cols.dueDate !== undefined) + (cols.term !== undefined) + (cols.ma !== undefined) + Math.min(ttlIdxs.length, 2);
+        const rank = score * 100 - (bandLen - 1) * 2;
+        if(!best || rank > best.rank) best = { headerRow: startRow, dataStart: startRow + bandLen, cols, rank };
       }
     }
-    return null;
+    return best ? { headerRow: best.headerRow, dataStart: best.dataStart, cols: best.cols } : null;
   }
 
   // "BNEW - OD" -> "OD - BN" (the format this dashboard's Customer
@@ -6438,21 +6865,17 @@
   // customer column but every other core column (release date, model,
   // engine, due date, term, MA, beg bal) is blank on that same row —
   // that's what "BNEW - ADV", "BNEW - OD" etc. look like in the raw
-  // sheet. The file's own balance columns (the first TTL block, Adv, the
-  // second TTL block) are also captured as dueThisMonth/paymentAdv/
-  // penaltyDue — Import Accounts itself still ignores these three and
-  // always writes 0 (see buildAccountsCreateFields_ below), but Import
-  // Balances' STA-format fallback (see parseImportFiles_) reuses this
-  // same parser and DOES want them.
+  // sheet. The file's first TTL block, Adv, and second TTL block are mapped
+  // to dueThisMonth/paymentAdv/penaltyDue and are preserved by Import Accounts.
   function parseAccountsMatrix_(matrix){
     const found = findAccountsHeaderRow_(matrix);
     if(!found) return [];
-    const { headerRow, cols } = found;
+    const { headerRow, dataStart, cols } = found;
     const coreIdxs = [cols.release, cols.model, cols.engine, cols.dueDate, cols.term, cols.ma, cols.begBal];
 
     const records = [];
     let currentStatus = '';
-    for(let r = headerRow + 1; r < matrix.length; r++){
+    for(let r = (dataStart !== undefined ? dataStart : headerRow + 1); r < matrix.length; r++){
       const row = matrix[r] || [];
       const nameCell = row[cols.customer];
       const name = (nameCell === undefined || nameCell === null) ? '' : String(nameCell).trim();
@@ -6485,11 +6908,12 @@
         term: cols.term !== undefined ? String(row[cols.term] == null ? '' : row[cols.term]).trim() : '',
         ma: isNaN(maVal) ? 0 : maVal,
         begBal: begBal,
-        customerStatus: currentStatus,
-        dueThisMonth: isNaN(ttl1) ? 0 : ttl1,
-        paymentAdv: isNaN(adv) ? 0 : adv,
-        penaltyDue: isNaN(ttl2) ? 0 : ttl2
+        customerStatus: currentStatus
       });
+      const last = records[records.length - 1];
+      if(cols.ttl1 !== undefined && !isNaN(ttl1)) last.dueThisMonth = ttl1;
+      if(cols.adv !== undefined && !isNaN(adv)) last.paymentAdv = adv;
+      if(cols.ttl2 !== undefined && !isNaN(ttl2)) last.penaltyDue = ttl2;
     }
     return records;
   }
@@ -6533,10 +6957,10 @@
 
   // Every parsed record becomes a brand-new customer — Import Accounts
   // never matches against what's already on the branch (see the note
-  // above handleImportAccountsFiles). This just shapes each record into
-  // the WRITABLE_FIELDS payload createCustomer/batchCreateCustomer
-  // expect, forcing Due This Month / Payment (Adv) / Penalty Due to 0
-  // and leaving every other non-listed field unset (blank).
+  // above handleImportAccountsFiles). This shapes each record into
+  // the WRITABLE_FIELDS payload createCustomer/batchCreateCustomer expect,
+  // preserving parsed balances and defaulting only truly missing balance
+  // columns to 0; every other non-listed field remains unset (blank).
   function buildAccountsCreateFields_(allRecords){
     return allRecords.map(rec => {
       const fields = {};
@@ -6584,7 +7008,12 @@
     records.forEach((rec, i) => {
       const name = normalizeName_(rec.customer);
       const eng = normalizeEngine_(rec.engineNo);
-      const key = (eng ? 'E|' + eng : 'N|' + name);
+      const engId = normalizeEngineNumeric_(rec.engineNo) || eng;
+      // An engine number can legitimately be repeated/mis-copied in source
+      // data. Never collapse two different customers merely because they
+      // share the same engine string. Name+engine identifies the account;
+      // name alone is used only when no engine was supplied.
+      const key = (eng ? 'E|' + name + '|' + engId : 'N|' + name);
       if(!groups[key]){ groups[key] = { first: Object.assign({}, rec), sourceIndexes: [i] }; order.push(key); return; }
       const g = groups[key];
       g.sourceIndexes.push(i);

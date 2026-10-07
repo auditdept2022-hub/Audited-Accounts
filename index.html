@@ -1988,7 +1988,7 @@
         <div class="left">
           <div class="toolbar-group-label">Import &amp; export</div>
           <div class="btn-cluster" title="Import / Export">
-          <button class="btn" id="importAccountsBtn" onclick="document.getElementById('importAccountsInput').click()" title="Import a flat account list (.csv/.xls/.xlsx) with a header row like Acct Type/Status Customer, Release/ Rstr Date, Model, Engine No, Due Date, Term, MA, Beg Bal, Customer Status, etc. Reads only Customer, Model, Engine No, Release/Rstr Date, Due Date, Term, MA, Beg Bal &amp; Customer Status from each row. This PERMANENTLY CLEARS every existing record in the branch first, then adds every row from the file as a brand-new customer — it never matches/merges with what's already there. Due This Month / Payment (Adv) / Penalty Due are always set to 0 (use Import Balances afterward to fill them in); Unit status, Payment mode, Date of Audit, Auditor Remarks &amp; Previous Audit Remarks always start blank.">⇪ Import Accounts</button>
+          <button class="btn" id="importAccountsBtn" onclick="document.getElementById('importAccountsInput').click()" title="Import a flat account list (.csv/.xls/.xlsx) with a header row like Acct Type/Status Customer, Release/ Rstr Date, Model, Engine No, Due Date, Term, MA, Beg Bal, Customer Status, etc. Reads only Customer, Model, Engine No, Release/Rstr Date, Due Date, Term, MA, Beg Bal &amp; Customer Status from each row. This PERMANENTLY CLEARS every existing record in the branch first, then adds every row from the file as a brand-new customer — it never matches/merges with what's already there. If the source contains Due This Month / Payment (Adv) / Penalty Due, those values are imported too; otherwise they start at 0. Unit status, Payment mode, Date of Audit, Auditor Remarks &amp; Previous Audit Remarks always start blank.">⇪ Import Accounts</button>
           <input type="file" id="importAccountsInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
           <button class="btn" id="importBalancesBtn" onclick="document.getElementById('importBalancesInput').click()" title="Import CSV, Excel (.xls/.xlsx) or PDF files. Matches customers by name (and engine no. when the file has one, so same-name/different-unit customers are told apart) and updates ONLY Due This Month, Payment (Adv) &amp; Penalty Due. Accepts either a plain file with literal 'Due This Month' etc. headers, or the same STA-style ledger report Import Accounts reads (CU/OD/DEL/TTL/Adv columns). PDF support is best-effort (reconstructed from text position, not a real grid) — scanned/image-only PDFs aren't supported; use CSV/Excel if a PDF doesn't import cleanly. Any remarks/Auditor Remarks column in the file is ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Balances</button>
           <input type="file" id="importBalancesInput" accept=".csv,.xls,.xlsx,.pdf" multiple style="display:none">
@@ -5055,9 +5055,9 @@
     releaseDate: ['release / restructure date', 'release date', 'restructure date', 'releasedate'],
     ma: ['ma (₱)', 'ma'],
     begBal: ['beginning balance (₱)', 'beg bal', 'beginning balance', 'begbal'],
-    dueThisMonth: ['due this month (₱)', 'due this month', 'duethismonth'],
-    paymentAdv: ['payment / advance (₱)', 'payment (adv)', 'payment adv', 'paymentadv'],
-    penaltyDue: ['penalty due (₱)', 'penalty due', 'penaltydue'],
+    dueThisMonth: ['due this month (₱)', 'due this month', 'due this mo', 'due this mth', 'monthly due', 'current due', 'duethismonth'],
+    paymentAdv: ['payment / advance (₱)', 'payment / advance', 'payment advance', 'payment (adv)', 'payment adv', 'advance payment', 'advance', 'adv', 'paymentadv'],
+    penaltyDue: ['penalty due (₱)', 'penalty due', 'penalty amount', 'penalty', 'penaltydue'],
     customerStatus: ['customer status', 'customerstatus', 'status'],
     unitStatus: ['unit status', 'unitstatus'],
     paymentMode: ['payment mode', 'paymentmode']
@@ -5083,14 +5083,49 @@
   })();
 
   function normHeader_(h){
-    return String(h == null ? '' : h).replace(/\s+/g, ' ').trim().toLowerCase();
+    return String(h == null ? '' : h)
+      .replace(/^\uFEFF/, '')
+      .replace(/[\u200B-\u200D\u2060]/g, '')
+      .replace(/\u00A0/g, ' ')
+      .normalize('NFKC')
+      .replace(/[‐‑‒–—−]/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
   }
 
   function normalizeName_(s){
-    return String(s || '').replace(/\s+/g, ' ').trim().toUpperCase();
+    return String(s || '')
+      .normalize('NFKC')
+      .replace(/[\u200B-\u200D\u2060]/g, '')
+      .replace(/[’‘`]/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toUpperCase();
   }
 
-  // Parses "11,557", "₱11,557.00", "(500)" (accounting negatives), etc.
+  function normalizeNameCompact_(s){
+    return normalizeName_(s).replace(/[^A-Z0-9]/g, '');
+  }
+
+  function normalizeNameTokenKey_(s){
+    const tokens = normalizeName_(s).replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+    return tokens.sort().join('|');
+  }
+
+  function normalizeEngine_(s){
+    const raw = String(s == null ? '' : s).normalize('NFKC').trim().toUpperCase();
+    return raw.replace(/[\s-_.\/\\]+/g, '');
+  }
+
+  function normalizeEngineNumeric_(s){
+    const k = normalizeEngine_(s);
+    if(!k || !/^\d+$/.test(k)) return '';
+    return k.replace(/^0+(?=\d)/, '');
+  }
+
+  // Parses "11,557", "₱11,557.00", "(500)" (accounting negatives),
+  // European "11.557,00", and spreadsheet placeholders such as "-".
   function parseNum_(v){
     if(v === '' || v === null || v === undefined) return NaN;
     if(typeof v === 'number') return v;
@@ -5098,15 +5133,30 @@
     if(!s) return NaN;
     let neg = false;
     if(/^\(.*\)$/.test(s)){ neg = true; s = s.slice(1, -1); }
-    // A lone "-" followed by a SPACE and then more digits is a blank-cell
-    // placeholder that got fused with a genuinely separate number — most
-    // often from PDF column reconstruction bucketing two adjacent
-    // fragments (an empty column's "-" and the next column's real value)
-    // into the same cell. A real negative amount always has the minus
-    // sign glued directly to its digits ("-1,234.00"), never a space
-    // after it — so strip this instead of treating it as a sign.
-    s = s.replace(/^-\s+(?=[₱$\d(])/, '');
-    s = s.replace(/[₱$,\s]/g, '');
+    s = s.replace(/^[-−]\s+(?=[₱$\d(])/, '');
+    s = s.replace(/[₱$€£₹₱\s']/g, '');
+    if(!s || s === '-') return NaN;
+
+    // Accept both common decimal conventions. When both separators exist,
+    // the LAST separator is treated as the decimal separator.
+    const lastDot = s.lastIndexOf('.');
+    const lastComma = s.lastIndexOf(',');
+    if(lastDot >= 0 && lastComma >= 0){
+      if(lastComma > lastDot){
+        s = s.replace(/\./g, '').replace(',', '.');
+      } else {
+        s = s.replace(/,/g, '');
+      }
+    } else if(lastComma >= 0){
+      const decimals = s.length - lastComma - 1;
+      if(decimals === 1 || decimals === 2){
+        s = s.replace(/\./g, '').replace(',', '.');
+      } else {
+        s = s.replace(/,/g, '');
+      }
+    } else {
+      s = s.replace(/,/g, '');
+    }
     if(!s || s === '-') return NaN;
     const n = parseFloat(s);
     if(isNaN(n)) return NaN;
@@ -5137,19 +5187,48 @@
   // Splits raw CSV text into a 2D array of cells (no header assumptions —
   // header detection happens later, the same way as for Excel files).
   function csvToMatrix_(text){
-    const rows = [];
+    text = String(text == null ? '' : text).replace(/^\uFEFF/, '');
+    const rawLines = [];
     let cur = '', inQuotes = false;
     for(let i = 0; i < text.length; i++){
       const ch = text[i];
       if(ch === '"') inQuotes = !inQuotes;
       if((ch === '\n') && !inQuotes){
-        rows.push(cur); cur = '';
+        rawLines.push(cur); cur = '';
       } else if(ch !== '\r'){
         cur += ch;
       }
     }
-    if(cur.trim()) rows.push(cur);
-    return rows.filter(r => r.trim() !== '').map(r => csvSplitLine_(r));
+    if(cur.trim()) rawLines.push(cur);
+    const sample = rawLines.slice(0, 8).filter(Boolean).join('\n');
+    const candidates = [',', '\t', ';', '|'];
+    let delimiter = ',';
+    let bestScore = -1;
+    candidates.forEach(d => {
+      const score = sample.split('\n').reduce((n, line) => n + csvSplitLineWithDelimiter_(line, d).length, 0);
+      if(score > bestScore){ bestScore = score; delimiter = d; }
+    });
+    return rawLines.filter(r => r.trim() !== '').map(r => csvSplitLineWithDelimiter_(r, delimiter));
+  }
+
+  function csvSplitLineWithDelimiter_(line, delimiter){
+    const out = [];
+    let cur = '', inQuotes = false;
+    for(let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if(inQuotes){
+        if(ch === '"'){
+          if(line[i + 1] === '"'){ cur += '"'; i++; }
+          else inQuotes = false;
+        } else cur += ch;
+      } else {
+        if(ch === '"') inQuotes = true;
+        else if(ch === delimiter){ out.push(cur); cur = ''; }
+        else cur += ch;
+      }
+    }
+    out.push(cur);
+    return out;
   }
 
   // Reads an .xls/.xlsx file into one matrix per sheet, via SheetJS.
@@ -5380,6 +5459,19 @@
   // data if it has a name AND at least one of the three balance figures —
   // that's what skips section headers ("30 DAYS"), sub-total rows, and
   // blank spacer rows without needing to hard-code any file's layout.
+  function importFieldKeyForHeader_(norm){
+    let key = ALIAS_TO_FIELD[norm];
+    if(key) return key;
+    if(!norm) return '';
+    if(/\bcustomer\b|\bcust\b/.test(norm)) return 'customer';
+    if(/(?:\bengine\b|\beng\b)/.test(norm) && /(?:^|[\s.#_/()-])(?:no|number|num|#)(?:$|[\s.#_/()-])/.test(norm)) return 'engineNo';
+    if(/(?:due|amount due).*(?:this|current).*(?:month|mo\b|mth\b)|(?:this|current).*(?:month|mo\b|mth\b).*due/.test(norm)) return 'dueThisMonth';
+    if(/(?:payment|paid|paymnt).*(?:adv|advance)|(?:adv|advance).*(?:payment)|^(?:adv|advance)$/.test(norm)) return 'paymentAdv';
+    if(/\bpenalty\b.*(?:due|amount)|(?:due|amount).*\bpenalty\b/.test(norm)) return 'penaltyDue';
+    if(/\bauditor\b.*\bremark/.test(norm) || /\baudit(?:or)?\b.*\bremarks?/.test(norm)) return 'auditorRemarks';
+    return '';
+  }
+
   function detectHeaderAndParseRows_(matrix){
     const maxScan = Math.min(30, matrix.length);
     let bestRow = -1, bestMap = null, bestScore = -1, bestBlankCols = null;
@@ -5391,7 +5483,7 @@
       let score = 0, hasCustomer = false, hasFinancial = false;
       row.forEach((cell, idx) => {
         const norm = normHeader_(cell);
-        let key = ALIAS_TO_FIELD[norm];
+        let key = importFieldKeyForHeader_(norm);
         // Loose fallback for the customer column only: any header text
         // that contains the word "customer" — e.g. this app's OWN sheet
         // header "Acct Type/Status Customer" (see COLS.CUSTOMER in the
@@ -5454,11 +5546,14 @@
       const rec = {};
       Object.keys(bestMap).forEach(key => {
         const raw = row[bestMap[key]];
-        if(raw === undefined || raw === null || raw === '') return;
         if(NUMERIC_KEYS.indexOf(key) !== -1){
+          if(raw === undefined || raw === null || String(raw).trim() === '') { rec[key] = 0; return; }
           const n = parseNum_(raw);
           if(!isNaN(n)) rec[key] = n;
-        } else if(key === 'releaseDate' && Object.prototype.toString.call(raw) === '[object Date]'){
+          return;
+        }
+        if(raw === undefined || raw === null || raw === '') return;
+        if(key === 'releaseDate' && Object.prototype.toString.call(raw) === '[object Date]'){
           rec[key] = Utilities_formatDateLocal_(raw);
         } else {
           const s = String(raw).trim();
@@ -5828,8 +5923,6 @@
     return allRecords;
   }
 
-  function normalizeEngine_(s){ return String(s || '').replace(/[\s-]+/g, '').toUpperCase(); }
-
   // Matches every parsed row against the currently loaded list by customer
   // name — and, whenever the row also carries an engine number, by
   // name+engine together. Import ONLY updates existing, already-matched
@@ -5851,22 +5944,26 @@
   // other's columns even when both happen to be present in the same file.
   function matchImportRecords_(allRecords, pickPayload_){
     const nameIndex = {};
+    const compactNameIndex = {};
+    const tokenNameIndex = {};
     const compoundIndex = {};
-    // Engine-only index (new): lets a row match purely on engine number
-    // when the name in the import file doesn't line up exactly — a
-    // retyped/misspelled name, extra initials, different name order,
-    // etc. The engine number is the more reliable identifier of an
-    // actual unit, so it's trusted on its own when it matches exactly.
     const engineIndex = {};
+    const engineNumericIndex = {};
     customers.forEach(c => {
       const nameKey = normalizeName_(c.customer);
       (nameIndex[nameKey] = nameIndex[nameKey] || []).push(c);
+      const compactNameKey = normalizeNameCompact_(c.customer);
+      if(compactNameKey) (compactNameIndex[compactNameKey] = compactNameIndex[compactNameKey] || []).push(c);
+      const tokenNameKey = normalizeNameTokenKey_(c.customer);
+      if(tokenNameKey) (tokenNameIndex[tokenNameKey] = tokenNameIndex[tokenNameKey] || []).push(c);
       const engKey = normalizeEngine_(c.engineNo);
+      const engNumKey = normalizeEngineNumeric_(c.engineNo);
       if(engKey){
         const key = nameKey + '|' + engKey;
         (compoundIndex[key] = compoundIndex[key] || []).push(c);
         (engineIndex[engKey] = engineIndex[engKey] || []).push(c);
       }
+      if(engNumKey) (engineNumericIndex[engNumKey] = engineNumericIndex[engNumKey] || []).push(c);
     });
 
     const toUpdate = [];
@@ -5898,29 +5995,51 @@
 
       // 1) Best case: name AND engine both match exactly, together.
       if(engKey && nameKey){
-        matches = compoundIndex[nameKey + '|' + engKey] || null;
+        const compound = compoundIndex[nameKey + '|' + engKey] || null;
+        if(compound && compound.length === 1) matches = compound;
       }
 
-      // 2) Name didn't match (or wasn't matched together with this
-      //    engine) — but the engine number on its own matches exactly.
-      //    Trust it: the engine number is what actually identifies the
-      //    unit, so a misspelled/retyped name shouldn't block the match.
+      // 2) Exact engine-only match. An engine shared by multiple live
+      // accounts is ambiguous, so it is never used to update multiple rows.
       if((!matches || !matches.length) && engKey){
         const byEngine = engineIndex[engKey];
-        if(byEngine && byEngine.length){ matches = byEngine; loose = true; }
+        if(byEngine && byEngine.length === 1){ matches = byEngine; loose = true; }
       }
 
-      // 3) Engine didn't match (missing from the file, or misspelled/
-      //    retyped so it doesn't line up with anything on file) — but
-      //    the name on its own matches exactly. Trust it the same way.
-      //    If the name is shared by more than one account, ALL of them
-      //    get updated (same as before) rather than guessing which one.
+      // 2b) Numeric engine fallback (e.g. source stored 00123 while Excel
+      // converted the live value to 123). Only trust it when UNIQUE.
+      if((!matches || !matches.length) && engKey){
+        const engNumKey = normalizeEngineNumeric_(rec.engineNo);
+        const byEngineNum = engNumKey ? engineNumericIndex[engNumKey] : null;
+        if(byEngineNum && byEngineNum.length === 1){ matches = byEngineNum; loose = true; }
+      }
+
+      // 3) Exact customer-name match. If an engine was supplied but failed
+      // to match, accept the name only when that name identifies ONE account.
+      // This prevents a bad engine number from causing every same-name unit
+      // to receive the wrong balances. With no engine in the source, the old
+      // behavior remains: all exact same-name accounts are updated.
       if((!matches || !matches.length) && nameKey){
         const byName = nameIndex[nameKey];
-        if(byName && byName.length){
+        if(byName && byName.length && (!engKey || byName.length === 1)){
           matches = byName;
-          if(engKey) loose = true; // an engine WAS given but it didn't line up — flag it
+          if(engKey) loose = true;
         }
+      }
+
+      // 4) Punctuation/spacing-insensitive customer match. Only accept a
+      // unique target to prevent a typo from updating two people.
+      if((!matches || !matches.length) && nameKey){
+        const compact = normalizeNameCompact_(rec.customer);
+        const byCompact = compact ? compactNameIndex[compact] : null;
+        if(byCompact && byCompact.length === 1){ matches = byCompact; loose = true; }
+      }
+
+      // 5) Token-order-insensitive name match, again only when unique.
+      if((!matches || !matches.length) && nameKey){
+        const tokenKey = normalizeNameTokenKey_(rec.customer);
+        const byToken = tokenKey ? tokenNameIndex[tokenKey] : null;
+        if(byToken && byToken.length === 1){ matches = byToken; loose = true; }
       }
 
       if(!matches || !matches.length){
@@ -5944,10 +6063,57 @@
         }
       }
       payloadRows += matches.length;
-      matches.forEach(m => toUpdate.push(Object.assign({ row: m.row, customer: m.customer }, payload)));
+      matches.forEach(m => toUpdate.push(Object.assign({
+        row: m.row,
+        customer: m.customer,
+        engineNo: m.engineNo || ''
+      }, payload)));
     });
 
-    return { toUpdate, unmatched, unmatchedNames, duplicateNameRows, payloadRows, looseMatchRows, looseMatchExamples };
+    // Reconcile duplicate balance rows before sending anything. If the same
+    // account appears more than once with conflicting balance values, do NOT
+    // guess which source row wins; skip that account and report it. Identical
+    // duplicate rows collapse into one write. Remarks intentionally remain
+    // duplicated because each source remark is a separate historical entry.
+    const conflictRows = [];
+    if(toUpdate.length){
+      const grouped = {};
+      toUpdate.forEach(item => {
+        const key = String(item.row);
+        (grouped[key] = grouped[key] || []).push(item);
+      });
+      const reconciled = [];
+      Object.keys(grouped).forEach(key => {
+        const group = grouped[key];
+        if(group.length === 1 || group.some(x => x.fields && x.fields.__allowDuplicateAppend)){
+          reconciled.push.apply(reconciled, group);
+          return;
+        }
+        // Remarks flow has historyAppend; preserve every row.
+        if(group.every(x => x.historyAppend !== undefined)){
+          reconciled.push.apply(reconciled, group);
+          return;
+        }
+        const merged = Object.assign({}, group[0], { fields: Object.assign({}, group[0].fields) });
+        let conflict = false;
+        group.slice(1).forEach(item => {
+          Object.keys(item.fields || {}).forEach(k => {
+            const a = merged.fields[k], b = item.fields[k];
+            if(a !== undefined && b !== undefined && String(a) !== String(b)) conflict = true;
+            else if(a === undefined) merged.fields[k] = b;
+          });
+        });
+        if(conflict){
+          conflictRows.push(group[0].customer + (group[0].engineNo ? ' — ' + group[0].engineNo : ''));
+          return;
+        }
+        reconciled.push(merged);
+      });
+      toUpdate.length = 0;
+      toUpdate.push.apply(toUpdate, reconciled);
+      payloadRows = toUpdate.length;
+    }
+    return { toUpdate, unmatched, unmatchedNames, duplicateNameRows, payloadRows, looseMatchRows, looseMatchExamples, conflictRows };
   }
 
   // ---- Import Balances -----------------------------------------------
@@ -5958,12 +6124,17 @@
     const allRecords = await parseImportFiles_(fileList);
     if(!allRecords.length){ toast('No customer rows found to import.'); return; }
 
-    const { toUpdate, unmatched, unmatchedNames, duplicateNameRows, looseMatchRows, looseMatchExamples } = matchImportRecords_(allRecords, rec => {
+    const { toUpdate, unmatched, unmatchedNames, duplicateNameRows, looseMatchRows, looseMatchExamples, conflictRows } = matchImportRecords_(allRecords, rec => {
       const fields = {};
       ['dueThisMonth', 'paymentAdv', 'penaltyDue'].forEach(k => { if(rec[k] !== undefined) fields[k] = rec[k]; });
       if(!Object.keys(fields).length) return null; // no balance figures on this row — nothing for this flow to do
       return { fields };
     });
+
+    if(conflictRows && conflictRows.length){
+      toast(`Warning: ${conflictRows.length} account${conflictRows.length === 1 ? '' : 's'} appeared multiple times with conflicting balance values. Those account${conflictRows.length === 1 ? '' : 's'} were skipped; the other matched accounts can still import.`);
+      logActivity_('warning', 'Import balances blocked', 'Conflicting duplicate source rows were detected; no conflicting account was written.', [ { label: 'Conflicting duplicates', items: conflictRows.slice(0, 300) } ]);
+    }
 
     if(!toUpdate.length){
       toast(unmatched
@@ -5977,6 +6148,7 @@
       + (looseMatchRows ? `. ${looseMatchRows} matched by name OR engine only (the other didn't line up exactly) — double-check these` : '')
       + (duplicateNameRows ? `. ${duplicateNameRows} name${duplicateNameRows === 1 ? '' : 's'} matched more than one account — all of them will be updated` : '')
       + (unmatched ? `. ${unmatched} unmatched row${unmatched === 1 ? '' : 's'} will be skipped (no new customers are created by import)` : '')
+      + (conflictRows && conflictRows.length ? `. ${conflictRows.length} conflicting duplicate account${conflictRows.length === 1 ? '' : 's'} will be skipped` : '')
       + '. Remarks are not touched by this import. Continue?';
     if(!await appConfirm(msg, { title: 'Import balances?', confirmText: 'Import' })) return;
 
@@ -5996,8 +6168,16 @@
       // cancelled partway — no duplicate-value risk like remarks below.
       updateResult = await runBatched_(
         toUpdate, 'batchUpdateCustomer', 'updates',
-        item => ({ row: item.row, fields: item.fields }),
-        'updateCustomer', item => ({ row: item.row, fields: item.fields }),
+        item => ({
+          row: item.row,
+          expect: { customer: item.customer, engineNo: item.engineNo || '' },
+          fields: item.fields
+        }),
+        'updateCustomer', item => ({
+          row: item.row,
+          expect: { customer: item.customer, engineNo: item.engineNo || '' },
+          fields: item.fields
+        }),
         total, 0,
         item => item.customer,
         control
@@ -6018,6 +6198,7 @@
       [
         { label: 'Not matched — no customer found on this branch', items: unmatchedNames },
         { label: 'Matched by name or engine only — please double-check', items: looseMatchExamples },
+        { label: 'Duplicate source rows conflicted — skipped', items: conflictRows || [] },
         { label: 'Matched, but failed to save', items: updateResult.failedLabels }
       ]
     );
@@ -6071,8 +6252,15 @@
       // stamp).
       updateResult = await runBatched_(
         toUpdate, 'batchUpdateCustomer', 'updates',
-        item => ({ row: item.row, historyAppend: item.historyAppend }),
-        'appendRemarkHistoryRow', item => ({ row: item.row, entry: item.historyAppend }),
+        item => ({
+          row: item.row,
+          expect: { customer: item.customer, engineNo: item.engineNo || '' },
+          historyAppend: item.historyAppend
+        }),
+        'appendRemarkHistoryRow', item => ({
+          row: item.row,
+          entry: item.historyAppend
+        }),
         total, 0,
         item => item.customer,
         control
@@ -6152,16 +6340,16 @@
       row.forEach((cell, idx) => {
         const norm = normHeader_(cell);
         if(!norm) return;
-        if(cols.customer === undefined && norm.indexOf('customer') !== -1) cols.customer = idx;
-        else if(cols.release === undefined && norm.indexOf('release') !== -1) cols.release = idx;
-        else if(cols.model === undefined && norm === 'model') cols.model = idx;
-        else if(cols.engine === undefined && norm.indexOf('engine') !== -1) cols.engine = idx;
-        else if(cols.dueDate === undefined && norm.indexOf('due') !== -1 && norm.indexOf('date') !== -1) cols.dueDate = idx;
-        else if(cols.term === undefined && norm === 'term') cols.term = idx;
-        else if(cols.ma === undefined && norm === 'ma') cols.ma = idx;
-        else if(cols.begBal === undefined && norm.indexOf('beg') !== -1 && norm.indexOf('bal') !== -1) cols.begBal = idx;
-        else if(norm === 'ttl') ttlIdxs.push(idx);
-        else if(cols.adv === undefined && norm === 'adv') cols.adv = idx;
+        if(cols.customer === undefined && /customer|cust/i.test(norm)) cols.customer = idx;
+        else if(cols.release === undefined && /(release|restruct|rstr)/i.test(norm)) cols.release = idx;
+        else if(cols.model === undefined && /^(model|unit\s*model)$/i.test(norm)) cols.model = idx;
+        else if(cols.engine === undefined && /engine|eng\s*(no|number|#)/i.test(norm)) cols.engine = idx;
+        else if(cols.dueDate === undefined && /due.*date|date.*due/i.test(norm)) cols.dueDate = idx;
+        else if(cols.term === undefined && /^(term|terms)$/i.test(norm)) cols.term = idx;
+        else if(cols.ma === undefined && /^(ma|monthly\s*amortization)$/i.test(norm)) cols.ma = idx;
+        else if(cols.begBal === undefined && /beg.*bal|beginning.*bal|begin.*balance/i.test(norm)) cols.begBal = idx;
+        else if(/^ttl(?:\s*\d+)?$/i.test(norm) || /^total$/i.test(norm)) ttlIdxs.push(idx);
+        else if(cols.adv === undefined && /^(adv|advance|payment\s*\(?adv\)?$)/i.test(norm)) cols.adv = idx;
       });
       // Needs a customer column, a beginning-balance column, and the
       // "Adv" column — specific enough to this report shape that it
@@ -6239,8 +6427,11 @@
         continue;
       }
 
-      const begBal = parseNum_(row[cols.begBal]);
-      if(isNaN(begBal)) continue; // doesn't look like a real data row
+      const begBalRaw = row[cols.begBal];
+      const coreDataPresent = coreIdxs.some(idx => idx !== undefined && row[idx] !== undefined && row[idx] !== null && String(row[idx]).trim() !== '');
+      if(!coreDataPresent) continue; // section/spacer row
+      const begBalParsed = parseNum_(begBalRaw);
+      const begBal = isNaN(begBalParsed) ? 0 : begBalParsed;
 
       const maVal = parseNum_(row[cols.ma]);
       const ttl1 = cols.ttl1 !== undefined ? parseNum_(row[cols.ttl1]) : NaN;
@@ -6311,11 +6502,14 @@
   function buildAccountsCreateFields_(allRecords){
     return allRecords.map(rec => {
       const fields = {};
-      ['customer', 'model', 'engineNo', 'releaseDate', 'dueDate', 'term', 'ma', 'begBal', 'customerStatus']
+      ['customer', 'model', 'engineNo', 'releaseDate', 'dueDate', 'term', 'ma', 'begBal',
+       'dueThisMonth', 'paymentAdv', 'penaltyDue', 'customerStatus']
         .forEach(k => { if(rec[k] !== undefined && rec[k] !== '') fields[k] = rec[k]; });
-      fields.dueThisMonth = 0;
-      fields.paymentAdv = 0;
-      fields.penaltyDue = 0;
+      // Preserve balances parsed from the source. The old code parsed them,
+      // then unconditionally replaced all three with 0.
+      if(fields.dueThisMonth === undefined) fields.dueThisMonth = 0;
+      if(fields.paymentAdv === undefined) fields.paymentAdv = 0;
+      if(fields.penaltyDue === undefined) fields.penaltyDue = 0;
       return fields;
     });
   }
@@ -6345,20 +6539,52 @@
     return arr;
   }
 
+  function dedupeImportAccounts_(records){
+    const groups = {};
+    const conflicts = [];
+    const order = [];
+    records.forEach((rec, i) => {
+      const name = normalizeName_(rec.customer);
+      const eng = normalizeEngine_(rec.engineNo);
+      const key = (eng ? 'E|' + eng : 'N|' + name);
+      if(!groups[key]){ groups[key] = { first: Object.assign({}, rec), sourceIndexes: [i] }; order.push(key); return; }
+      const g = groups[key];
+      g.sourceIndexes.push(i);
+      const fieldKeys = ['model','engineNo','releaseDate','dueDate','term','ma','begBal','dueThisMonth','paymentAdv','penaltyDue','customerStatus'];
+      let conflict = false;
+      fieldKeys.forEach(k => {
+        const a = g.first[k], b = rec[k];
+        if(a !== undefined && b !== undefined && String(a) !== String(b)) conflict = true;
+        else if(a === undefined && b !== undefined) g.first[k] = b;
+      });
+      if(conflict && conflicts.length < 300){
+        conflicts.push((rec.customer || '(blank)') + (rec.engineNo ? ' — ' + rec.engineNo : ''));
+      }
+    });
+    return { records: order.map(k => groups[k].first), conflicts };
+  }
+
   async function handleImportAccountsFiles(fileList){
     if(importRun_){ toast('An import is already running — wait for it to finish (or cancel it) first.'); return; }
     const allRecords = await parseAccountsFiles_(fileList);
     if(!allRecords.length){ toast('No account rows found to import.'); return; }
 
-    const toCreate = buildAccountsCreateFields_(allRecords);
+    const deduped = dedupeImportAccounts_(allRecords);
+    if(deduped.conflicts.length){
+      toast(`Import stopped: ${deduped.conflicts.length} duplicate account${deduped.conflicts.length === 1 ? '' : 's'} contain conflicting source data. Nothing was cleared or imported.`);
+      logActivity_('warning', 'Import accounts blocked', 'Conflicting duplicate account rows were detected before the branch was changed.', [ { label: 'Conflicting duplicates', items: deduped.conflicts } ]);
+      return;
+    }
+
+    const toCreate = buildAccountsCreateFields_(deduped.records);
     const branchName = currentSheet;
 
-    const msg = `Found ${toCreate.length} account${toCreate.length === 1 ? '' : 's'} in the file.\n\n`
+    const msg = `Found ${allRecords.length} source account${allRecords.length === 1 ? '' : 's'}; ${toCreate.length} unique account${toCreate.length === 1 ? '' : 's'} after duplicate cleanup.\n\n`
       + `Importing will PERMANENTLY CLEAR every existing customer record in "${branchName}" `
       + `(customers, remarks, and color markers) and replace them with these ${toCreate.length} `
       + `account${toCreate.length === 1 ? '' : 's'} as brand-new entries — this import does not try to `
       + `match or merge with what\u2019s already there.\n\n`
-      + `Due This Month / Payment (Adv) / Penalty Due will be 0 for all of them (use Import Balances `
+      + `Due This Month / Payment (Adv) / Penalty Due will be imported when those columns exist in the source; missing balance columns default to 0. Import Balances `
       + `afterward to fill them in). Unit status, Payment mode, Date of Audit, Auditor Remarks and `
       + `Previous Audit Remarks will all start blank.\n\n`
       + `This cannot be undone. Continue?`;

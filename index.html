@@ -168,6 +168,9 @@
   .sub-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap;row-gap:4px;}
   .hdr-sep{color:#4D5788;font-size:10px;}
   .hdr-status{font-size:10.5px;color:#B7C0E8;white-space:nowrap;}
+  .perf-status{display:inline-flex;align-items:center;gap:5px;min-width:0;}
+  .perf-loader{width:9px;height:9px;border:2px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;display:none;animation:hdr-sync-spin .8s linear infinite;flex:0 0 auto;}
+  #performanceSyncStatus[data-state="loading"] .perf-loader,#performanceSyncStatus[data-state="saving"] .perf-loader{display:inline-block;}
 
   /* Manual online/offline toggle — a small pill switch sitting right next
      to the dot/label, so the auto-detected state (dot+text) and the
@@ -1915,6 +1918,9 @@
           <span class="hdr-status" id="connStatus">Not connected yet.</span>
           <span id="pendingWrap" style="display:none;">· <span class="count" id="pendingCount">0</span> pending <button onclick="openSyncModal()">View sync</button></span>
         </div>
+        <div class="sub-row sub-row-sync">
+          <span class="hdr-status perf-status" id="performanceSyncStatus" aria-live="polite" title="Shared PERFORMANCE snapshot status"><span class="perf-loader" aria-hidden="true"></span><span class="perf-status-text">Shared PERFORMANCE: checking…</span></span>
+        </div>
       </div>
     </div>
     <div class="hdr-clock-wrap">
@@ -3353,7 +3359,8 @@
       historyEdit: u.revertHistory,
       status: 'pending',
       customerName: (u.afterSnapshot && u.afterSnapshot.customer) || null,
-      snapshot: u.afterSnapshot || null
+      snapshot: u.afterSnapshot || null,
+      expect: u.afterSnapshot ? { customer: String(u.afterSnapshot.customer || '').trim(), engineNo: String(u.afterSnapshot.engineNo == null ? '' : u.afterSnapshot.engineNo).trim() } : null
     };
     await queueOrSend_(item);
     toast('Undo queued — syncing…');
@@ -4009,6 +4016,10 @@
     // — no point building a snapshot list that will never be attached to
     // the activity entry or uploaded anywhere.
     const undoSnapshots = skipUndo ? [] : rows.map(r => customers.find(x => x.row === r)).filter(Boolean).map(c => Object.assign({}, c));
+    const deleteExpectByRow = new Map(rows.map(r => {
+      const c = customers.find(x => x.row === r);
+      return [r, c ? { customer: String(c.customer || '').trim(), engineNo: String(c.engineNo == null ? '' : c.engineNo).trim() } : null];
+    }));
 
     const btn = document.getElementById('bulkDeleteBtn');
     const originalLabel = btn.textContent;
@@ -4037,8 +4048,8 @@
       try{
         result = await runBatched_(
           rows, 'batchDeleteCustomer', 'rows',
-          r => r,
-          'deleteCustomer', r => ({ row: r }),
+          r => ({ row: r, expect: deleteExpectByRow.get(r) || null }),
+          'deleteCustomer', r => ({ row: r, expect: deleteExpectByRow.get(r) || null }),
           rows.length, 0,
           r => rowNameByRow.get(r),
           null,
@@ -4114,7 +4125,11 @@
     for(const row of rows){
       btn.textContent = 'Deleting ' + (done + failed + 1) + '/' + rows.length + '…';
       try{
-        await queueOrSend_({ id: genId_(), kind: 'delete', row: row, status: 'pending', customerName: (undoSnapshots.find(s => s.row === row) || {}).customer || null });
+        await queueOrSend_({
+          id: genId_(), kind: 'delete', row: row, status: 'pending',
+          customerName: (undoSnapshots.find(s => s.row === row) || {}).customer || null,
+          expect: deleteExpectByRow.get(row) || null
+        });
         clearDraft_(row);
         selectedRows.delete(row);
         const snap = undoSnapshots.find(s => s.row === row);
@@ -4228,8 +4243,10 @@
       status: 'pending',
       customerName: c.customer || null,
       // Only the marker field is being touched, so only it needs to be
-      // snapshotted for drift detection at sync time.
-      snapshot: { marker: prev }
+      // snapshotted for drift detection at sync time. `expect` separately
+      // protects row identity if the sheet shifts while this device is offline.
+      snapshot: { marker: prev },
+      expect: { customer: String(c.customer || '').trim(), engineNo: String(c.engineNo == null ? '' : c.engineNo).trim() }
     };
 
     try{
@@ -6814,6 +6831,9 @@
     loadOutbox_();
     updateSyncUI();
     loadData();
+    schedulePerformanceSnapshot_(1000);
+    schedulePerformancePoll_();
+    refreshPerformanceStatus_(true);
   }
 
   // Apps Script Web Apps issue a 302 redirect on every request. Browsers
@@ -8575,23 +8595,17 @@
         fields: item.fields,
         historyEdit: item.historyEdit !== undefined ? item.historyEdit : null,
         currentEdit: item.currentEdit !== undefined ? item.currentEdit : null,
-        // BUG FIX: Date of Audit was only ever stamped server-side when
-        // `remark` (the old "add new remark" flow) was non-empty. Since
-        // remarks are now only ever edited via `currentEdit`, that path
-        // never touched the date at all, so it silently stayed blank on
-        // the sheet on every save. Sending the date explicitly — '' to
-        // clear it, a real date to stamp it, or omitted when the remark
-        // box wasn't touched at all — makes updateCustomerFull set it
-        // directly instead of trying to derive it from `remark`.
         dateOfAudit: item.currentEditDate !== undefined ? item.currentEditDate : null,
         remark: item.remark || '',
         auditor: item.auditor || '',
-        opId: item.id
+        opId: item.id,
+        expect: item.expect || null,
+        base: item.snapshot || item.base || null
       });
       return { row: data.row, deduped: !!data._deduped };
     }
     if(item.kind === 'delete'){
-      const data = await apiCallJson_('deleteCustomer', { row: item.row, opId: item.id });
+      const data = await apiCallJson_('deleteCustomer', { row: item.row, opId: item.id, expect: item.expect || null });
       return { row: item.row, deduped: !!(data && data._deduped) };
     }
   }
@@ -8870,7 +8884,9 @@
         dateOfAudit: item.currentEditDate !== undefined ? item.currentEditDate : null,
         remark: item.remark || '',
         auditor: item.auditor || '',
-        opId: item.id
+        opId: item.id,
+        expect: item.expect || null,
+        base: item.snapshot || item.base || null
       };
     }
 
@@ -9356,6 +9372,7 @@
 
     outbox = remaining;
     saveOutbox_();
+    if(syncedCount > 0) schedulePerformanceSnapshot_(1200);
     isSyncing = false;
 
     // FEATURE: batch progress ("12/20") + a clear, explicit completion
@@ -9823,6 +9840,73 @@
     if(el) el.style.display = 'none';
   }
 
+  // ---------------------------------------------------------------------------
+  // Shared PERFORMANCE snapshot status
+  // ---------------------------------------------------------------------------
+  // Additive only: branch data and the offline cache/outbox remain the normal
+  // data path. This status is a server-verified snapshot/version check.
+  let performanceSnapshotTimer_ = null;
+  let performancePollTimer_ = null;
+
+  function setPerformanceStatus_(state, message){
+    const el = document.getElementById('performanceSyncStatus');
+    if(!el) return;
+    const text = el.querySelector('.perf-status-text');
+    if(text) text.textContent = message || 'Shared PERFORMANCE: checking…';
+    el.dataset.state = state || 'checking';
+  }
+
+  function schedulePerformanceSnapshot_(delayMs){
+    if(!API_URL || !isOnline_()) return;
+    clearTimeout(performanceSnapshotTimer_);
+    performanceSnapshotTimer_ = setTimeout(() => { refreshPerformanceStatus_(true); }, Math.max(800, delayMs || 2500));
+  }
+
+  async function refreshPerformanceStatus_(trySync){
+    if(!API_URL){
+      setPerformanceStatus_('unavailable','Shared PERFORMANCE: not connected');
+      return;
+    }
+    if(!isOnline_()){
+      setPerformanceStatus_('offline','Shared PERFORMANCE: offline · local data is active');
+      return;
+    }
+    setPerformanceStatus_('loading','Shared PERFORMANCE: checking shared snapshot…');
+    try{
+      let status = await apiCallJsonRead_('performanceStatus', {}, 15000);
+      if(trySync && status && status.needsSync){
+        setPerformanceStatus_('saving','Shared PERFORMANCE: saving verified snapshot…');
+        status = await apiCallJson_('syncPerformance', {});
+      }
+      if(!status || status.error) throw new Error(status && status.error ? status.error : 'PERFORMANCE unavailable');
+      const count = Number(status.recordCount || 0).toLocaleString();
+      if(status.ready && status.sourceVersion === status.snapshotVersion){
+        const when = status.updatedAt ? new Date(status.updatedAt).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+        setPerformanceStatus_('ok','Shared PERFORMANCE: verified · ' + count + ' rows' + (when ? ' · ' + when : ''));
+      }else{
+        setPerformanceStatus_('stale','Shared PERFORMANCE: snapshot is stale');
+      }
+    }catch(err){
+      setPerformanceStatus_('unavailable','Shared PERFORMANCE: unavailable · main app remains active');
+    }
+  }
+
+  function schedulePerformancePoll_(){
+    clearTimeout(performancePollTimer_);
+    performancePollTimer_ = setTimeout(async function tick_(){
+      await refreshPerformanceStatus_(true);
+      performancePollTimer_ = setTimeout(tick_,30000);
+    },30000);
+  }
+
+  async function openPerformanceSheet_(){
+    if(!API_URL || !isOnline_()) return;
+    try{
+      const r = await apiCallJsonRead_('getPerformanceSheetUrl',{},12000);
+      if(r && r.url) window.open(r.url,'_blank','noopener');
+    }catch(e){}
+  }
+
   async function loadData(isColdStartRetryCount){
     isColdStartRetryCount = isColdStartRetryCount || 0;
     if(!API_URL){
@@ -9975,6 +10059,7 @@
       // fetch always leaves the auto-refresh timer's version check
       // up to date too, with no extra round trip.
       if(typeof data.version === 'number'){ lastKnownVersion_ = data.version; lastVersionConfirmedAt_ = Date.now(); }
+      schedulePerformanceSnapshot_(1800);
 
       const freshHash = listHash_(fresh);
       if(freshHash !== lastListHash){
@@ -11999,7 +12084,8 @@
           snapshot: c ? Object.assign(
             { customer: c.customer, auditorRemarks: c.auditorRemarks, dateOfAudit: c.dateOfAudit, previousRemarks: c.previousRemarks },
             Object.fromEntries(Object.keys(fields).map(k => [k, c[k]]))
-          ) : null
+          ) : null,
+          expect: c ? { customer: String(c.customer || '').trim(), engineNo: String(c.engineNo == null ? '' : c.engineNo).trim() } : null
         };
         // SAFETY: see MAX_SINGLE_WRITE_ENCODED_CHARS's comment above.
         // This is the one that matters in practice — historyEdit resends
@@ -12144,7 +12230,10 @@
 
     try{
       const snapshotForUndo = c ? Object.assign({}, c) : null;
-      const item = { id: genId_(), kind: 'delete', row: activeRow, status: 'pending', customerName: c ? c.customer : null };
+      const item = {
+        id: genId_(), kind: 'delete', row: activeRow, status: 'pending', customerName: c ? c.customer : null,
+        expect: c ? { customer: String(c.customer || '').trim(), engineNo: String(c.engineNo == null ? '' : c.engineNo).trim() } : null
+      };
       await queueOrSend_(item);
       toast('Customer deleted — syncing…');
       logActivity_('success', 'Customer deleted', label + ' removed from "' + currentSheet + '".', null, undefined, snapshotForUndo ? {
@@ -12615,6 +12704,9 @@
       updateSyncUI();
       await loadData();
       if(outbox.length) syncOutbox();
+      schedulePerformanceSnapshot_(1000);
+      schedulePerformancePoll_();
+      refreshPerformanceStatus_(true);
       schedulePrefetch_();
       syncActivityLog_(); // pull the shared log so this device is caught up from first paint
       if(activityOutbox_.length) syncActivityOutbox_(); // replay anything queued while offline last session

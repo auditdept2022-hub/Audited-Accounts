@@ -5297,50 +5297,56 @@
     return { atoms: out, split };
   }
 
-  // Works out the money columns from the data itself (right edges) and ties
-  // each to the nearest header; money columns with no header become extra
-  // unlabeled columns. Returns null when the legacy bucketing is fine.
+  // Decides whether this table needs content-based placement and, if so,
+  // builds the plan. Money values are placed by the CENTER of their text
+  // (so both right-aligned and left-aligned columns land under the right
+  // header). A money value that sits far from EVERY header (like the
+  // header-less "Age" column in the aging report) becomes its own extra
+  // unlabeled column instead of being glued onto a neighbour. Returns null
+  // when neither that nor a fused-text item is present, so ordinary PDFs
+  // keep using the original bucketing untouched.
+  const PDF_ORPHAN_DISTANCE = 28; // points from the nearest header's center
   function pdfPlanMoneyColumns_(dataLines, columns){
     const heads = columns.map(c => c.text.toLowerCase());
     const custIdx = heads.findIndex(h => /customer/.test(h));
     if(custIdx === -1) return null;
     const engIdx = heads.findIndex(h => /engine/.test(h));
     const collIdx = heads.findIndex(h => /collector/.test(h));
-    const nums = [];
+    const skipHead = new Set([custIdx, engIdx, collIdx].filter(i => i !== -1));
+    const numCols = [];
+    columns.forEach((c, ci) => {
+      if(skipHead.has(ci)) return;
+      numCols.push({ center: c.mid !== undefined ? c.mid : c.xCenter, col: ci });
+    });
+    if(!numCols.length) return null;
+
     let anySplit = false;
+    const orphanCenters = [];
     dataLines.forEach(l => l.items.forEach(it => {
       const r = pdfExpandItem_(it);
       if(r.split) anySplit = true;
-      r.atoms.forEach(a => { if(a.num) nums.push({ right: a.x + a.w, center: a.x + a.w / 2 }); });
+      r.atoms.forEach(a => {
+        if(!a.num) return;
+        const center = a.x + a.w / 2;
+        const d = Math.min.apply(null, numCols.map(n => Math.abs(n.center - center)));
+        if(d > PDF_ORPHAN_DISTANCE) orphanCenters.push(center);
+      });
     }));
-    if(!nums.length) return null;
-    nums.sort((a, b) => a.right - b.right);
-    const groups = [];
-    nums.forEach(n => {
-      const g = groups[groups.length - 1];
-      if(g && Math.abs(g.right - n.right) <= 5){ g.items.push(n); g.right = g.items.reduce((s, t) => s + t.right, 0) / g.items.length; }
-      else groups.push({ right: n.right, items: [n] });
-    });
-    groups.forEach(g => { g.center = g.items.reduce((s, t) => s + t.center, 0) / g.items.length; });
+    if(!orphanCenters.length && !anySplit) return null; // original bucketing already handles this file
 
-    const skipHead = new Set([custIdx, engIdx, collIdx].filter(i => i !== -1));
-    const pairs = [];
-    groups.forEach((g, gi) => columns.forEach((c, ci) => {
-      if(skipHead.has(ci)) return;
-      pairs.push({ gi, ci, d: Math.abs(g.center - (c.mid !== undefined ? c.mid : c.xCenter)) });
-    }));
-    pairs.sort((a, b) => a.d - b.d);
-    const usedG = new Set(), usedC = new Set();
-    pairs.forEach(p => {
-      if(p.d > 25 || usedG.has(p.gi) || usedC.has(p.ci)) return;
-      usedG.add(p.gi); usedC.add(p.ci); groups[p.gi].col = p.ci;
-    });
-    let orphans = 0;
-    groups.forEach(g => { if(g.col === undefined) orphans++; });
-    if(!orphans && !anySplit) return null; // original bucketing already handles this file
     const cols = columns.map(c => ({ xCenter: c.xCenter, mid: c.mid, text: c.text }));
-    groups.forEach(g => { if(g.col === undefined){ cols.push({ xCenter: g.center, text: '' }); g.col = cols.length - 1; } });
-    return { cols, groups, custIdx, engIdx, collIdx };
+    orphanCenters.sort((x, y) => x - y);
+    const groups = [];
+    orphanCenters.forEach(c => {
+      const g = groups[groups.length - 1];
+      if(g && Math.abs(g.center - c) <= 12){ g.n++; g.center = (g.center * (g.n - 1) + c) / g.n; }
+      else groups.push({ center: c, n: 1 });
+    });
+    groups.forEach(g => {
+      cols.push({ xCenter: g.center, mid: g.center, text: '' });
+      numCols.push({ center: g.center, col: cols.length - 1 });
+    });
+    return { cols, numCols, custIdx, engIdx, collIdx };
   }
 
   function pdfBucketLineByContent_(line, plan){
@@ -5353,8 +5359,9 @@
     const lastNumRight = nums.length ? Math.max.apply(null, nums.map(a => a.x + a.w)) : -1;
     atoms.forEach(a => {
       if(a.num){
-        let best = plan.groups[0], bd = Infinity;
-        plan.groups.forEach(g => { const d = Math.abs(g.right - (a.x + a.w)); if(d < bd){ bd = d; best = g; } });
+        const center = a.x + a.w / 2;
+        let best = plan.numCols[0], bd = Infinity;
+        plan.numCols.forEach(n => { const d = Math.abs(n.center - center); if(d < bd){ bd = d; best = n; } });
         put(best.col, a.str);
       } else if(a.engine && plan.engIdx !== -1){
         put(plan.engIdx, a.str);

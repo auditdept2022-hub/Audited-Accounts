@@ -168,9 +168,6 @@
   .sub-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap;row-gap:4px;}
   .hdr-sep{color:#4D5788;font-size:10px;}
   .hdr-status{font-size:10.5px;color:#B7C0E8;white-space:nowrap;}
-  .perf-status{display:inline-flex;align-items:center;gap:5px;min-width:0;}
-  .perf-loader{width:9px;height:9px;border:2px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;display:none;animation:hdr-sync-spin .8s linear infinite;flex:0 0 auto;}
-  #performanceSyncStatus[data-state="loading"] .perf-loader,#performanceSyncStatus[data-state="saving"] .perf-loader{display:inline-block;}
 
   /* Manual online/offline toggle — a small pill switch sitting right next
      to the dot/label, so the auto-detected state (dot+text) and the
@@ -1503,6 +1500,14 @@
   .profile-rename-input{flex:1;border:1.5px solid var(--accent);border-radius:8px;padding:6px 9px;font-size:13.5px;font-weight:600;font-family:inherit;outline:none;min-width:0;}
   .profile-empty-search{color:var(--muted);font-size:12.5px;padding:16px 2px;text-align:center;}
   .profile-offline-note{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--rstr);background:var(--rstr-soft);border:1px solid #E7D08C;border-radius:8px;padding:8px 10px;margin-bottom:10px;}
+  .profile-performance-status{display:flex;align-items:center;gap:8px;min-height:36px;padding:8px 10px;margin:0 0 12px;border:1px solid var(--line);border-radius:9px;background:#F8F9FD;color:var(--muted);font-size:11.5px;line-height:1.35;}
+  .profile-performance-status-text{min-width:0;overflow-wrap:anywhere;}
+  .profile-performance-loader{width:10px;height:10px;border:2px solid #D8DDED;border-top-color:var(--accent);border-radius:50%;display:none;animation:hdr-sync-spin .8s linear infinite;flex:0 0 auto;}
+  .profile-performance-status[data-state="ok"]{color:var(--ok);background:var(--ok-soft);border-color:#C9E7DA;}
+  .profile-performance-status[data-state="stale"]{color:#8B6A1F;background:var(--rstr-soft);border-color:#E7D08C;}
+  .profile-performance-status[data-state="offline"]{color:#8B6A1F;background:var(--rstr-soft);border-color:#E7D08C;}
+  .profile-performance-status[data-state="saving"],.profile-performance-status[data-state="loading"]{color:var(--accent-dark);background:var(--accent-soft);border-color:#CBD2F0;}
+  .profile-performance-status[data-state="unavailable"]{color:var(--muted);background:#F5F6FA;border-color:var(--line);}
 
   .tag-pending{display:inline-flex;align-items:center;gap:4px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:#8B6A1F;background:var(--rstr-soft);border-radius:20px;padding:2px 8px;margin-left:6px;}
   .tag-pending.err{color:var(--del);background:var(--del-soft);}
@@ -1918,9 +1923,6 @@
           <span class="hdr-status" id="connStatus">Not connected yet.</span>
           <span id="pendingWrap" style="display:none;">· <span class="count" id="pendingCount">0</span> pending <button onclick="openSyncModal()">View sync</button></span>
         </div>
-        <div class="sub-row sub-row-sync">
-          <span class="hdr-status perf-status" id="performanceSyncStatus" aria-live="polite" title="Shared PERFORMANCE snapshot status"><span class="perf-loader" aria-hidden="true"></span><span class="perf-status-text">Shared PERFORMANCE: checking…</span></span>
-        </div>
       </div>
     </div>
     <div class="hdr-clock-wrap">
@@ -2231,6 +2233,10 @@
       <div class="profile-search-row">
         <input class="input profile-search" id="profileSearch" placeholder="Search branches…" oninput="filterProfileList_(this.value)">
         <span class="profile-count" id="profileCount"></span>
+      </div>
+      <div class="profile-performance-status" id="profilePerformanceStatusWrap" title="Shared PERFORMANCE snapshot status">
+        <span class="profile-performance-loader" id="profilePerformanceLoader" aria-hidden="true"></span>
+        <span class="profile-performance-status-text" id="profilePerformanceStatusText" aria-live="polite">Shared PERFORMANCE: checking…</span>
       </div>
       <div id="profileOfflineNote" class="profile-offline-note" style="display:none;"></div>
       <div id="profileList" class="profile-list">
@@ -9849,11 +9855,13 @@
   let performancePollTimer_ = null;
 
   function setPerformanceStatus_(state, message){
-    const el = document.getElementById('performanceSyncStatus');
+    const el = document.getElementById('profilePerformanceStatusWrap');
     if(!el) return;
-    const text = el.querySelector('.perf-status-text');
+    const text = document.getElementById('profilePerformanceStatusText');
+    const loader = document.getElementById('profilePerformanceLoader');
     if(text) text.textContent = message || 'Shared PERFORMANCE: checking…';
     el.dataset.state = state || 'checking';
+    if(loader) loader.style.display = (state === 'loading' || state === 'saving') ? 'inline-block' : 'none';
   }
 
   function schedulePerformanceSnapshot_(delayMs){

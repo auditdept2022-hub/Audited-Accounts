@@ -1500,14 +1500,6 @@
   .profile-rename-input{flex:1;border:1.5px solid var(--accent);border-radius:8px;padding:6px 9px;font-size:13.5px;font-weight:600;font-family:inherit;outline:none;min-width:0;}
   .profile-empty-search{color:var(--muted);font-size:12.5px;padding:16px 2px;text-align:center;}
   .profile-offline-note{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--rstr);background:var(--rstr-soft);border:1px solid #E7D08C;border-radius:8px;padding:8px 10px;margin-bottom:10px;}
-  .profile-performance-status{display:flex;align-items:center;gap:8px;min-height:36px;padding:8px 10px;margin:0 0 12px;border:1px solid var(--line);border-radius:9px;background:#F8F9FD;color:var(--muted);font-size:11.5px;line-height:1.35;}
-  .profile-performance-status-text{min-width:0;overflow-wrap:anywhere;}
-  .profile-performance-loader{width:10px;height:10px;border:2px solid #D8DDED;border-top-color:var(--accent);border-radius:50%;display:none;animation:hdr-sync-spin .8s linear infinite;flex:0 0 auto;}
-  .profile-performance-status[data-state="ok"]{color:var(--ok);background:var(--ok-soft);border-color:#C9E7DA;}
-  .profile-performance-status[data-state="stale"]{color:#8B6A1F;background:var(--rstr-soft);border-color:#E7D08C;}
-  .profile-performance-status[data-state="offline"]{color:#8B6A1F;background:var(--rstr-soft);border-color:#E7D08C;}
-  .profile-performance-status[data-state="saving"],.profile-performance-status[data-state="loading"]{color:var(--accent-dark);background:var(--accent-soft);border-color:#CBD2F0;}
-  .profile-performance-status[data-state="unavailable"]{color:var(--muted);background:#F5F6FA;border-color:var(--line);}
 
   .tag-pending{display:inline-flex;align-items:center;gap:4px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:#8B6A1F;background:var(--rstr-soft);border-radius:20px;padding:2px 8px;margin-left:6px;}
   .tag-pending.err{color:var(--del);background:var(--del-soft);}
@@ -2233,10 +2225,6 @@
       <div class="profile-search-row">
         <input class="input profile-search" id="profileSearch" placeholder="Search branches…" oninput="filterProfileList_(this.value)">
         <span class="profile-count" id="profileCount"></span>
-      </div>
-      <div class="profile-performance-status" id="profilePerformanceStatusWrap" title="Shared PERFORMANCE snapshot status">
-        <span class="profile-performance-loader" id="profilePerformanceLoader" aria-hidden="true"></span>
-        <span class="profile-performance-status-text" id="profilePerformanceStatusText" aria-live="polite">Shared PERFORMANCE: checking…</span>
       </div>
       <div id="profileOfflineNote" class="profile-offline-note" style="display:none;"></div>
       <div id="profileList" class="profile-list">
@@ -6837,9 +6825,6 @@
     loadOutbox_();
     updateSyncUI();
     loadData();
-    schedulePerformanceSnapshot_(1000);
-    schedulePerformancePoll_();
-    refreshPerformanceStatus_(true);
   }
 
   // Apps Script Web Apps issue a 302 redirect on every request. Browsers
@@ -9378,7 +9363,6 @@
 
     outbox = remaining;
     saveOutbox_();
-    if(syncedCount > 0) schedulePerformanceSnapshot_(1200);
     isSyncing = false;
 
     // FEATURE: batch progress ("12/20") + a clear, explicit completion
@@ -9846,75 +9830,6 @@
     if(el) el.style.display = 'none';
   }
 
-  // ---------------------------------------------------------------------------
-  // Shared PERFORMANCE snapshot status
-  // ---------------------------------------------------------------------------
-  // Additive only: branch data and the offline cache/outbox remain the normal
-  // data path. This status is a server-verified snapshot/version check.
-  let performanceSnapshotTimer_ = null;
-  let performancePollTimer_ = null;
-
-  function setPerformanceStatus_(state, message){
-    const el = document.getElementById('profilePerformanceStatusWrap');
-    if(!el) return;
-    const text = document.getElementById('profilePerformanceStatusText');
-    const loader = document.getElementById('profilePerformanceLoader');
-    if(text) text.textContent = message || 'Shared PERFORMANCE: checking…';
-    el.dataset.state = state || 'checking';
-    if(loader) loader.style.display = (state === 'loading' || state === 'saving') ? 'inline-block' : 'none';
-  }
-
-  function schedulePerformanceSnapshot_(delayMs){
-    if(!API_URL || !isOnline_()) return;
-    clearTimeout(performanceSnapshotTimer_);
-    performanceSnapshotTimer_ = setTimeout(() => { refreshPerformanceStatus_(true); }, Math.max(800, delayMs || 2500));
-  }
-
-  async function refreshPerformanceStatus_(trySync){
-    if(!API_URL){
-      setPerformanceStatus_('unavailable','Shared PERFORMANCE: not connected');
-      return;
-    }
-    if(!isOnline_()){
-      setPerformanceStatus_('offline','Shared PERFORMANCE: offline · local data is active');
-      return;
-    }
-    setPerformanceStatus_('loading','Shared PERFORMANCE: checking shared snapshot…');
-    try{
-      let status = await apiCallJsonRead_('performanceStatus', {}, 15000);
-      if(trySync && status && status.needsSync){
-        setPerformanceStatus_('saving','Shared PERFORMANCE: saving verified snapshot…');
-        status = await apiCallJson_('syncPerformance', {});
-      }
-      if(!status || status.error) throw new Error(status && status.error ? status.error : 'PERFORMANCE unavailable');
-      const count = Number(status.recordCount || 0).toLocaleString();
-      if(status.ready && status.sourceVersion === status.snapshotVersion){
-        const when = status.updatedAt ? new Date(status.updatedAt).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
-        setPerformanceStatus_('ok','Shared PERFORMANCE: verified · ' + count + ' rows' + (when ? ' · ' + when : ''));
-      }else{
-        setPerformanceStatus_('stale','Shared PERFORMANCE: snapshot is stale');
-      }
-    }catch(err){
-      setPerformanceStatus_('unavailable','Shared PERFORMANCE: unavailable · main app remains active');
-    }
-  }
-
-  function schedulePerformancePoll_(){
-    clearTimeout(performancePollTimer_);
-    performancePollTimer_ = setTimeout(async function tick_(){
-      await refreshPerformanceStatus_(true);
-      performancePollTimer_ = setTimeout(tick_,30000);
-    },30000);
-  }
-
-  async function openPerformanceSheet_(){
-    if(!API_URL || !isOnline_()) return;
-    try{
-      const r = await apiCallJsonRead_('getPerformanceSheetUrl',{},12000);
-      if(r && r.url) window.open(r.url,'_blank','noopener');
-    }catch(e){}
-  }
-
   async function loadData(isColdStartRetryCount){
     isColdStartRetryCount = isColdStartRetryCount || 0;
     if(!API_URL){
@@ -10067,7 +9982,6 @@
       // fetch always leaves the auto-refresh timer's version check
       // up to date too, with no extra round trip.
       if(typeof data.version === 'number'){ lastKnownVersion_ = data.version; lastVersionConfirmedAt_ = Date.now(); }
-      schedulePerformanceSnapshot_(1800);
 
       const freshHash = listHash_(fresh);
       if(freshHash !== lastListHash){
@@ -12712,9 +12626,6 @@
       updateSyncUI();
       await loadData();
       if(outbox.length) syncOutbox();
-      schedulePerformanceSnapshot_(1000);
-      schedulePerformancePoll_();
-      refreshPerformanceStatus_(true);
       schedulePrefetch_();
       syncActivityLog_(); // pull the shared log so this device is caught up from first paint
       if(activityOutbox_.length) syncActivityOutbox_(); // replay anything queued while offline last session

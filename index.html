@@ -3381,11 +3381,11 @@
     const snap = u.snapshot;
     const fields = {};
     writableFieldKeys_().forEach(k => { if(snap[k] !== undefined && snap[k] !== '') fields[k] = snap[k]; });
-    const created = await apiCallJson_('createCustomerFull', { fields, remark: '', auditor: '', opId: genId_() });
+    const created = await apiCallJsonWriteRetry_('createCustomerFull', { fields, remark: '', auditor: '', opId: genId_() });
     const newRow = created.row;
     const hasRemarks = (snap.auditorRemarks && !isBlankRemark_(snap.auditorRemarks)) || (snap.previousRemarks && String(snap.previousRemarks).trim());
     if(hasRemarks){
-      await apiCallJson_('updateCustomerFull', {
+      await apiCallJsonWriteRetry_('updateCustomerFull', {
         row: newRow, fields: {},
         currentEdit: snap.auditorRemarks || '', historyEdit: snap.previousRemarks || '',
         dateOfAudit: snap.dateOfAudit || '',
@@ -4523,6 +4523,8 @@
   let syncStartedAt_ = 0;
 
   function outboxKey_(){ return 'aa_outbox_v1:' + API_URL + ':' + currentSheet; }
+  function outboxBackupKey_(){ return 'aa_outbox_lastgood_v1:' + API_URL + ':' + currentSheet; }
+  function outboxRecoveryKey_(){ return 'aa_outbox_recovery_v1:' + API_URL + ':' + currentSheet; }
 
   // ---- Storage resilience -------------------------------------------------
   // localStorage has a hard quota (typically 5-10MB per origin). Every write
@@ -4598,14 +4600,59 @@
   }
 
   function saveOutbox_(){
-    setStorageCritical_(outboxKey_(), JSON.stringify(outbox), 'your latest change');
+    const key = outboxKey_();
+    const backupKey = outboxBackupKey_();
+    const serialized = JSON.stringify(outbox);
+    // Keep the previous valid queue as a recovery copy. localStorage.setItem
+    // is atomic for the individual value, but a browser/storage failure can
+    // still leave the current value unreadable. The backup ensures a refresh
+    // never turns an unreadable queue into an empty queue silently.
+    try{
+      const currentRaw = localStorage.getItem(key);
+      if(currentRaw){
+        try{
+          const parsed = JSON.parse(currentRaw);
+          if(Array.isArray(parsed)) localStorage.setItem(backupKey, currentRaw);
+        }catch(e){ /* don't replace a good backup with corrupt data */ }
+      }
+    }catch(e){ /* backup is best-effort; critical write below still runs */ }
+    return setStorageCritical_(key, serialized, 'your latest change');
   }
 
   function loadOutbox_(){
+    const parseQueue_ = raw => {
+      if(!raw) return null;
+      const parsed = JSON.parse(raw);
+      if(!Array.isArray(parsed)) throw new Error('Outbox is not an array');
+      // A page refresh can happen while a network request is in flight.
+      // `syncing` is never a terminal state; normalize it back to pending.
+      return parsed.filter(item => item && item.status !== 'completed').map(item => {
+        if(item.status === 'syncing') item.status = 'pending';
+        return item;
+      });
+    };
     try{
-      const raw = localStorage.getItem(outboxKey_());
-      outbox = raw ? JSON.parse(raw) : [];
-    }catch(e){ outbox = []; }
+      const raw = localStorage.getItem(outboxKey_);
+      if(raw){
+        outbox = parseQueue_(raw) || [];
+        return;
+      }
+    }catch(e){
+      // Fall through to the last-good backup rather than wiping the queue.
+      try{ localStorage.setItem(outboxRecoveryKey_(), localStorage.getItem(outboxKey_()) || ''); }catch(e2){}
+    }
+    try{
+      const backup = localStorage.getItem(outboxBackupKey_());
+      outbox = parseQueue_(backup) || [];
+      if(outbox.length) saveOutbox_();
+      return;
+    }catch(e){
+      outbox = [];
+      toast('Could not read the saved sync queue. The app kept a recovery copy instead of deleting it.');
+      try{
+        logActivity_('error', 'Sync queue recovery needed', 'The saved offline queue could not be parsed after refresh. A recovery copy was retained locally; do not clear browser storage.', null, 'openSync');
+      }catch(e2){}
+    }
   }
 
   function genId_(){ return 'o' + Date.now() + Math.random().toString(36).slice(2, 8); }
@@ -6849,6 +6896,25 @@
     return fetchJson_(apiUrl_(action, payload));
   }
 
+  // Safe retry wrapper for MUTATING calls. Every mutating payload has a stable
+  // opId and the Apps Script backend deduplicates that opId, so retrying the
+  // exact same request after a timeout cannot double-write it. This closes the
+  // gap where a connection blip after a successful server write made the UI
+  // wait for the next 20s timer before trying again.
+  async function apiCallJsonWriteRetry_(action, payload, maxRetries){
+    const retries = Number.isFinite(maxRetries) ? Math.max(0, maxRetries) : 4;
+    let delay = 350;
+    for(let attempt = 0; ; attempt++){
+      try{
+        return await apiCallJson_(action, payload);
+      }catch(err){
+        if(attempt >= retries || (!isConnectionError_(err) && !isRetryableBusyError_(err))) throw err;
+        await new Promise(r => setTimeout(r, delay));
+        delay = Math.min(4000, Math.round(delay * 1.7));
+      }
+    }
+  }
+
   // Same as apiCallJson_, but retries on transient connection/parse
   // failures. Only safe for read-only actions (listSheets) — writes must
   // keep using apiCallJson_ so a hiccup never causes a duplicate write.
@@ -7577,6 +7643,15 @@
   async function switchProfile_(name){
     closeProfileMenu();
     if(name === currentSheet) return;
+    // Never change `currentSheet` while the queue processor is using it to
+    // build API URLs. The old implementation could switch branches during
+    // an in-flight sync, causing later requests in that same pass to target
+    // the NEW branch and making the queue state/UI race across branches.
+    if(isSyncing){
+      toast('Sync is still saving queued changes on "' + currentSheet + '". Please let it finish before switching branches.');
+      openProfileMenu();
+      return;
+    }
     if(outbox.length){
       if(!await appConfirm('You have ' + outbox.length + ' unsynced change(s) on "' + currentSheet + '". Switching branches now leaves them queued until you come back and sync. Continue?', { title: 'Unsynced changes', confirmText: 'Switch anyway' })){
         openProfileMenu();
@@ -8572,7 +8647,7 @@
   // withIdempotency_ in the backend.
   async function sendOne_(item){
     if(item.kind === 'create'){
-      const data = await apiCallJson_('createCustomerFull', {
+      const data = await apiCallJsonWriteRetry_('createCustomerFull', {
         fields: item.fields,
         remark: item.remark || '',
         auditor: item.auditor || '',
@@ -8596,7 +8671,7 @@
       return { row: data.row, deduped: !!data._deduped };
     }
     if(item.kind === 'delete'){
-      const data = await apiCallJson_('deleteCustomer', { row: item.row, opId: item.id, expect: item.expect || null });
+      const data = await apiCallJsonWriteRetry_('deleteCustomer', { row: item.row, opId: item.id, expect: item.expect || null });
       return { row: item.row, deduped: !!(data && data._deduped) };
     }
   }
@@ -8671,10 +8746,14 @@
     // attempt through instead of silently no-oping forever. Safe to do:
     // every write carries an opId the backend dedupes (withIdempotency_),
     // so an overlapping attempt can never double-submit.
-    if(isSyncing){
-      if(Date.now() - syncStartedAt_ < 45000) return;
-      console.warn('syncOutbox: isSyncing was stuck — forcing a fresh attempt.');
-    }
+    // Never overlap two queue processors. A watchdog that force-started a
+    // second run after 45s could let the older run finish later and overwrite
+    // the newer queue state (`outbox = remaining`), which is exactly how
+    // confirmed/offline items could appear to vanish after a refresh. Every
+    // actual network request below is timeout-bounded, so a permanently stuck
+    // processor has a defined exit path and the normal retry timer can take
+    // over without a second processor racing it.
+    if(isSyncing) return;
     if(!outbox.length) return;
     // MANUAL-OFFLINE FIX: this function deliberately does NOT gate on
     // navigator.onLine (see the big comment a few lines below) because
@@ -8801,41 +8880,29 @@
     }catch(e){ listErr = e; }
 
     if(!versionConfirmedCurrent && serverList === null){
-      isSyncing = false;
-      // PERFORMANCE FIX: a timed-out first request is almost always an
-      // Apps Script cold start — by the time this catch runs, the
-      // instance is usually already warm underneath. This used to just
-      // sit there as "Sync paused" for up to 20s (the auto-retry
-      // interval) or until the person noticed and opened the sync popup.
-      // Mirroring loadData()'s cold-start handling, retry quickly
-      // (300ms) instead of waiting out that full interval — same
-      // reasoning: capped retry count, immediate status update so
-      // nothing is silent, and this path is only ever reached for a
-      // read-only fetch, never for a write, so nothing can be
-      // double-submitted by retrying it.
-      if(listErr && listErr.name === 'AbortError'){
-        const delay = syncColdStartBackoff_(syncColdStartRetries);
-        syncColdStartRetries++;
-        document.getElementById('connStatus').textContent = 'Cold start — retrying sync automatically…';
-        setTimeout(() => { syncOutbox(); }, delay);
-        return;
-      }
+      // The client-side preflight is only a convenience for showing conflicts
+      // early. It must NEVER be allowed to block a real write: the backend
+      // independently enforces `expect` row identity and `base` conflict
+      // checks on every update/delete. So when the list read fails, send the
+      // queue directly and let the write endpoint be the authority.
       syncColdStartRetries = 0;
-      updateSyncUI();
-      if(isConnectionError_(listErr)){
+      if(listErr){
         const msg = connectionErrorLabel_(listErr);
-        notifySyncPaused_('list:' + msg, 'Sync paused — ' + msg, msg);
-      } else {
-        notifySyncPaused_('list-other:' + listErr.message, 'Sync failed: ' + listErr.message, listErr.message);
+        document.getElementById('connStatus').textContent = 'Syncing queued changes — live verification will follow…';
       }
-      return;
+    } else {
+      syncColdStartRetries = 0;
     }
-    syncColdStartRetries = 0;
     const serverByRow = {};
     if(serverList) serverList.forEach(c => { serverByRow[c.row] = c; });
 
 
     const remaining = [];
+    // IDs confirmed by the server during THIS pass. They are the only queue
+    // entries this pass is allowed to remove. Any new item added while this
+    // pass is running remains in the live `outbox`, even if it was created
+    // after this loop started.
+    const completedOutboxIds = new Set();
     let syncedAny = false;
     let syncedCount = 0; // how many items actually completed this pass — see lastKnownVersion_ bump below
     let needsFullReload = false; // set true only if an item can't be trusted to patch in locally (see below)
@@ -8950,7 +9017,7 @@
         let data = null;
         let chunkErr = null;
         try{
-          data = await apiCallJson_('batchUpdateCustomerFull', { updates: chunk.map(batchEntryForItem_) });
+          data = await apiCallJsonWriteRetry_('batchUpdateCustomerFull', { updates: chunk.map(batchEntryForItem_) });
         }catch(err){
           chunkErr = err;
         }
@@ -8994,16 +9061,29 @@
         chunk.forEach(item => {
           const r = byOpId[item.id];
           if(!r || !r.ok){
-            item.status = 'error';
-            item.error = (r && r.error) || 'No response came back for this change — please retry.';
-            remaining.push(item);
-            if(!item._loggedError){
-              item._loggedError = true;
-              logActivity_('error', 'Sync failed for a queued change', item.error, null, 'openSync');
+            if(r && r.code === 'CONFLICT'){
+              item.status = 'conflict';
+              item.serverSnapshot = r.current || null;
+              item.conflictDetectedAt = Date.now();
+              remaining.push(item);
+              if(!item._loggedConflict){
+                item._loggedConflict = true;
+                logActivity_('warning', 'Sync conflict', (r.error || 'Someone else changed this record before your offline edit synced.'), null, 'openSync');
+              }
+            }else{
+              item.status = 'error';
+              item.error = (r && r.error) || 'No response came back for this change — please retry.';
+              remaining.push(item);
+              if(!item._loggedError){
+                item._loggedError = true;
+                logActivity_('error', 'Sync failed for a queued change', item.error, null, 'openSync');
+              }
             }
             return;
           }
 
+          item.status = 'completed';
+          completedOutboxIds.add(item.id);
           if(item._needsFreshPull){
             // Same reasoning as the old per-item handling: this item's
             // fields/remark were merged via the per-field conflict
@@ -9024,6 +9104,11 @@
           const local = customers.find(x => x.row === item.row);
           if(local) serverByRow[item.row] = Object.assign({}, local);
         });
+        // Persist confirmed/completed states DURING the run, not only at the
+        // very end. A refresh/crash halfway through a large sync therefore
+        // leaves completed items safely resumable (and drops them on reload)
+        // while every untouched item remains pending.
+        saveOutbox_();
       }
     }
 
@@ -9061,13 +9146,17 @@
         // dedicated check, keyed off item.customerName (captured when
         // the delete was queued), that runs whether or not a snapshot
         // exists.
-        if(item.kind === 'delete' && !versionConfirmedCurrent){
+        if(item.kind === 'delete' && serverList !== null){
           const serverRow = serverByRow[item.row];
           if(!serverRow){
             // Already gone server-side — that's the desired end state
             // either way, nothing left to protect against.
             applyConfirmedDelete_(item);
+            item.status = 'completed';
+            completedOutboxIds.add(item.id);
             syncedAny = true;
+            syncedCount++;
+            saveOutbox_();
             continue;
           }
           if(item.customerName && normForCompare_(serverRow.customer) !== normForCompare_(item.customerName)){
@@ -9084,7 +9173,7 @@
           // Row still holds the expected customer (or this item predates
           // customerName being tracked, so there's nothing to check
           // against) — safe to proceed to sendOne_ below.
-        } else if(item.kind !== 'create' && item.snapshot && !versionConfirmedCurrent){
+        } else if(item.kind !== 'create' && item.snapshot && serverList !== null){
           const serverRow = serverByRow[item.row];
           if(!serverRow){
             // Row is gone server-side and there's nothing left to
@@ -9304,6 +9393,9 @@
           if(local) serverByRow[targetRow] = Object.assign({}, local);
         }
         syncedAny = true;
+        item.status = 'completed';
+        completedOutboxIds.add(item.id);
+        saveOutbox_();
         // BUG FIX: only count this toward the local version bump below if
         // the backend actually performed a write. A deduped replay
         // (result.deduped — see withIdempotency_ in Code.gs) returns the
@@ -9361,7 +9453,16 @@
     // unconditionally; it's a no-op if nothing's queued.
     await flushUpdateBatch_();
 
-    outbox = remaining;
+    // IMPORTANT: do NOT replace the live queue with `remaining`. Queueing can
+    // happen while sync is in flight, and another UI action may also remove a
+    // conflict item (Discard mine). Only remove IDs this pass has explicitly
+    // confirmed from the CURRENT live queue. Everything else stays exactly
+    // where it is, including edits added mid-sync.
+    outbox = outbox.filter(item => !completedOutboxIds.has(item.id));
+    // Any entry still carrying the transient 'syncing' state was not confirmed
+    // by the server (for example, the browser closed after a timeout). It must
+    // remain replayable on the next pass.
+    outbox.forEach(item => { if(item.status === 'syncing') item.status = 'pending'; });
     saveOutbox_();
     isSyncing = false;
 
@@ -9681,6 +9782,11 @@
     }
   });
   window.addEventListener('offline', updateSyncUI);
+  // Last synchronous persistence checkpoint before a page/tab is discarded.
+  // This does not try to sync; it only makes the durable queue copy current.
+  window.addEventListener('pagehide', () => {
+    if(outbox.length) saveOutbox_();
+  });
   // No navigator.onLine gate on these ticks either — same reasoning as
   // syncOutbox()/syncActivityOutbox_() above: this timer is what's meant
   // to be the safety net that eventually gets a stuck queue moving again,

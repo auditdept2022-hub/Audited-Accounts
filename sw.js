@@ -1,7 +1,7 @@
 // App-shell service worker for Audited Accounts.
 //
-// Caches the static shell (index.html, manifest, icons, Audit_Sheet.html),
-// Google Fonts, and the lazy-loaded third-party libraries used by Import/Export. Live ledger data (Apps Script calls) is cross-origin and is
+// Caches ONLY the static shell (index.html, manifest, icons) and the Google
+// Fonts files. Live ledger data (Apps Script calls) is cross-origin and is
 // never touched here — it always goes straight to the network, and the app
 // itself keeps its own offline copy + outbox in localStorage.
 //
@@ -37,9 +37,8 @@
 // (hamburger menu) still works: it unregisters this worker and deletes all
 // caches from the page; the 'message' listener below is a second path.
 
-const CACHE_NAME = 'audited-accounts-shell-v6';
+const CACHE_NAME = 'audited-accounts-shell-v5';
 const FONT_CACHE_NAME = 'audited-accounts-fonts-v1';
-const LIB_CACHE_NAME = 'audited-accounts-libs-v1';
 const NAV_NETWORK_TIMEOUT_MS = 3000;
 
 // The one file that MUST be cached for the worker to be worth installing.
@@ -50,8 +49,7 @@ const OPTIONAL_FILES = [
   './icon-192.png',
   './icon-512.png',
   './icon-512-maskable.png',
-  './apple-touch-icon.png',
-  './Audit_Sheet.html'
+  './apple-touch-icon.png'
 ];
 
 // Exact file names served cache-first.
@@ -64,7 +62,6 @@ const CACHE_FIRST_NAMES = new Set([
 ]);
 
 const FONT_HOSTS = new Set(['fonts.googleapis.com', 'fonts.gstatic.com']);
-const LIB_HOSTS = new Set(['unpkg.com']);
 
 function isCacheable_(response) {
   return !!response && (response.ok || response.type === 'opaque');
@@ -108,7 +105,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((names) =>
       Promise.all(
         names
-          .filter((name) => name !== CACHE_NAME && name !== FONT_CACHE_NAME && name !== LIB_CACHE_NAME)
+          .filter((name) => name !== CACHE_NAME && name !== FONT_CACHE_NAME)
           .map((name) => caches.delete(name))
       )
     ).then(() => self.clients.claim())
@@ -125,66 +122,45 @@ async function cachedShell_(request) {
   );
 }
 
-async function cachedDocument_(request) {
-  const cache = await caches.open(CACHE_NAME);
-  return await cache.match(request, { ignoreSearch: true }) || null;
-}
-
 function handleNavigation_(event) {
   const request = event.request;
-  const url = new URL(request.url);
-  const fileName = url.pathname.slice(url.pathname.lastIndexOf('/') + 1);
-  const isShellNavigation = !fileName || fileName === 'index.html';
 
   const networkPromise = fetch(request)
     .then((response) => {
       if (response && response.ok && response.type === 'basic') {
         const copy = response.clone();
         caches.open(CACHE_NAME).then((cache) => {
-          if (isShellNavigation) {
-            cache.put(SHELL_PAGE, copy.clone());
-            cache.put('./', copy);
-          } else {
-            cache.put(request, copy);
-          }
+          cache.put(SHELL_PAGE, copy.clone());
+          cache.put('./', copy);
         }).catch(() => {});
       }
       return response;
     })
     .catch(() => null);
 
+  // Let the background refresh finish even after we've answered from cache.
   event.waitUntil(networkPromise);
 
   return (async () => {
-    const cached = isShellNavigation ? await cachedShell_(request) : await cachedDocument_(request);
+    const cached = await cachedShell_(request);
+
+    // Nothing cached yet (very first visit): no fallback exists, so wait for
+    // the real network answer.
     if (!cached) {
       const first = await networkPromise;
       return first || Response.error();
     }
 
+    // Cached shell available: give the network a short window to win.
     let timer;
     const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(null), NAV_NETWORK_TIMEOUT_MS); });
     const winner = await Promise.race([networkPromise, timeout]);
     clearTimeout(timer);
+
+    // Network answered with something usable -> fresh shell. Otherwise
+    // (timeout, offline, server error) -> instant cached shell.
     return (winner && winner.ok) ? winner : cached;
   })();
-}
-
-async function handleLibrary_(event) {
-  const request = event.request;
-  const cache = await caches.open(LIB_CACHE_NAME);
-  const cached = await cache.match(request);
-  const refresh = fetch(request)
-    .then((response) => {
-      if (isCacheable_(response)) cache.put(request, response.clone()).catch(() => {});
-      return response;
-    })
-    .catch(() => cached);
-  if (cached) {
-    event.waitUntil(refresh);
-    return cached;
-  }
-  return refresh;
 }
 
 function handleCacheFirst_(event) {
@@ -237,15 +213,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Lazy-loaded libraries (SheetJS / PDF.js) are cached for offline use after
-  // the device has successfully used them once. Apps Script/API traffic remains
-  // network-only so live data is never confused with static cache contents.
-  if (LIB_HOSTS.has(url.hostname)) {
-    event.respondWith(handleLibrary_(event));
-    return;
-  }
-
-  // Everything else cross-origin (Apps Script API and other CDNs): straight to network.
+  // Everything else cross-origin (Apps Script API, CDNs): straight to network.
   if (url.origin !== self.location.origin) return;
 
   if (request.mode === 'navigate') {

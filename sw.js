@@ -6,16 +6,17 @@
 // itself keeps its own offline copy + outbox in localStorage.
 //
 // STRATEGY
-//  - Page navigation (the HTML): OFFLINE-FIRST / stale-while-revalidate.
-//    A cached shell is returned immediately; a network refresh updates the
-//    cached shell in the background for the next launch. This avoids making
-//    every PWA reopen wait on a weak/cold connection.
+//  - Page navigation (the HTML): NETWORK-FIRST so an edit to index.html shows
+//    on the very next load. If the network is slow (> NAV_NETWORK_TIMEOUT_MS)
+//    or fails, the cached shell is served instantly instead of a blank
+//    screen; the real fetch keeps running and refreshes the cache for next
+//    time. Works with query strings (?_refresh=..., ?utm=..) when offline.
 //  - Manifest / icons: CACHE-FIRST (instant), refreshed in the background.
 //  - Google Fonts (CSS + font files): STALE-WHILE-REVALIDATE in their own
 //    cache, so the app keeps its look when offline.
 //  - Everything else same-origin: network, falling back to cache.
 //
-// v6 FIXES (vs v5)
+// v5 FIXES (vs v4)
 //  1. Install no longer fails if one icon is missing. cache.addAll() is
 //     all-or-nothing: a single 404 (e.g. icon-512.png not uploaded) made the
 //     whole install fail => NO service worker => NO offline at all. Now only
@@ -36,8 +37,10 @@
 // (hamburger menu) still works: it unregisters this worker and deletes all
 // caches from the page; the 'message' listener below is a second path.
 
-const CACHE_NAME = 'audited-accounts-shell-v16';
-const FONT_CACHE_NAME = 'audited-accounts-fonts-v2';
+const CACHE_NAME = 'audited-accounts-shell-v5';
+const FONT_CACHE_NAME = 'audited-accounts-fonts-v1';
+const NAV_NETWORK_TIMEOUT_MS = 3000;
+
 // The one file that MUST be cached for the worker to be worth installing.
 const SHELL_PAGE = './index.html';
 // Best-effort extras (a missing one must never break install).
@@ -68,7 +71,7 @@ self.addEventListener('message', (event) => {
   const type = event.data && event.data.type;
   if (type === 'CLEAR_ALL') {
     event.waitUntil(
-      caches.keys().then((names) => Promise.all(names.filter((n) => n.startsWith('audited-accounts-')).map((n) => caches.delete(n))))
+      caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n))))
     );
   } else if (type === 'SKIP_WAITING') {
     self.skipWaiting();
@@ -85,9 +88,6 @@ self.addEventListener('install', (event) => {
     if (!page || !page.ok) throw new Error('Shell fetch failed: ' + (page && page.status));
     await cache.put(SHELL_PAGE, page.clone());
     await cache.put('./', page.clone()); // same document, served for the bare folder URL
-    try {
-      await cache.put(new Request(new URL(SHELL_PAGE, self.location.href).href), page.clone());
-    } catch (err) { /* relative keys above are sufficient on normal hosts */ }
 
     // Best-effort: never let a missing icon block the install.
     await Promise.all(OPTIONAL_FILES.map(async (file) => {
@@ -105,7 +105,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((names) =>
       Promise.all(
         names
-          .filter((name) => name.startsWith('audited-accounts-') && name !== CACHE_NAME && name !== FONT_CACHE_NAME)
+          .filter((name) => name !== CACHE_NAME && name !== FONT_CACHE_NAME)
           .map((name) => caches.delete(name))
       )
     ).then(() => self.clients.claim())
@@ -125,19 +125,7 @@ async function cachedShell_(request) {
 function handleNavigation_(event) {
   const request = event.request;
 
-  // OFFLINE-FIRST NAVIGATION: once the shell exists, return it immediately
-  // instead of waiting up to NAV_NETWORK_TIMEOUT_MS for the network. The
-  // network refresh runs in the background and replaces the cached shell for
-  // the next launch. This makes PWA reopen/reload instant in weak-signal
-  // areas while still keeping the app shell current when online.
-  // SPEED FIX: this used to re-download the whole ~700 KB shell on EVERY
-  // launch, right alongside the data request on a cold/slow connection.
-  // 'no-cache' makes it a conditional request: when index.html hasn't
-  // changed the server answers 304 and nothing big crosses the wire, but a
-  // new deploy is still picked up for the next launch. Built from the shell
-  // URL (not the navigation request) so a cache-busting ?query can't make
-  // the revalidation miss.
-  const refresh = fetch(SHELL_PAGE, { cache: 'no-cache' })
+  const networkPromise = fetch(request)
     .then((response) => {
       if (response && response.ok && response.type === 'basic') {
         const copy = response.clone();
@@ -150,13 +138,28 @@ function handleNavigation_(event) {
     })
     .catch(() => null);
 
-  event.waitUntil(refresh);
+  // Let the background refresh finish even after we've answered from cache.
+  event.waitUntil(networkPromise);
 
   return (async () => {
     const cached = await cachedShell_(request);
-    if (cached) return cached;
-    const first = await refresh;
-    return first || Response.error();
+
+    // Nothing cached yet (very first visit): no fallback exists, so wait for
+    // the real network answer.
+    if (!cached) {
+      const first = await networkPromise;
+      return first || Response.error();
+    }
+
+    // Cached shell available: give the network a short window to win.
+    let timer;
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(null), NAV_NETWORK_TIMEOUT_MS); });
+    const winner = await Promise.race([networkPromise, timeout]);
+    clearTimeout(timer);
+
+    // Network answered with something usable -> fresh shell. Otherwise
+    // (timeout, offline, server error) -> instant cached shell.
+    return (winner && winner.ok) ? winner : cached;
   })();
 }
 

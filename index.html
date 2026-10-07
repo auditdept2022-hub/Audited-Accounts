@@ -3353,7 +3353,8 @@
       historyEdit: u.revertHistory,
       status: 'pending',
       customerName: (u.afterSnapshot && u.afterSnapshot.customer) || null,
-      snapshot: u.afterSnapshot || null
+      snapshot: u.afterSnapshot || null,
+      expect: u.afterSnapshot ? { customer: String(u.afterSnapshot.customer || '').trim(), engineNo: String(u.afterSnapshot.engineNo == null ? '' : u.afterSnapshot.engineNo).trim() } : null
     };
     await queueOrSend_(item);
     toast('Undo queued — syncing…');
@@ -3380,11 +3381,11 @@
     const snap = u.snapshot;
     const fields = {};
     writableFieldKeys_().forEach(k => { if(snap[k] !== undefined && snap[k] !== '') fields[k] = snap[k]; });
-    const created = await apiCallJson_('createCustomerFull', { fields, remark: '', auditor: '', opId: genId_() });
+    const created = await apiCallJsonWriteRetry_('createCustomerFull', { fields, remark: '', auditor: '', opId: genId_() });
     const newRow = created.row;
     const hasRemarks = (snap.auditorRemarks && !isBlankRemark_(snap.auditorRemarks)) || (snap.previousRemarks && String(snap.previousRemarks).trim());
     if(hasRemarks){
-      await apiCallJson_('updateCustomerFull', {
+      await apiCallJsonWriteRetry_('updateCustomerFull', {
         row: newRow, fields: {},
         currentEdit: snap.auditorRemarks || '', historyEdit: snap.previousRemarks || '',
         dateOfAudit: snap.dateOfAudit || '',
@@ -4009,6 +4010,10 @@
     // — no point building a snapshot list that will never be attached to
     // the activity entry or uploaded anywhere.
     const undoSnapshots = skipUndo ? [] : rows.map(r => customers.find(x => x.row === r)).filter(Boolean).map(c => Object.assign({}, c));
+    const deleteExpectByRow = new Map(rows.map(r => {
+      const c = customers.find(x => x.row === r);
+      return [r, c ? { customer: String(c.customer || '').trim(), engineNo: String(c.engineNo == null ? '' : c.engineNo).trim() } : null];
+    }));
 
     const btn = document.getElementById('bulkDeleteBtn');
     const originalLabel = btn.textContent;
@@ -4037,8 +4042,8 @@
       try{
         result = await runBatched_(
           rows, 'batchDeleteCustomer', 'rows',
-          r => r,
-          'deleteCustomer', r => ({ row: r }),
+          r => ({ row: r, expect: deleteExpectByRow.get(r) || null }),
+          'deleteCustomer', r => ({ row: r, expect: deleteExpectByRow.get(r) || null }),
           rows.length, 0,
           r => rowNameByRow.get(r),
           null,
@@ -4114,7 +4119,11 @@
     for(const row of rows){
       btn.textContent = 'Deleting ' + (done + failed + 1) + '/' + rows.length + '…';
       try{
-        await queueOrSend_({ id: genId_(), kind: 'delete', row: row, status: 'pending', customerName: (undoSnapshots.find(s => s.row === row) || {}).customer || null });
+        await queueOrSend_({
+          id: genId_(), kind: 'delete', row: row, status: 'pending',
+          customerName: (undoSnapshots.find(s => s.row === row) || {}).customer || null,
+          expect: deleteExpectByRow.get(row) || null
+        });
         clearDraft_(row);
         selectedRows.delete(row);
         const snap = undoSnapshots.find(s => s.row === row);
@@ -4228,8 +4237,10 @@
       status: 'pending',
       customerName: c.customer || null,
       // Only the marker field is being touched, so only it needs to be
-      // snapshotted for drift detection at sync time.
-      snapshot: { marker: prev }
+      // snapshotted for drift detection at sync time. `expect` separately
+      // protects row identity if the sheet shifts while this device is offline.
+      snapshot: { marker: prev },
+      expect: { customer: String(c.customer || '').trim(), engineNo: String(c.engineNo == null ? '' : c.engineNo).trim() }
     };
 
     try{
@@ -4512,6 +4523,8 @@
   let syncStartedAt_ = 0;
 
   function outboxKey_(){ return 'aa_outbox_v1:' + API_URL + ':' + currentSheet; }
+  function outboxBackupKey_(){ return 'aa_outbox_lastgood_v1:' + API_URL + ':' + currentSheet; }
+  function outboxRecoveryKey_(){ return 'aa_outbox_recovery_v1:' + API_URL + ':' + currentSheet; }
 
   // ---- Storage resilience -------------------------------------------------
   // localStorage has a hard quota (typically 5-10MB per origin). Every write
@@ -4587,14 +4600,59 @@
   }
 
   function saveOutbox_(){
-    setStorageCritical_(outboxKey_(), JSON.stringify(outbox), 'your latest change');
+    const key = outboxKey_();
+    const backupKey = outboxBackupKey_();
+    const serialized = JSON.stringify(outbox);
+    // Keep the previous valid queue as a recovery copy. localStorage.setItem
+    // is atomic for the individual value, but a browser/storage failure can
+    // still leave the current value unreadable. The backup ensures a refresh
+    // never turns an unreadable queue into an empty queue silently.
+    try{
+      const currentRaw = localStorage.getItem(key);
+      if(currentRaw){
+        try{
+          const parsed = JSON.parse(currentRaw);
+          if(Array.isArray(parsed)) localStorage.setItem(backupKey, currentRaw);
+        }catch(e){ /* don't replace a good backup with corrupt data */ }
+      }
+    }catch(e){ /* backup is best-effort; critical write below still runs */ }
+    return setStorageCritical_(key, serialized, 'your latest change');
   }
 
   function loadOutbox_(){
+    const parseQueue_ = raw => {
+      if(!raw) return null;
+      const parsed = JSON.parse(raw);
+      if(!Array.isArray(parsed)) throw new Error('Outbox is not an array');
+      // A page refresh can happen while a network request is in flight.
+      // `syncing` is never a terminal state; normalize it back to pending.
+      return parsed.filter(item => item && item.status !== 'completed').map(item => {
+        if(item.status === 'syncing') item.status = 'pending';
+        return item;
+      });
+    };
     try{
-      const raw = localStorage.getItem(outboxKey_());
-      outbox = raw ? JSON.parse(raw) : [];
-    }catch(e){ outbox = []; }
+      const raw = localStorage.getItem(outboxKey_);
+      if(raw){
+        outbox = parseQueue_(raw) || [];
+        return;
+      }
+    }catch(e){
+      // Fall through to the last-good backup rather than wiping the queue.
+      try{ localStorage.setItem(outboxRecoveryKey_(), localStorage.getItem(outboxKey_()) || ''); }catch(e2){}
+    }
+    try{
+      const backup = localStorage.getItem(outboxBackupKey_());
+      outbox = parseQueue_(backup) || [];
+      if(outbox.length) saveOutbox_();
+      return;
+    }catch(e){
+      outbox = [];
+      toast('Could not read the saved sync queue. The app kept a recovery copy instead of deleting it.');
+      try{
+        logActivity_('error', 'Sync queue recovery needed', 'The saved offline queue could not be parsed after refresh. A recovery copy was retained locally; do not clear browser storage.', null, 'openSync');
+      }catch(e2){}
+    }
   }
 
   function genId_(){ return 'o' + Date.now() + Math.random().toString(36).slice(2, 8); }
@@ -5162,10 +5220,11 @@
       cluster.tokens.push(tok);
       cluster.xCenter = cluster.tokens.reduce((s, t) => s + t.x, 0) / cluster.tokens.length;
     });
+    clusters.forEach(c => { c.mid = c.tokens.reduce((s, t) => s + t.x + (t.w || 0) / 2, 0) / c.tokens.length; });
     clusters.sort((a, b) => a.xCenter - b.xCenter);
     return clusters.map(c => {
       const sorted = c.tokens.slice().sort((a, b) => b.y - a.y || a.x - b.x); // top line's word(s) first
-      return { xCenter: c.xCenter, text: sorted.map(t => t.str).join(' ') };
+      return { xCenter: c.xCenter, mid: c.mid, text: sorted.map(t => t.str).join(' ') };
     });
   }
 
@@ -5182,6 +5241,132 @@
     return row;
   }
 
+  // ---- Right-aligned money columns / fused text (PDF reports) -------------
+  //
+  // Some PDF reports (e.g. the "Accounts Receivable - Aging Summary") do
+  // three things the simple left-x bucketing above cannot cope with:
+  //   1. Money is RIGHT-aligned, and one column (e.g. "Age") has no header
+  //      text at all. Bucketing by header x then glues that unlabeled
+  //      column's number onto the neighbouring header ("1.54 0.00" under
+  //      "Payment (Adv)"), which makes Payment (Adv) unreadable.
+  //   2. pdf.js sometimes returns one text item that holds a number plus
+  //      the text after it ("0.00 RODIL, APRIL JOHN LLAMAS"), or a long
+  //      customer name together with its engine number in one item.
+  //   3. The engine number is not at a fixed x — it follows the name.
+  // So, when (and only when) one of those is detected, each line is split
+  // into atoms and placed by CONTENT (money / engine no. / name / trailing
+  // collector text) and by the money's right edge. Otherwise the original
+  // bucketing is used unchanged.
+  const PDF_NUM_RE = /^\(?-?[\d,]*\d\.\d{1,2}\)?$/;
+  const PDF_ENGINE_RE = /^[A-Z]{2}[A-Z0-9]{0,3}E-?D?\d{5,8}$/;
+  // Fused name+engine (no space between them): engine prefixes seen on these reports all start with J or K (JA, JF, JK, KF, KY, KP, KD, KS), which is what tells where the name ends.
+  const PDF_ENGINE_TAIL_RE = /^(.*?[A-Z.,])([JK][A-Z][A-Z0-9]{0,3}E-?D?\d{5,8})$/;
+
+  function pdfExpandItem_(it){
+    const out = [];
+    let str = String(it.str || '').trim();
+    let x = it.x, w = it.w || 0, split = false;
+    // a) peel leading money values off ("0.00 RODIL, APRIL ..." -> 0.00 | RODIL, APRIL ...)
+    let m;
+    while((m = str.match(/^(\(?-?[\d,]*\d\.\d{1,2}\)?)\s+(\S.*)$/))){
+      const total = str.length, nl = m[1].length;
+      out.push({ str: m[1], x: x, w: w * nl / total, num: true });
+      x = x + w * (nl + 1) / total; w = w * (total - nl - 1) / total;
+      str = m[2]; split = true;
+    }
+    if(PDF_NUM_RE.test(str)){ out.push({ str, x, w, num: true }); return { atoms: out, split }; }
+    // b) split an engine number off the end of a name ("... JAVIER JA69E7297187")
+    if(PDF_ENGINE_RE.test(str)){ out.push({ str, x, w, num: false, engine: true }); return { atoms: out, split }; }
+    const words = str.split(/\s+/);
+    const last = words[words.length - 1];
+    let namePart = '', engPart = '';
+    if(words.length > 1 && PDF_ENGINE_RE.test(last)){
+      engPart = last; namePart = words.slice(0, -1).join(' ');
+    } else {
+      const t = last.match(PDF_ENGINE_TAIL_RE);
+      if(t && t[1]){ engPart = t[2]; namePart = (words.slice(0, -1).join(' ') + ' ' + t[1]).trim(); }
+    }
+    if(engPart && namePart){
+      const total = str.length;
+      out.push({ str: namePart, x: x, w: w * namePart.length / total, num: false });
+      out.push({ str: engPart, x: x + w * (total - engPart.length) / total, w: w * engPart.length / total, num: false, engine: true });
+      split = true;
+    } else {
+      out.push({ str, x, w, num: false, engine: PDF_ENGINE_RE.test(str) });
+    }
+    return { atoms: out, split };
+  }
+
+  // Works out the money columns from the data itself (right edges) and ties
+  // each to the nearest header; money columns with no header become extra
+  // unlabeled columns. Returns null when the legacy bucketing is fine.
+  function pdfPlanMoneyColumns_(dataLines, columns){
+    const heads = columns.map(c => c.text.toLowerCase());
+    const custIdx = heads.findIndex(h => /customer/.test(h));
+    if(custIdx === -1) return null;
+    const engIdx = heads.findIndex(h => /engine/.test(h));
+    const collIdx = heads.findIndex(h => /collector/.test(h));
+    const nums = [];
+    let anySplit = false;
+    dataLines.forEach(l => l.items.forEach(it => {
+      const r = pdfExpandItem_(it);
+      if(r.split) anySplit = true;
+      r.atoms.forEach(a => { if(a.num) nums.push({ right: a.x + a.w, center: a.x + a.w / 2 }); });
+    }));
+    if(!nums.length) return null;
+    nums.sort((a, b) => a.right - b.right);
+    const groups = [];
+    nums.forEach(n => {
+      const g = groups[groups.length - 1];
+      if(g && Math.abs(g.right - n.right) <= 5){ g.items.push(n); g.right = g.items.reduce((s, t) => s + t.right, 0) / g.items.length; }
+      else groups.push({ right: n.right, items: [n] });
+    });
+    groups.forEach(g => { g.center = g.items.reduce((s, t) => s + t.center, 0) / g.items.length; });
+
+    const skipHead = new Set([custIdx, engIdx, collIdx].filter(i => i !== -1));
+    const pairs = [];
+    groups.forEach((g, gi) => columns.forEach((c, ci) => {
+      if(skipHead.has(ci)) return;
+      pairs.push({ gi, ci, d: Math.abs(g.center - (c.mid !== undefined ? c.mid : c.xCenter)) });
+    }));
+    pairs.sort((a, b) => a.d - b.d);
+    const usedG = new Set(), usedC = new Set();
+    pairs.forEach(p => {
+      if(p.d > 25 || usedG.has(p.gi) || usedC.has(p.ci)) return;
+      usedG.add(p.gi); usedC.add(p.ci); groups[p.gi].col = p.ci;
+    });
+    let orphans = 0;
+    groups.forEach(g => { if(g.col === undefined) orphans++; });
+    if(!orphans && !anySplit) return null; // original bucketing already handles this file
+    const cols = columns.map(c => ({ xCenter: c.xCenter, mid: c.mid, text: c.text }));
+    groups.forEach(g => { if(g.col === undefined){ cols.push({ xCenter: g.center, text: '' }); g.col = cols.length - 1; } });
+    return { cols, groups, custIdx, engIdx, collIdx };
+  }
+
+  function pdfBucketLineByContent_(line, plan){
+    const row = plan.cols.map(() => '');
+    const put = (i, str) => { row[i] = row[i] ? row[i] + ' ' + str : str; };
+    const atoms = [];
+    line.items.forEach(it => pdfExpandItem_(it).atoms.forEach(a => atoms.push(a)));
+    atoms.sort((a, b) => a.x - b.x);
+    const nums = atoms.filter(a => a.num);
+    const lastNumRight = nums.length ? Math.max.apply(null, nums.map(a => a.x + a.w)) : -1;
+    atoms.forEach(a => {
+      if(a.num){
+        let best = plan.groups[0], bd = Infinity;
+        plan.groups.forEach(g => { const d = Math.abs(g.right - (a.x + a.w)); if(d < bd){ bd = d; best = g; } });
+        put(best.col, a.str);
+      } else if(a.engine && plan.engIdx !== -1){
+        put(plan.engIdx, a.str);
+      } else if(nums.length && a.x >= lastNumRight - 2 && plan.collIdx !== -1){
+        put(plan.collIdx, a.str);
+      } else {
+        put(plan.custIdx, a.str);
+      }
+    });
+    return row;
+  }
+
   // Builds one candidate matrix assuming the header spans exactly
   // `headerLineCount` physical PDF lines starting at lines[0] (the
   // caller has already skipped any letterhead before this point).
@@ -5189,12 +5374,14 @@
     const headerLines = lines.slice(0, headerLineCount);
     const dataLines = lines.slice(headerLineCount);
     const columns = pdfBuildHeaderColumns_(headerLines);
-    const headerRow = columns.map(c => c.text);
+    const plan = pdfPlanMoneyColumns_(dataLines, columns);
+    const outCols = plan ? plan.cols : columns;
+    const headerRow = outCols.map(c => c.text);
     const headerNorm = headerRow.map(h => String(h).replace(/\s+/g, ' ').trim().toLowerCase());
 
     const matrix = [headerRow];
     dataLines.forEach(line => {
-      const row = pdfBucketLineIntoColumns_(line, columns);
+      const row = plan ? pdfBucketLineByContent_(line, plan) : pdfBucketLineIntoColumns_(line, columns);
       const rowNorm = row.map(v => String(v).replace(/\s+/g, ' ').trim().toLowerCase());
       // Skip a repeated header line (e.g. the header re-printed at the
       // top of page 2+) so it doesn't get treated as a bogus data row.
@@ -5222,10 +5409,41 @@
     return score;
   }
 
+  // A wrapped header often prints its first words on a line ABOVE the one
+  // that holds "Customer Name" (e.g. "Due This" / "Payment" above
+  // "Month" / "(Age)"). pdfFindHeaderStartLine_ lands on the Customer line,
+  // so those upper halves were being dropped — leaving "Month" and "(Adv)"
+  // which match no field, and only "Penalty Due" (all on one line) worked.
+  // Pull in up to two tightly-stacked lines above, keeping only the items
+  // that are made purely of header words (so a section label like "60 DAYS"
+  // sharing that line is left out).
+  const PDF_HEADER_WORDS = new Set(PDF_HEADER_KEYWORDS.concat(['this','pmt','age','adv','(age)','(adv)','pmt.','ttl','total','cu','od','del','no','no.','name','of','due']));
+  function pdfHeaderOnlyItems_(line){
+    return line.items.filter(it => {
+      const words = String(it.str).toLowerCase().split(/\s+/).filter(Boolean);
+      return words.length && words.every(w => PDF_HEADER_WORDS.has(w));
+    });
+  }
+  function pdfExtendHeaderUp_(lines, startIdx){
+    const out = { startIdx, replaced: [] };
+    let idx = startIdx;
+    for(let k = 0; k < 2 && idx > 0; k++){
+      const prev = lines[idx - 1], cur = lines[idx];
+      if(prev.y - cur.y > 16) break;
+      const keep = pdfHeaderOnlyItems_(prev);
+      if(keep.length < 1) break;
+      out.replaced.unshift({ y: prev.y, items: keep });
+      idx--;
+    }
+    out.startIdx = idx;
+    return out;
+  }
+
   function pdfLinesToMatrix_(lines){
     if(!lines.length) return [];
-    const startIdx = pdfFindHeaderStartLine_(lines);
-    const scoped = lines.slice(startIdx);
+    const customerIdx = pdfFindHeaderStartLine_(lines);
+    const ext = pdfExtendHeaderUp_(lines, customerIdx);
+    const scoped = ext.replaced.concat(lines.slice(customerIdx));
     if(!scoped.length) return [];
 
     let best = null, bestScore = -1;
@@ -5246,7 +5464,7 @@
     for(let p = 1; p <= doc.numPages; p++){
       const page = await doc.getPage(p);
       const content = await page.getTextContent();
-      const items = content.items.map(it => ({ str: it.str, x: it.transform[4], y: it.transform[5] }));
+      const items = content.items.map(it => ({ str: it.str, x: it.transform[4], y: it.transform[5], w: it.width || 0 }));
       // Pages are concatenated as one continuous line stream — this
       // means only page 1's top lines are used to detect the header
       // (the common case: the header only prints once, on page 1).
@@ -5353,6 +5571,7 @@
       // the same cell (e.g. "4 Sub Total for Status", "182 Grand
       // Total") — search the whole cell instead of just its start.
       if(/(sub[\s-]?total|grand[\s-]?total)/i.test(rec.customer)) continue;
+      if(/^\s*\d[\d,]*\s+account\/?s?\b/i.test(rec.customer)) continue; // aging-report footer rows like "28 Account/s" (counts + totals, not customers)
       if(/^[\d,.\s-]+$/.test(rec.customer)) continue; // a bare number in the name column is a stray count/total, never a real customer
       // A row counts as real customer data if it carries a balance figure
       // OR an auditor remark — an audit sheet (like Sta. Rosa's) often has
@@ -6838,6 +7057,25 @@
     return fetchJson_(apiUrl_(action, payload));
   }
 
+  // Safe retry wrapper for MUTATING calls. Every mutating payload has a stable
+  // opId and the Apps Script backend deduplicates that opId, so retrying the
+  // exact same request after a timeout cannot double-write it. This closes the
+  // gap where a connection blip after a successful server write made the UI
+  // wait for the next 20s timer before trying again.
+  async function apiCallJsonWriteRetry_(action, payload, maxRetries){
+    const retries = Number.isFinite(maxRetries) ? Math.max(0, maxRetries) : 4;
+    let delay = 350;
+    for(let attempt = 0; ; attempt++){
+      try{
+        return await apiCallJson_(action, payload);
+      }catch(err){
+        if(attempt >= retries || (!isConnectionError_(err) && !isRetryableBusyError_(err))) throw err;
+        await new Promise(r => setTimeout(r, delay));
+        delay = Math.min(4000, Math.round(delay * 1.7));
+      }
+    }
+  }
+
   // Same as apiCallJson_, but retries on transient connection/parse
   // failures. Only safe for read-only actions (listSheets) — writes must
   // keep using apiCallJson_ so a hiccup never causes a duplicate write.
@@ -7566,6 +7804,15 @@
   async function switchProfile_(name){
     closeProfileMenu();
     if(name === currentSheet) return;
+    // Never change `currentSheet` while the queue processor is using it to
+    // build API URLs. The old implementation could switch branches during
+    // an in-flight sync, causing later requests in that same pass to target
+    // the NEW branch and making the queue state/UI race across branches.
+    if(isSyncing){
+      toast('Sync is still saving queued changes on "' + currentSheet + '". Please let it finish before switching branches.');
+      openProfileMenu();
+      return;
+    }
     if(outbox.length){
       if(!await appConfirm('You have ' + outbox.length + ' unsynced change(s) on "' + currentSheet + '". Switching branches now leaves them queued until you come back and sync. Continue?', { title: 'Unsynced changes', confirmText: 'Switch anyway' })){
         openProfileMenu();
@@ -8561,7 +8808,7 @@
   // withIdempotency_ in the backend.
   async function sendOne_(item){
     if(item.kind === 'create'){
-      const data = await apiCallJson_('createCustomerFull', {
+      const data = await apiCallJsonWriteRetry_('createCustomerFull', {
         fields: item.fields,
         remark: item.remark || '',
         auditor: item.auditor || '',
@@ -8575,23 +8822,17 @@
         fields: item.fields,
         historyEdit: item.historyEdit !== undefined ? item.historyEdit : null,
         currentEdit: item.currentEdit !== undefined ? item.currentEdit : null,
-        // BUG FIX: Date of Audit was only ever stamped server-side when
-        // `remark` (the old "add new remark" flow) was non-empty. Since
-        // remarks are now only ever edited via `currentEdit`, that path
-        // never touched the date at all, so it silently stayed blank on
-        // the sheet on every save. Sending the date explicitly — '' to
-        // clear it, a real date to stamp it, or omitted when the remark
-        // box wasn't touched at all — makes updateCustomerFull set it
-        // directly instead of trying to derive it from `remark`.
         dateOfAudit: item.currentEditDate !== undefined ? item.currentEditDate : null,
         remark: item.remark || '',
         auditor: item.auditor || '',
-        opId: item.id
+        opId: item.id,
+        expect: item.expect || null,
+        base: item.snapshot || item.base || null
       });
       return { row: data.row, deduped: !!data._deduped };
     }
     if(item.kind === 'delete'){
-      const data = await apiCallJson_('deleteCustomer', { row: item.row, opId: item.id });
+      const data = await apiCallJsonWriteRetry_('deleteCustomer', { row: item.row, opId: item.id, expect: item.expect || null });
       return { row: item.row, deduped: !!(data && data._deduped) };
     }
   }
@@ -8666,10 +8907,14 @@
     // attempt through instead of silently no-oping forever. Safe to do:
     // every write carries an opId the backend dedupes (withIdempotency_),
     // so an overlapping attempt can never double-submit.
-    if(isSyncing){
-      if(Date.now() - syncStartedAt_ < 45000) return;
-      console.warn('syncOutbox: isSyncing was stuck — forcing a fresh attempt.');
-    }
+    // Never overlap two queue processors. A watchdog that force-started a
+    // second run after 45s could let the older run finish later and overwrite
+    // the newer queue state (`outbox = remaining`), which is exactly how
+    // confirmed/offline items could appear to vanish after a refresh. Every
+    // actual network request below is timeout-bounded, so a permanently stuck
+    // processor has a defined exit path and the normal retry timer can take
+    // over without a second processor racing it.
+    if(isSyncing) return;
     if(!outbox.length) return;
     // MANUAL-OFFLINE FIX: this function deliberately does NOT gate on
     // navigator.onLine (see the big comment a few lines below) because
@@ -8796,41 +9041,29 @@
     }catch(e){ listErr = e; }
 
     if(!versionConfirmedCurrent && serverList === null){
-      isSyncing = false;
-      // PERFORMANCE FIX: a timed-out first request is almost always an
-      // Apps Script cold start — by the time this catch runs, the
-      // instance is usually already warm underneath. This used to just
-      // sit there as "Sync paused" for up to 20s (the auto-retry
-      // interval) or until the person noticed and opened the sync popup.
-      // Mirroring loadData()'s cold-start handling, retry quickly
-      // (300ms) instead of waiting out that full interval — same
-      // reasoning: capped retry count, immediate status update so
-      // nothing is silent, and this path is only ever reached for a
-      // read-only fetch, never for a write, so nothing can be
-      // double-submitted by retrying it.
-      if(listErr && listErr.name === 'AbortError'){
-        const delay = syncColdStartBackoff_(syncColdStartRetries);
-        syncColdStartRetries++;
-        document.getElementById('connStatus').textContent = 'Cold start — retrying sync automatically…';
-        setTimeout(() => { syncOutbox(); }, delay);
-        return;
-      }
+      // The client-side preflight is only a convenience for showing conflicts
+      // early. It must NEVER be allowed to block a real write: the backend
+      // independently enforces `expect` row identity and `base` conflict
+      // checks on every update/delete. So when the list read fails, send the
+      // queue directly and let the write endpoint be the authority.
       syncColdStartRetries = 0;
-      updateSyncUI();
-      if(isConnectionError_(listErr)){
+      if(listErr){
         const msg = connectionErrorLabel_(listErr);
-        notifySyncPaused_('list:' + msg, 'Sync paused — ' + msg, msg);
-      } else {
-        notifySyncPaused_('list-other:' + listErr.message, 'Sync failed: ' + listErr.message, listErr.message);
+        document.getElementById('connStatus').textContent = 'Syncing queued changes — live verification will follow…';
       }
-      return;
+    } else {
+      syncColdStartRetries = 0;
     }
-    syncColdStartRetries = 0;
     const serverByRow = {};
     if(serverList) serverList.forEach(c => { serverByRow[c.row] = c; });
 
 
     const remaining = [];
+    // IDs confirmed by the server during THIS pass. They are the only queue
+    // entries this pass is allowed to remove. Any new item added while this
+    // pass is running remains in the live `outbox`, even if it was created
+    // after this loop started.
+    const completedOutboxIds = new Set();
     let syncedAny = false;
     let syncedCount = 0; // how many items actually completed this pass — see lastKnownVersion_ bump below
     let needsFullReload = false; // set true only if an item can't be trusted to patch in locally (see below)
@@ -8870,7 +9103,9 @@
         dateOfAudit: item.currentEditDate !== undefined ? item.currentEditDate : null,
         remark: item.remark || '',
         auditor: item.auditor || '',
-        opId: item.id
+        opId: item.id,
+        expect: item.expect || null,
+        base: item.snapshot || item.base || null
       };
     }
 
@@ -8943,7 +9178,7 @@
         let data = null;
         let chunkErr = null;
         try{
-          data = await apiCallJson_('batchUpdateCustomerFull', { updates: chunk.map(batchEntryForItem_) });
+          data = await apiCallJsonWriteRetry_('batchUpdateCustomerFull', { updates: chunk.map(batchEntryForItem_) });
         }catch(err){
           chunkErr = err;
         }
@@ -8987,16 +9222,29 @@
         chunk.forEach(item => {
           const r = byOpId[item.id];
           if(!r || !r.ok){
-            item.status = 'error';
-            item.error = (r && r.error) || 'No response came back for this change — please retry.';
-            remaining.push(item);
-            if(!item._loggedError){
-              item._loggedError = true;
-              logActivity_('error', 'Sync failed for a queued change', item.error, null, 'openSync');
+            if(r && r.code === 'CONFLICT'){
+              item.status = 'conflict';
+              item.serverSnapshot = r.current || null;
+              item.conflictDetectedAt = Date.now();
+              remaining.push(item);
+              if(!item._loggedConflict){
+                item._loggedConflict = true;
+                logActivity_('warning', 'Sync conflict', (r.error || 'Someone else changed this record before your offline edit synced.'), null, 'openSync');
+              }
+            }else{
+              item.status = 'error';
+              item.error = (r && r.error) || 'No response came back for this change — please retry.';
+              remaining.push(item);
+              if(!item._loggedError){
+                item._loggedError = true;
+                logActivity_('error', 'Sync failed for a queued change', item.error, null, 'openSync');
+              }
             }
             return;
           }
 
+          item.status = 'completed';
+          completedOutboxIds.add(item.id);
           if(item._needsFreshPull){
             // Same reasoning as the old per-item handling: this item's
             // fields/remark were merged via the per-field conflict
@@ -9017,6 +9265,11 @@
           const local = customers.find(x => x.row === item.row);
           if(local) serverByRow[item.row] = Object.assign({}, local);
         });
+        // Persist confirmed/completed states DURING the run, not only at the
+        // very end. A refresh/crash halfway through a large sync therefore
+        // leaves completed items safely resumable (and drops them on reload)
+        // while every untouched item remains pending.
+        saveOutbox_();
       }
     }
 
@@ -9054,13 +9307,17 @@
         // dedicated check, keyed off item.customerName (captured when
         // the delete was queued), that runs whether or not a snapshot
         // exists.
-        if(item.kind === 'delete' && !versionConfirmedCurrent){
+        if(item.kind === 'delete' && serverList !== null){
           const serverRow = serverByRow[item.row];
           if(!serverRow){
             // Already gone server-side — that's the desired end state
             // either way, nothing left to protect against.
             applyConfirmedDelete_(item);
+            item.status = 'completed';
+            completedOutboxIds.add(item.id);
             syncedAny = true;
+            syncedCount++;
+            saveOutbox_();
             continue;
           }
           if(item.customerName && normForCompare_(serverRow.customer) !== normForCompare_(item.customerName)){
@@ -9077,7 +9334,7 @@
           // Row still holds the expected customer (or this item predates
           // customerName being tracked, so there's nothing to check
           // against) — safe to proceed to sendOne_ below.
-        } else if(item.kind !== 'create' && item.snapshot && !versionConfirmedCurrent){
+        } else if(item.kind !== 'create' && item.snapshot && serverList !== null){
           const serverRow = serverByRow[item.row];
           if(!serverRow){
             // Row is gone server-side and there's nothing left to
@@ -9297,6 +9554,9 @@
           if(local) serverByRow[targetRow] = Object.assign({}, local);
         }
         syncedAny = true;
+        item.status = 'completed';
+        completedOutboxIds.add(item.id);
+        saveOutbox_();
         // BUG FIX: only count this toward the local version bump below if
         // the backend actually performed a write. A deduped replay
         // (result.deduped — see withIdempotency_ in Code.gs) returns the
@@ -9354,7 +9614,16 @@
     // unconditionally; it's a no-op if nothing's queued.
     await flushUpdateBatch_();
 
-    outbox = remaining;
+    // IMPORTANT: do NOT replace the live queue with `remaining`. Queueing can
+    // happen while sync is in flight, and another UI action may also remove a
+    // conflict item (Discard mine). Only remove IDs this pass has explicitly
+    // confirmed from the CURRENT live queue. Everything else stays exactly
+    // where it is, including edits added mid-sync.
+    outbox = outbox.filter(item => !completedOutboxIds.has(item.id));
+    // Any entry still carrying the transient 'syncing' state was not confirmed
+    // by the server (for example, the browser closed after a timeout). It must
+    // remain replayable on the next pass.
+    outbox.forEach(item => { if(item.status === 'syncing') item.status = 'pending'; });
     saveOutbox_();
     isSyncing = false;
 
@@ -9674,6 +9943,11 @@
     }
   });
   window.addEventListener('offline', updateSyncUI);
+  // Last synchronous persistence checkpoint before a page/tab is discarded.
+  // This does not try to sync; it only makes the durable queue copy current.
+  window.addEventListener('pagehide', () => {
+    if(outbox.length) saveOutbox_();
+  });
   // No navigator.onLine gate on these ticks either — same reasoning as
   // syncOutbox()/syncActivityOutbox_() above: this timer is what's meant
   // to be the safety net that eventually gets a stuck queue moving again,
@@ -11999,7 +12273,8 @@
           snapshot: c ? Object.assign(
             { customer: c.customer, auditorRemarks: c.auditorRemarks, dateOfAudit: c.dateOfAudit, previousRemarks: c.previousRemarks },
             Object.fromEntries(Object.keys(fields).map(k => [k, c[k]]))
-          ) : null
+          ) : null,
+          expect: c ? { customer: String(c.customer || '').trim(), engineNo: String(c.engineNo == null ? '' : c.engineNo).trim() } : null
         };
         // SAFETY: see MAX_SINGLE_WRITE_ENCODED_CHARS's comment above.
         // This is the one that matters in practice — historyEdit resends
@@ -12144,7 +12419,10 @@
 
     try{
       const snapshotForUndo = c ? Object.assign({}, c) : null;
-      const item = { id: genId_(), kind: 'delete', row: activeRow, status: 'pending', customerName: c ? c.customer : null };
+      const item = {
+        id: genId_(), kind: 'delete', row: activeRow, status: 'pending', customerName: c ? c.customer : null,
+        expect: c ? { customer: String(c.customer || '').trim(), engineNo: String(c.engineNo == null ? '' : c.engineNo).trim() } : null
+      };
       await queueOrSend_(item);
       toast('Customer deleted — syncing…');
       logActivity_('success', 'Customer deleted', label + ' removed from "' + currentSheet + '".', null, undefined, snapshotForUndo ? {

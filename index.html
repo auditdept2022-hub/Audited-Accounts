@@ -1929,7 +1929,7 @@
             <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
           </svg>
         </a>
-        <button class="hdr-sync-btn" id="hdrSyncBtn" onclick="manualRefresh_()" title="Refresh">
+        <button class="hdr-sync-btn" id="hdrSyncBtn" onclick="manualRefresh_()" title="Sync — send your changes and pull anyone else's">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="23 4 23 10 17 10"></polyline>
             <polyline points="1 20 1 14 7 14"></polyline>
@@ -2215,7 +2215,7 @@
         <button class="icon-btn profile-hardrefresh-btn" id="openSheetBtn" title="Open the connected Google Sheet in a new tab" onclick="openConnectedSheet_()" aria-label="Open connected Google Sheet">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
         </button>
-        <button class="icon-btn profile-hardrefresh-btn" id="forceRefreshBtn" title="Force refresh app — clears the cache and reloads everything fresh" onclick="confirmHardRefresh_()" aria-label="Force refresh app">
+        <button class="icon-btn profile-hardrefresh-btn" id="forceRefreshBtn" title="Force reset — clears the app, its saved data copies and the cache, then reloads everything fresh" onclick="confirmHardRefresh_()" aria-label="Force reset everything">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         </button>
         <button class="modal-close" onclick="closeProfileMenu()" aria-label="Close">✕</button>
@@ -2727,7 +2727,10 @@
             }
             return e;
           });
-        if(typeof res.version === 'number') lastKnownActivityVersion_ = res.version;
+        if(typeof res.version === 'number'){
+          lastKnownActivityVersion_ = res.version;
+          try{ localStorage.setItem('aa_actver_v1:' + API_URL, String(res.version)); }catch(e){}
+        }
         saveActivityLog_();
         updateActivityBadge_();
         updateActionBadge_();
@@ -6548,6 +6551,7 @@
       customers = [];
       lastListHash = null;
       lastKnownVersion_ = null;
+      forgetVersion_(branchName);
     }
     await loadData();
   }
@@ -9051,7 +9055,7 @@
       if(!versionConfirmedCurrent){
         const data = await fetchCustomerList_(currentSheet);
         serverList = data.customers || [];
-        if(typeof data.version === 'number'){ lastKnownVersion_ = data.version; lastVersionConfirmedAt_ = Date.now(); }
+        if(typeof data.version === 'number'){ lastKnownVersion_ = data.version; lastVersionConfirmedAt_ = Date.now(); rememberVersion_(currentSheet, data.version); }
       }
     }catch(e){ listErr = e; }
 
@@ -10000,6 +10004,31 @@
   // the network is the very first load on a given browser/device.
   const LOCAL_CACHE_PREFIX = 'aa_cache_v1:';
 
+  // OPEN-WITHOUT-RELOAD FIX: the server's version number for each branch is
+  // now remembered in localStorage next to that branch's cached list. Before,
+  // lastKnownVersion_ lived only in memory (null on every app open), so every
+  // open and every branch switch did a FULL list download even when nothing
+  // had changed. Now loadData() asks the tiny version check first and only
+  // downloads the list when the number moved.
+  const VERSION_CACHE_PREFIX = 'aa_cachever_v1:';
+  function versionCacheKey_(sheet){ return VERSION_CACHE_PREFIX + API_URL + ':' + (sheet || currentSheet); }
+  function rememberVersion_(sheet, v){
+    try{
+      if(typeof v === 'number') localStorage.setItem(versionCacheKey_(sheet), String(v));
+    }catch(e){ /* best-effort */ }
+  }
+  function recallVersion_(sheet){
+    try{
+      const raw = localStorage.getItem(versionCacheKey_(sheet));
+      if(raw === null || raw === '') return null;
+      const n = parseInt(raw, 10);
+      return isNaN(n) ? null : n;
+    }catch(e){ return null; }
+  }
+  function forgetVersion_(sheet){
+    try{ localStorage.removeItem(versionCacheKey_(sheet)); }catch(e){}
+  }
+
   function localCacheKey_(sheet){
     return LOCAL_CACHE_PREFIX + API_URL + ':' + (sheet || currentSheet);
   }
@@ -10087,6 +10116,7 @@
       try{
         const data = await fetchCustomerList_(name);
         saveLocalCache_(data.customers || [], name);
+        if(typeof data.version === 'number') rememberVersion_(name, data.version);
       }catch(e){
         // best-effort — this branch just stays as slow as it was before
       }
@@ -10239,6 +10269,33 @@
       // screen (cache-painted or already loaded), retries go back to the
       // full FETCH_TIMEOUT_MS — a slow-but-working cold start shouldn't
       // be cut off just because the first attempt was quick to fail.
+      // OPEN-WITHOUT-RELOAD FIX: if we just painted this branch from its
+      // saved copy AND we remember the server version that copy matches, ask
+      // the tiny version check first. Same number => nothing changed anywhere,
+      // so skip the full download entirely.
+      if(paintedFromCache){
+        const savedVersion = recallVersion_(sheetAtStart);
+        if(savedVersion !== null){
+          let serverVersion = null;
+          try{
+            const vr = await fetchListVersion_(sheetAtStart);
+            if(vr && typeof vr.version === 'number') serverVersion = vr.version;
+          }catch(e){ /* fall through to the normal full load */ }
+          if(sheetAtStart !== currentSheet || myGen !== loadGeneration){
+            hideStaleDataBanner_();
+            return;
+          }
+          if(serverVersion !== null && serverVersion === savedVersion){
+            lastKnownVersion_ = serverVersion;
+            lastVersionConfirmedAt_ = Date.now();
+            reapplyOutbox_();
+            setConnSyncedStatus_();
+            updateSyncUI();
+            hideStaleDataBanner_();
+            return; // nothing changed — no list download
+          }
+        }
+      }
       const data = await fetchCustomerList_(sheetAtStart, coldBootNoCache ? COLD_BOOT_TIMEOUT_MS : undefined);
       const fresh = data.customers || [];
 
@@ -10249,6 +10306,7 @@
       // user is looking at now.
       if(sheetAtStart !== currentSheet || myGen !== loadGeneration){
         saveLocalCache_(fresh, sheetAtStart);
+        if(typeof data.version === 'number') rememberVersion_(sheetAtStart, data.version);
         hideStaleDataBanner_(); // this fetch is for a branch that's no longer on screen — whatever's showing now (a newer load, or nothing) owns the banner instead
         return;
       }
@@ -10274,6 +10332,7 @@
         saveLocalCache_(customers, sheetAtStart);
         render();
       }
+      if(typeof data.version === 'number') rememberVersion_(sheetAtStart, data.version);
       setConnSyncedStatus_();
       updateSyncUI();
       hideStaleDataBanner_(); // real data landed — the cached snapshot it was covering for is gone
@@ -10398,8 +10457,42 @@
   // Wired to the ⟳ button. A plain wrapper around loadData(), but keeping
   // it separate from the auto-refresh/switch-branch call sites makes the
   // intent at each call site explicit.
-  function manualRefresh_(){
-    loadData();
+  // HEADER ⟳ = SYNC ONLY. Sends any queued edits, then asks the tiny
+  // version check whether anything changed on the server; the full list is
+  // downloaded only if it did (or if the version can't be confirmed).
+  // It never touches the app shell, service worker or saved caches — that
+  // is the ☰ menu's Force reset.
+  let manualSyncRunning_ = false;
+  async function manualRefresh_(){
+    if(manualSyncRunning_ || isLoading) return;
+    if(!API_URL){ toast('Connect to a spreadsheet first (☰ → Setup).', 'error'); return; }
+    if(!isOnline_()){ toast('You\u2019re offline — changes stay queued and sync when you\u2019re back online.'); return; }
+    manualSyncRunning_ = true;
+    updateRefreshLock_(true);
+    try{
+      if(hasSyncableOutbox_()) await syncOutbox();
+      checkActivityVersion_();
+      let changed = true;
+      if(currentSheet && lastKnownVersion_ !== null){
+        try{
+          const v = await fetchListVersion_(currentSheet);
+          if(typeof v.version === 'number' && v.version === lastKnownVersion_){
+            changed = false;
+            lastVersionConfirmedAt_ = Date.now();
+            rememberVersion_(currentSheet, v.version);
+            setConnSyncedStatus_();
+            toast('Already up to date.');
+          }
+        }catch(e){ /* can't confirm — fall through to a full load */ }
+      }
+      if(changed){
+        updateRefreshLock_(false);
+        await loadData();
+      }
+    }finally{
+      manualSyncRunning_ = false;
+      if(!isLoading) updateRefreshLock_(false);
+    }
   }
 
   // ---- Force refresh app (clear cache) ---------------------------------
@@ -10471,6 +10564,22 @@
       }
     }catch(err){
       console.warn('Cache clear failed:', err);
+    }
+    // FULL RESET: also drop this device's saved copies of the ledger, branch
+    // list, sheet link and saved version numbers so everything is pulled
+    // fresh. Deliberately NOT touched: queued offline edits (outbox + its
+    // backups), activity outbox, drafts, pinned branches, view mode and the
+    // current-branch choice — unsynced work must never be lost by a reset.
+    try{
+      const wipePrefixes = [LOCAL_CACHE_PREFIX, VERSION_CACHE_PREFIX, SHEETS_LOCAL_CACHE_PREFIX, 'aa_actver_v1:', 'aa_sheet_url_v1:'];
+      const doomed = [];
+      for(let i = 0; i < localStorage.length; i++){
+        const k = localStorage.key(i);
+        if(k && wipePrefixes.some(pf => k.indexOf(pf) === 0)) doomed.push(k);
+      }
+      doomed.forEach(k => localStorage.removeItem(k));
+    }catch(err){
+      console.warn('Saved-data clear failed:', err);
     }
     const url = new URL(window.location.href);
     url.searchParams.set('_refresh', Date.now());
@@ -10549,8 +10658,8 @@
   // re-fetches.
   async function confirmHardRefresh_(){
     if(!await appConfirm(
-      'This clears the app\'s saved copy of the page and reloads everything fresh from the server. Your spreadsheet data is never affected — only the app itself refreshes. Continue?',
-      { title: 'Force refresh app?', confirmText: 'Refresh now' }
+      'This is a full reset: it clears the app\'s saved page, service worker and this device\'s saved copy of your ledger, then reloads everything fresh from the server. Your spreadsheet is never affected, and changes still waiting to sync are kept. Continue?',
+      { title: 'Force reset everything?', confirmText: 'Reset now' }
     )) return;
     hardRefreshEverything_();
   }
@@ -12724,6 +12833,7 @@
         const v = await fetchListVersion_(currentSheet);
         if(typeof v.version === 'number' && v.version === lastKnownVersion_){
           lastVersionConfirmedAt_ = Date.now();
+          rememberVersion_(currentSheet, v.version);
           setConnSyncedStatus_();
           return; // confirmed nothing changed server-side — skip the full fetch
         }
@@ -12929,7 +13039,16 @@
       await loadData();
       if(outbox.length) syncOutbox();
       schedulePrefetch_();
-      syncActivityLog_(); // pull the shared log so this device is caught up from first paint
+      // Only download the shared log if its version moved since last time;
+      // otherwise keep the local copy (no full listActivity on every open).
+      let savedActVer_ = null;
+      try{ const r = localStorage.getItem('aa_actver_v1:' + API_URL); if(r !== null) savedActVer_ = parseInt(r, 10); }catch(e){}
+      if(savedActVer_ !== null && !isNaN(savedActVer_) && activityLog_.length){
+        lastKnownActivityVersion_ = savedActVer_;
+        checkActivityVersion_();
+      } else {
+        syncActivityLog_();
+      }
       if(activityOutbox_.length) syncActivityOutbox_(); // replay anything queued while offline last session
     })();
   } else {
@@ -12940,6 +13059,9 @@
   // shell (this HTML/CSS/JS) loads even with a flaky connection.
   // Live data still requires network — only the app shell is cached.
   if('serviceWorker' in navigator){
+    navigator.serviceWorker.addEventListener('message', (ev) => {
+      if(ev.data && ev.data.type === 'SHELL_UPDATED') toast('A new app version is ready — it will apply next time you open the app.');
+    });
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(err => {
         console.warn('Service worker registration failed:', err);

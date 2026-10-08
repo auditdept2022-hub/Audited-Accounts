@@ -1923,7 +1923,7 @@
         <div class="hdr-clock-date" id="hdrClockDate">— — —</div>
       </div>
       <div class="hdr-icon-row">
-        <a class="hdr-sync-btn" id="hdrAuditSheetBtn" href="Audit_Sheet.html" title="Open Audit Sheet">
+        <a class="hdr-sync-btn" id="hdrAuditSheetBtn" href="./Audit_Sheet.html" title="Open Audit Sheet" onclick="return openAuditSheet_(event)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M9 11l3 3L22 4"></path>
             <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
@@ -13063,6 +13063,31 @@
     })();
   } else {
     document.getElementById('setupPanel').style.display = 'block';
+  }
+
+
+  // Audit Sheet shortcut: navigate explicitly. A cache-busting query makes the
+  // service worker / HTTP cache miss any stale copy (or an index.html fallback).
+  // If the page really can't be reached, say so instead of silently doing nothing.
+  function openAuditSheet_(ev){
+    if(ev){ ev.preventDefault(); }
+    var target = new URL('Audit_Sheet.html', window.location.href);
+    target.searchParams.set('_t', Date.now());
+    fetch(target.toString(), { cache: 'no-store' }).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    }).then(function(t){
+      // A worker fallback would hand back this very app instead of the audit page.
+      if(t.indexOf('Audited Accounts \u2014 Subsidiary Ledger') !== -1 && t.indexOf('hdrAuditSheetBtn') !== -1){
+        throw new Error('got index.html back');
+      }
+      window.location.assign(target.toString());
+    }).catch(function(err){
+      console.warn('Audit Sheet open failed:', err);
+      if(typeof toast === 'function') toast('Can\u2019t open Audit_Sheet.html (' + err.message + '). Check the file name/location, or clear the service worker.');
+      else alert('Can\u2019t open Audit_Sheet.html: ' + err.message);
+    });
+    return false;
   }
 
   // Register the service worker so the app is installable and the

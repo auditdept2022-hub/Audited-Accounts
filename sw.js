@@ -38,13 +38,14 @@
 // (hamburger menu) still works: it unregisters this worker and deletes all
 // caches from the page; the 'message' listener below is a second path.
 
-const CACHE_NAME = 'audited-accounts-shell-v6';
+const CACHE_NAME = 'audited-accounts-shell-v7';
 const FONT_CACHE_NAME = 'audited-accounts-fonts-v1';
 
 // The one file that MUST be cached for the worker to be worth installing.
 const SHELL_PAGE = './index.html';
 // Best-effort extras (a missing one must never break install).
 const OPTIONAL_FILES = [
+  './Audit_Sheet.html',
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
@@ -166,6 +167,31 @@ function handleNavigation_(event) {
   })();
 }
 
+// v7 FIX: other HTML pages (e.g. Audit_Sheet.html). Before, EVERY navigation
+// was answered with the cached index.html, so the Audit Sheet button just
+// reloaded the dashboard. Now only index.html / the bare folder URL get the
+// shell treatment; any other page loads from the network (always fresh) and
+// falls back to its own cached copy when offline.
+async function handleOtherPage_(event) {
+  const request = event.request;
+  const url = new URL(request.url);
+  const key = new Request(url.origin + url.pathname); // one cache entry per page, ignoring ?query
+  try {
+    const response = await fetch(request);
+    if (response && response.ok && response.type === 'basic') {
+      const copy = response.clone();
+      event.waitUntil(
+        caches.open(CACHE_NAME).then((cache) => cache.put(key, copy)).catch(() => {})
+      );
+    }
+    return response;
+  } catch (err) {
+    const cache = await caches.open(CACHE_NAME);
+    const cached = await cache.match(key);
+    return cached || Response.error();
+  }
+}
+
 function handleCacheFirst_(event) {
   return caches.match(event.request, { ignoreSearch: true }).then((cached) => {
     const refresh = fetch(event.request)
@@ -220,7 +246,12 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   if (request.mode === 'navigate') {
-    event.respondWith(handleNavigation_(event));
+    const page = url.pathname.slice(url.pathname.lastIndexOf('/') + 1);
+    if (page === '' || page === 'index.html') {
+      event.respondWith(handleNavigation_(event));
+    } else {
+      event.respondWith(handleOtherPage_(event));
+    }
     return;
   }
 

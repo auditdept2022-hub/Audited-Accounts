@@ -258,7 +258,7 @@
     body.previewing .preview-overlay{position:static !important; background:none !important;}
     body.previewing .preview-toolbar{display:none !important;}
     body.previewing .preview-page-wrap{padding:0 !important; overflow:visible !important; display:block !important;}
-    body.previewing .preview-page{box-shadow:none !important; max-width:100% !important; width:auto !important; min-height:0 !important; padding:0 !important; border-radius:0 !important;}
+    body.previewing .preview-page{box-shadow:none !important; max-width:100% !important; min-width:0 !important; width:auto !important; min-height:0 !important; padding:0 !important; border-radius:0 !important; transform:none !important; margin-bottom:0 !important;}
   }
 
   /* ---------- full-screen report preview ---------- */
@@ -273,11 +273,18 @@
     padding:8px 14px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap;}
   .preview-btn.primary{background:#fff; color:#0f2547; border-color:#fff;}
   .preview-page-wrap{flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden;
-    -webkit-overflow-scrolling:touch; overscroll-behavior-y:contain;
+    -webkit-overflow-scrolling:touch; overscroll-behavior-y:contain; position:relative;
     padding:26px 14px 60px; display:flex; justify-content:center; align-items:flex-start; touch-action:pan-y;}
-  .preview-page{background:#fff; width:100%; max-width:816px; min-height:1056px; padding:11.7647%;
+  .preview-page-wrap.zoomed{display:block; overflow-x:auto; overflow-y:auto; touch-action:pan-x pan-y;}
+  .preview-page-wrap.zoomed .preview-page{margin-left:0!important; margin-right:0!important;}
+  /* A true Letter-sized page on every device. On phones JavaScript scales
+     this page visually to fit the screen, rather than changing the text
+     size, margins, line breaks or page geometry. Print removes that visual
+     scale and uses the exact same 1-inch content margins. */
+  .preview-page{background:#fff; width:816px; max-width:none; min-width:816px; min-height:1056px; padding:96px;
     box-shadow:0 8px 28px rgba(0,0,0,.28); border-radius:2px; font-family:Calibri,'Segoe UI',Arial,sans-serif;
     color:#111; font-size:12pt; line-height:1.15; text-align:left; outline:none; flex-shrink:0; box-sizing:border-box;
+    transform:scale(var(--preview-scale,1)); transform-origin:top center; margin-bottom:calc((var(--preview-scale,1) - 1) * 1056px);
     widows:3; orphans:3;}
   .preview-page:focus{box-shadow:0 8px 28px rgba(0,0,0,.28), 0 0 0 3px rgba(42,61,154,.3);}
   .pv-branch{font-weight:400; text-align:left; font-size:12pt;}
@@ -797,12 +804,12 @@
     .history-item{padding:11px;}
     .report-actions{gap:6px;}
     .report-actions .btn{white-space:normal; overflow-wrap:anywhere; min-width:0;}
-    .preview-toolbar{display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px; align-items:center;}
+    .preview-toolbar{display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:6px; align-items:center;}
     .preview-title{min-width:0; font-size:12.5px;}
     .preview-actions{grid-column:1 / -1; justify-content:stretch; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px;}
-    .preview-btn{min-width:0; padding:8px 5px; font-size:11.5px; white-space:normal;}
+    .preview-btn{min-width:0; min-height:30px; padding:5px 3px; font-size:10.5px; line-height:1.1; white-space:normal;}
     .preview-page-wrap{padding:12px 8px calc(20px + var(--safe-b));}
-    .preview-page{min-width:0; min-height:0; padding:8%; font-size:11pt;}
+    .preview-page{width:816px!important; max-width:none!important; min-width:816px!important; min-height:1056px!important; padding:96px!important; font-size:12pt!important;}
     .pv-sign{width:47%;}
     .pv-sign + .pv-sign{margin-left:4%;}
     .confirm-overlay{padding:14px;}
@@ -816,8 +823,8 @@
     .yn-toggle{align-self:flex-end;}
     .deposit-row{grid-template-columns:60px 70px minmax(0,1fr) 20px; gap:4px;}
     .denom-head,.denom-row,.denom-total{grid-template-columns:minmax(0,1fr) 54px 72px; gap:4px;}
-    .preview-actions{grid-template-columns:repeat(4,minmax(0,1fr)); gap:4px;}
-    .preview-btn{font-size:10.5px; padding:7px 3px;}
+    .preview-actions{grid-template-columns:repeat(4,minmax(0,1fr)); gap:3px;}
+    .preview-btn{min-height:28px; font-size:9.5px; padding:4px 2px; border-radius:6px;}
     .report-actions .btn{font-size:10.5px; padding:9px 3px;}
   }
   @media (min-width:641px) and (max-width:859px){
@@ -1205,11 +1212,12 @@
     <div class="preview-title" id="previewTitle">Audit Findings preview
       <span class="preview-hint" id="previewHint">Edit freely &mdash; it only changes this document, never the checklist or saved history</span>
     </div>
+    <button class="preview-btn" id="previewZoomBtn" aria-label="Show document at 100 percent" aria-pressed="false" onclick="togglePreviewZoom_()">100%</button>
     <div class="preview-actions">
       <button class="preview-btn" id="previewResetBtn" aria-label="Reset preview to auto-drafted text" onclick="resetPreviewDraft()">Reset</button>
-      <button class="preview-btn" onclick="capturePreviewEdits(); window.print()">Print</button>
+      <button class="preview-btn" aria-label="Print report" onclick="capturePreviewEdits(); window.print()">Print</button>
       <button class="preview-btn" id="previewShareBtn" aria-label="Share this audit as a Word document" onclick="shareAuditDoc()">Share</button>
-      <button class="preview-btn primary" id="previewDownloadBtn" onclick="downloadPreviewDoc()">Download</button>
+      <button class="preview-btn primary" id="previewDownloadBtn" aria-label="Download Word DOCX" onclick="downloadPreviewDoc()">Download</button>
     </div>
   </div>
   <div class="preview-page-wrap">
@@ -1353,6 +1361,7 @@ let previewEditedHtml = null;
    filled in. See printHistoryReport() / exitHistoryPreviewMode(). */
 let historyPreviewMode = false;
 let historyPreviewTitleHtml = null;
+let previewZoomed = false;
 
 /* search state (toolbar below header) */
 let searchQuery = '';
@@ -2756,7 +2765,7 @@ function clearSearch(){
    write-up (matching the branch's plain-language findings report
    style) from the checklist answers already entered, then shows
    it full-screen and editable so the auditor can tidy the wording
-   before downloading it as a Word (.doc) file ready to send.
+   before downloading it as a genuine Word (.docx) file ready to send.
    ============================================================ */
 function fmtLongDateUpper(iso){
   if(!iso) return '';
@@ -2898,6 +2907,30 @@ function buildPreviewPlainText(){
   fieldBullets.forEach(b=>lines.push('- '+b));
   return lines.join('\n');
 }
+function syncPreviewPageScale_(){
+  const page = document.getElementById('previewPage');
+  const wrap = document.querySelector('.preview-page-wrap');
+  if(!page || !wrap) return;
+  // The layout remains an 8.5 x 11 inch page; only its on-screen view is scaled.
+  const available = Math.max(240, wrap.clientWidth - 16);
+  const scale = previewZoomed ? 1 : Math.min(1, available / 816);
+  wrap.classList.toggle('zoomed', previewZoomed);
+  const zoomBtn = document.getElementById('previewZoomBtn');
+  if(zoomBtn){ zoomBtn.textContent = previewZoomed ? 'Fit' : '100%'; zoomBtn.setAttribute('aria-pressed', previewZoomed ? 'true' : 'false'); zoomBtn.setAttribute('aria-label', previewZoomed ? 'Fit document to screen' : 'Show document at 100 percent'); }
+  page.style.setProperty('--preview-scale', String(scale));
+  page.style.transform = 'scale(' + scale + ')';
+  // CSS transforms do not change layout height, so shrink the scroll footprint
+  // by the amount the visual page was scaled down.
+  page.style.marginBottom = ((scale - 1) * Math.max(1056, page.offsetHeight)) + 'px';
+}
+function togglePreviewZoom_(){
+  previewZoomed = !previewZoomed;
+  syncPreviewPageScale_();
+}
+window.addEventListener('resize', function(){
+  if(document.getElementById('previewOverlay')?.classList.contains('open')) syncPreviewPageScale_();
+}, {passive:true});
+
 function openPreview(){
   // Auto-draft only the FIRST time this audit's preview is opened.
   // After that, whatever's in previewEditedHtml (your manual edits)
@@ -2910,6 +2943,7 @@ function openPreview(){
   }
   document.getElementById('previewPage').innerHTML = previewEditedHtml;
   document.getElementById('previewOverlay').classList.add('open');
+  syncPreviewPageScale_();
   document.getElementById('previewOverlay').setAttribute('aria-hidden','false');
   document.body.classList.add('previewing');
 }
@@ -2923,6 +2957,7 @@ function capturePreviewEdits(){
   if(historyPreviewMode) return; // read-only history preview — never touch the live draft's edits
   const el = document.getElementById('previewPage');
   if(el && el.innerHTML.trim()) previewEditedHtml = el.innerHTML;
+  syncPreviewPageScale_();
 }
 /* Converts the standalone preview's edited HTML back into the same
    plain-text line format buildPreviewPlainText() used to produce, so
@@ -2982,6 +3017,7 @@ async function resetPreviewDraft(){
   if(!ok) return;
   previewEditedHtml = buildPreviewHtml();
   document.getElementById('previewPage').innerHTML = previewEditedHtml;
+  syncPreviewPageScale_();
   showToast('Preview rebuilt from the checklist \u2014 your previous edits were discarded.', 'info');
 }
 function closePreview(){
@@ -2997,54 +3033,203 @@ function closePreview(){
   document.getElementById('previewOverlay').setAttribute('aria-hidden','true');
   document.body.classList.remove('previewing');
 }
-/* Builds the same Word-openable .doc file used by both Download and
-   Share, from whatever's currently in the preview page (so print,
-   preview, download, and share all show the exact same document). */
-function buildWordDocFile_(){
+/* Builds a genuine Word .docx file from the editable preview content.
+   It intentionally uses a tiny uncompressed ZIP writer instead of a CDN
+   dependency, so document sharing also works on mobile when offline. */
+const AUDIT_DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+function xmlEscapeDocx_(value){
+  return String(value == null ? '' : value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+}
+function docxRun_(text, style){
+  style = style || {};
+  if(text === '') return '';
+  let rPr = '';
+  if(style.bold) rPr += '<w:b/>';
+  if(style.italic) rPr += '<w:i/>';
+  if(style.underline) rPr += '<w:u w:val="single"/>';
+  if(style.fontSize) rPr += '<w:sz w:val="'+style.fontSize+'"/><w:szCs w:val="'+style.fontSize+'"/>';
+  const raw = String(text);
+  return '<w:r>'+(rPr ? '<w:rPr>'+rPr+'</w:rPr>' : '')+'<w:t xml:space="preserve">'+xmlEscapeDocx_(raw)+'</w:t></w:r>';
+}
+function docxInline_(node, style){
+  style = style || {};
+  if(node.nodeType === 3) return docxRun_(node.nodeValue || '', style);
+  if(node.nodeType !== 1) return '';
+  const tag = node.tagName.toLowerCase();
+  if(tag === 'br') return '<w:r><w:br/></w:r>';
+  const next = Object.assign({}, style);
+  if(tag === 'b' || tag === 'strong') next.bold = true;
+  if(tag === 'i' || tag === 'em') next.italic = true;
+  if(tag === 'u') next.underline = true;
+  return Array.from(node.childNodes).map(n => docxInline_(n, next)).join('');
+}
+function docxParagraph_(runs, options){
+  options = options || {};
+  let pPr = '';
+  const props = [];
+  const spacing = '<w:spacing w:before="'+(options.before || 0)+'" w:after="'+(options.after == null ? 0 : options.after)+'" w:line="276" w:lineRule="auto"/>';
+  props.push(spacing);
+  if(options.keepNext) props.push('<w:keepNext/>');
+  if(options.numId) props.push('<w:numPr><w:ilvl w:val="0"/><w:numId w:val="'+options.numId+'"/></w:numPr>');
+  if(options.bottomBorder) props.push('<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="000000"/></w:pBdr>');
+  if(options.align) props.push('<w:jc w:val="'+options.align+'"/>');
+  if(props.length) pPr = '<w:pPr>'+props.join('')+'</w:pPr>';
+  return '<w:p>'+pPr+(runs || '<w:r><w:t xml:space="preserve"> </w:t></w:r>')+'</w:p>';
+}
+function docxSignatureTable_(){
+  function cell(label){
+    return '<w:tc><w:tcPr><w:tcW w:w="4680" w:type="dxa"/><w:tcMar><w:top w:w="40" w:type="dxa"/><w:start w:w="80" w:type="dxa"/><w:bottom w:w="40" w:type="dxa"/><w:end w:w="80" w:type="dxa"/></w:tcMar></w:tcPr>'
+      + docxParagraph_(docxRun_(label), {after:0})
+      + docxParagraph_(docxRun_(' '), {before:660, after:100, bottomBorder:true})
+      + '</w:tc>';
+  }
+  const borders = '<w:tblBorders><w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/><w:right w:val="nil"/><w:insideH w:val="nil"/><w:insideV w:val="nil"/></w:tblBorders>';
+  return docxParagraph_(docxRun_(' '), {after:500})
+    + '<w:tbl><w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblLayout w:type="fixed"/>'+borders+'</w:tblPr>'
+    + '<w:tblGrid><w:gridCol w:w="4680"/><w:gridCol w:w="4680"/></w:tblGrid><w:tr>'+cell('Prepared by:')+cell('Acknowledged by:')+'</w:tr></w:tbl>';
+}
+function docxBlocks_(node){
+  if(node.nodeType === 3){
+    return String(node.nodeValue || '').trim() ? docxParagraph_(docxInline_(node), {}) : '';
+  }
+  if(node.nodeType !== 1) return '';
+  const tag = node.tagName.toLowerCase();
+  if(node.classList && node.classList.contains('pv-footer')) return docxSignatureTable_();
+  if(tag === 'ol' || tag === 'ul'){
+    const numId = tag === 'ol' ? 1 : 2;
+    return Array.from(node.children).filter(el => el.tagName.toLowerCase() === 'li')
+      .map(li => docxParagraph_(Array.from(li.childNodes).map(n => docxInline_(n)).join(''), {numId:numId, after:40})).join('');
+  }
+  if(node.classList && node.classList.contains('pv-section')){
+    return docxParagraph_(docxInline_(node, {bold:true}), {before:240, after:30, keepNext:true});
+  }
+  if(node.classList && node.classList.contains('pv-date')){
+    return docxParagraph_(docxInline_(node), {after:300});
+  }
+  const childElements = Array.from(node.children || []);
+  const containsBlock = childElements.some(el => /^(div|p|ol|ul|table|h1|h2|h3|blockquote)$/.test(el.tagName.toLowerCase()));
+  if(containsBlock && !/^(li|p|h1|h2|h3)$/.test(tag)){
+    return Array.from(node.childNodes).map(n => docxBlocks_(n)).join('');
+  }
+  if(tag === 'p' || tag === 'div' || tag === 'li' || /^h[1-6]$/.test(tag)){
+    let runs = Array.from(node.childNodes).map(n => docxInline_(n, /^h[1-6]$/.test(tag) ? {bold:true} : {})).join('');
+    return docxParagraph_(runs, {after: (tag === 'p' ? 60 : 20), keepNext:/^h[1-6]$/.test(tag)});
+  }
+  return docxParagraph_(docxInline_(node), {after:20});
+}
+function utf8BytesDocx_(value){ return new TextEncoder().encode(String(value)); }
+function crc32Docx_(bytes){
+  let crc = 0xffffffff;
+  for(let i=0;i<bytes.length;i++){
+    crc ^= bytes[i];
+    for(let j=0;j<8;j++) crc = (crc & 1) ? (crc >>> 1) ^ 0xedb88320 : (crc >>> 1);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+function zipStoredDocx_(entries){
+  const out = []; const central = []; let offset = 0; let centralSize = 0;
+  const now = new Date();
+  const dosTime = (now.getHours()<<11) | (now.getMinutes()<<5) | Math.floor(now.getSeconds()/2);
+  const dosDate = (((Math.max(1980,now.getFullYear())-1980)&127)<<9) | ((now.getMonth()+1)<<5) | now.getDate();
+  function header(size, write){ const a = new Uint8Array(size); write(new DataView(a.buffer)); return a; }
+  entries.forEach(entry => {
+    const name = utf8BytesDocx_(entry.name); const data = utf8BytesDocx_(entry.data); const crc = crc32Docx_(data);
+    const local = header(30, v=>{
+      v.setUint32(0,0x04034b50,true); v.setUint16(4,20,true); v.setUint16(6,0x0800,true); v.setUint16(8,0,true);
+      v.setUint16(10,dosTime,true); v.setUint16(12,dosDate,true); v.setUint32(14,crc,true); v.setUint32(18,data.length,true);
+      v.setUint32(22,data.length,true); v.setUint16(26,name.length,true); v.setUint16(28,0,true);
+    });
+    out.push(local,name,data);
+    const cent = header(46,v=>{
+      v.setUint32(0,0x02014b50,true); v.setUint16(4,20,true); v.setUint16(6,20,true); v.setUint16(8,0x0800,true); v.setUint16(10,0,true);
+      v.setUint16(12,dosTime,true); v.setUint16(14,dosDate,true); v.setUint32(16,crc,true); v.setUint32(20,data.length,true); v.setUint32(24,data.length,true);
+      v.setUint16(28,name.length,true); v.setUint16(30,0,true); v.setUint16(32,0,true); v.setUint16(34,0,true); v.setUint16(36,0,true);
+      v.setUint32(38,0,true); v.setUint32(42,offset,true);
+    });
+    central.push(cent,name); centralSize += cent.length + name.length; offset += local.length + name.length + data.length;
+  });
+  const centralOffset = offset;
+  const end = header(22,v=>{
+    v.setUint32(0,0x06054b50,true); v.setUint16(4,0,true); v.setUint16(6,0,true); v.setUint16(8,entries.length,true); v.setUint16(10,entries.length,true);
+    v.setUint32(12,centralSize,true); v.setUint32(16,centralOffset,true); v.setUint16(20,0,true);
+  });
+  return new Blob([...out,...central,end], {type:AUDIT_DOCX_MIME});
+}
+function buildDocxFile_(){
   capturePreviewEdits();
   const pageEl = document.getElementById('previewPage');
-  const content = pageEl.innerHTML;
   const safeBranch = (state.branch || 'Audit Findings').replace(/[\\/:*?"<>|]/g,'-').trim();
-  const filename = 'Audit Findings - ' + safeBranch + (state.auditDate ? (' - '+state.auditDate) : '') + '.doc';
-  // @page WordSection1 is the standard trick Word looks for when it opens
-  // an HTML/.doc file: it sets the document's actual Page Setup (paper
-  // size + margins) instead of leaving Word's own default, so this opens
-  // already configured for a real 8.5in x 11in (Letter) sheet with 1in
-  // margins on every side \u2014 ready to print immediately, no manual
-  // Page Setup needed by whoever you send it to.
-  const style = '@page WordSection1{size:8.5in 11.0in; margin:1.0in 1.0in 1.0in 1.0in; mso-page-orientation:portrait;}'
-    + 'div.WordSection1{page:WordSection1;}'
-    + 'body{font-family:Calibri,"Segoe UI",Arial,sans-serif; font-size:12pt; line-height:1.15; color:#111;}'
-    + '.pv-branch,.pv-title,.pv-date{font-weight:normal; text-align:left; font-size:12pt;}'
-    + '.pv-date{margin-bottom:20px;}'
-    + '.pv-section{font-weight:bold; margin:16px 0 2px;}'
-    + '.pv-list{margin:0 0 4px; padding-left:34px;}'
-    + '.pv-list li{margin-bottom:2px;}'
-    + '.pv-footer{width:100%; margin-top:56px;}'
-    + '.pv-sign{display:inline-block; width:45%; vertical-align:top;}'
-    + '.pv-sign-label{font-size:12pt;}'
-    + '.pv-sign .line{margin-top:44px; padding-top:4px; font-size:12pt;}';
-  const doc = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
-    + '<head><meta charset="utf-8"><title>Audit Findings</title><style>'+style+'</style></head>'
-    + '<body><div class="WordSection1">'+content+'</div></body></html>';
-  const blob = new Blob(['\ufeff', doc], { type:'application/msword' });
+  const filename = 'Audit Findings - ' + safeBranch + (state.auditDate ? (' - '+state.auditDate) : '') + '.docx';
+  const parser = new DOMParser();
+  const parsed = parser.parseFromString('<div id="docxRoot">'+(pageEl ? pageEl.innerHTML : '')+'</div>','text/html');
+  const root = parsed.getElementById('docxRoot');
+  const bodyXml = Array.from(root.childNodes).map(n=>docxBlocks_(n)).join('');
+  const documentXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    + '<w:body>'+bodyXml+'<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>';
+  const contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    + '<Default Extension="xml" ContentType="application/xml"/>'
+    + '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+    + '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+    + '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>'
+    + '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+    + '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'
+    + '</Types>';
+  const rootRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+    + '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>'
+    + '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>'
+    + '</Relationships>';
+  const docRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+    + '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>'
+    + '</Relationships>';
+  const stylesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+    + '<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:rPrDefault>'
+    + '<w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>'
+    + '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style></w:styles>';
+  const numberingXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+    + '<w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="singleLevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/><w:pPr><w:tabs><w:tab w:val="num" w:pos="720"/></w:tabs><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum>'
+    + '<w:abstractNum w:abstractNumId="1"><w:multiLevelType w:val="singleLevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:tabs><w:tab w:val="num" w:pos="720"/></w:tabs><w:ind w:left="720" w:hanging="360"/></w:pPr><w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol"/></w:rPr></w:lvl></w:abstractNum>'
+    + '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num></w:numbering>';
+  const nowIso = new Date().toISOString().replace(/\.\d{3}Z$/,'Z');
+  const coreXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+    + '<dc:title>'+xmlEscapeDocx_('Audit Findings - '+(state.branch||''))+'</dc:title><dc:creator>Branch Audit</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">'+nowIso+'</dcterms:created></cp:coreProperties>';
+  const appXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>Branch Audit</Application></Properties>';
+  const blob = zipStoredDocx_([
+    {name:'[Content_Types].xml',data:contentTypes},
+    {name:'_rels/.rels',data:rootRels},
+    {name:'word/document.xml',data:documentXml},
+    {name:'word/_rels/document.xml.rels',data:docRels},
+    {name:'word/styles.xml',data:stylesXml},
+    {name:'word/numbering.xml',data:numberingXml},
+    {name:'docProps/core.xml',data:coreXml},
+    {name:'docProps/app.xml',data:appXml}
+  ]);
   let file = null;
-  try{ file = new File([blob], filename, { type:'application/msword' }); }catch(e){ /* File() unsupported \u2014 blob-only fallback below */ }
-  return { blob, file, filename };
+  try{ file = new File([blob], filename, {type:AUDIT_DOCX_MIME}); }catch(e){ /* download still works from Blob */ }
+  return {blob, file, filename};
 }
 function downloadPreviewDoc(){
-  const { blob, filename } = buildWordDocFile_();
+  const { blob, filename } = buildDocxFile_();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(()=>URL.revokeObjectURL(url), 4000);
-  showToast('Downloaded \u2014 opens in Word already set to 8.5\u2033\u00d711\u2033, ready to print.', 'success');
+  showToast('Downloaded the Word DOCX file, ready to open, print or share.', 'success');
 }
 
 /* ============================================================
-   SHARE (preview popup) — sends the Word (.doc) file itself
-   through the device's native share sheet, so it can be handed
+   SHARE (preview popup) — sends the Word (.docx) file itself
+   through the device's native share sheet, as a real .docx attachment, so it can be handed
    straight to Word, Google Drive, Messenger, a printer app, email,
    etc. — from there, print it or forward it same as any other
    Word file. Falls back to just downloading the file when the
@@ -3052,11 +3237,15 @@ function downloadPreviewDoc(){
    is a dead end.
    ============================================================ */
 async function shareAuditDoc(){
-  const { file, blob, filename } = buildWordDocFile_();
+  const { file, blob, filename } = buildDocxFile_();
   const shareTitle = 'Audit Findings' + (state.branch ? ' - ' + state.branch : '');
-  if(file && navigator.canShare && navigator.canShare({ files:[file] })){
+  const shareText = 'Audit Findings' + (state.branch ? ' for ' + state.branch : '') + (state.auditDate ? ' (' + state.auditDate + ')' : '');
+  let canShareDocx = false;
+  try{ canShareDocx = !!(file && navigator.share && navigator.canShare && navigator.canShare({ files:[file] })); }
+  catch(e){ canShareDocx = false; }
+  if(canShareDocx){
     try{
-      await navigator.share({ files:[file], title: shareTitle });
+      await navigator.share({ files:[file], title: shareTitle, text: shareText });
       return;
     }catch(e){
       if(e && e.name === 'AbortError') return; // user cancelled the share sheet
@@ -3070,7 +3259,7 @@ async function shareAuditDoc(){
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(()=>URL.revokeObjectURL(url), 4000);
-  showToast('Sharing isn\u2019t available here \u2014 downloaded the Word file instead. Open it to share or print.', 'info');
+  showToast('This browser cannot share files directly. The DOCX was downloaded; attach it from your Files/Downloads folder.', 'info');
 }
 
 async function doSubmit(){
@@ -3657,6 +3846,7 @@ function printHistoryReport(){
   });
 
   document.getElementById('previewOverlay').classList.add('open');
+  syncPreviewPageScale_();
   document.getElementById('previewOverlay').setAttribute('aria-hidden','false');
   document.body.classList.add('previewing');
   window.print();
@@ -3670,6 +3860,7 @@ function exitHistoryPreviewMode(){
   const page = document.getElementById('previewPage');
   page.setAttribute('contenteditable', 'true');
   page.innerHTML = previewEditedHtml || '';
+  syncPreviewPageScale_();
   if(historyPreviewTitleHtml != null){
     document.getElementById('previewHint').innerHTML = historyPreviewTitleHtml;
     historyPreviewTitleHtml = null;

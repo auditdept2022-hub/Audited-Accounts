@@ -3237,45 +3237,45 @@ function downloadPreviewDoc(){
    is a dead end.
    ============================================================ */
 async function shareAuditDoc(){
-  const { file, blob, filename } = buildDocxFile_();
-  const shareTitle = 'Audit Findings' + (state.branch ? ' - ' + state.branch : '');
-  const shareText = 'Audit Findings' + (state.branch ? ' for ' + state.branch : '') + (state.auditDate ? ' (' + state.auditDate + ')' : '');
-
-  // Always TRY the native file-sharing API when available. Some mobile
-  // browsers incorrectly return false from canShare({files}) even though
-  // navigator.share can still open the OS share sheet for this File.
-  // The action is invoked directly from the Share button, preserving the
-  // transient user activation required by Safari/Chrome.
-  let nativeShareAttempted = false;
-  if (file && typeof navigator.share === 'function') {
-    nativeShareAttempted = true;
-    try {
-      if (typeof navigator.canShare === 'function') {
-        try { navigator.canShare({ files: [file] }); } catch (checkErr) { /* share attempt below is authoritative */ }
-      }
-      await navigator.share({ files: [file], title: shareTitle, text: shareText });
-      return; // OS share sheet opened and the user handled the share/cancel.
-    } catch (e) {
-      if (e && e.name === 'AbortError') return; // user closed the native share sheet
-      console.warn('Native DOCX sharing was unavailable; downloading the DOCX instead.', e);
-    }
+  // Build the real DOCX synchronously from the current preview while the
+  // user's tap is still the active gesture. On supported Android/iOS
+  // browsers, navigator.share({files:[file]}) opens the operating system's
+  // native share panel (the panel with Messenger, Drive, Quick Share, etc.).
+  let packageData;
+  try {
+    packageData = buildDocxFile_();
+  } catch (buildErr) {
+    console.error('Could not prepare the Word document for sharing.', buildErr);
+    showToast('Could not prepare the Word document. Try Download first, then share the saved file.', 'warn');
+    return;
   }
 
-  // Do not silently pretend Messenger was opened: the browser/OS controls
-  // whether Messenger appears in the native share sheet and accepts DOCX.
-  // When file sharing is unavailable, preserve the file and explain how to
-  // share it manually rather than opening a text-only sheet without the DOCX.
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(()=>URL.revokeObjectURL(url), 4000);
-  showToast(
-    nativeShareAttempted
-      ? 'Your browser could not share a DOCX attachment. The file was downloaded. Open this page in Chrome/Safari over HTTPS and tap Share; choose Messenger if it appears in your phone’s share menu.'
-      : 'This browser has no native share menu. The DOCX was downloaded. Open this page in Chrome/Safari over HTTPS on your phone to share the file.',
-    'info'
-  );
+  const file = packageData && packageData.file;
+  const shareTitle = 'Audit Findings' + (state.branch ? ' - ' + state.branch : '');
+
+  // Keep the Share button dedicated to sharing: do not silently download
+  // the file when native sharing fails. Download is a separate button.
+  if (!file) {
+    showToast('This browser could not create a shareable DOCX file. Use Download, or open this page in Chrome on Android / Safari on iPhone over HTTPS.', 'warn');
+    return;
+  }
+  if (!window.isSecureContext || typeof navigator.share !== 'function') {
+    showToast('Native file sharing is unavailable in this browser. Open this site in Chrome on Android or Safari on iPhone over HTTPS, then tap Share again. Use Download as a fallback.', 'warn');
+    return;
+  }
+
+  // Intentionally don't gate on canShare(): some mobile browsers return
+  // false or throw there even though navigator.share({files}) works.
+  // Call the OS API directly from this click handler to preserve the
+  // transient user activation needed to open the native share sheet.
+  try {
+    await navigator.share({ files: [file], title: shareTitle });
+    // Native share panel appeared and the user completed or closed it.
+  } catch (err) {
+    if (err && err.name === 'AbortError') return; // user cancelled the system panel
+    console.warn('Native DOCX share failed.', err);
+    showToast('The phone could not open its native share panel for this DOCX. Open the page in Chrome/Safari over HTTPS. You can still use Download, then share the saved file from your phone.', 'warn');
+  }
 }
 
 async function doSubmit(){

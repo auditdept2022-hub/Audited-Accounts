@@ -3240,26 +3240,42 @@ async function shareAuditDoc(){
   const { file, blob, filename } = buildDocxFile_();
   const shareTitle = 'Audit Findings' + (state.branch ? ' - ' + state.branch : '');
   const shareText = 'Audit Findings' + (state.branch ? ' for ' + state.branch : '') + (state.auditDate ? ' (' + state.auditDate + ')' : '');
-  let canShareDocx = false;
-  try{ canShareDocx = !!(file && navigator.share && navigator.canShare && navigator.canShare({ files:[file] })); }
-  catch(e){ canShareDocx = false; }
-  if(canShareDocx){
-    try{
-      await navigator.share({ files:[file], title: shareTitle, text: shareText });
-      return;
-    }catch(e){
-      if(e && e.name === 'AbortError') return; // user cancelled the share sheet
-      // fall through to download below
+
+  // Always TRY the native file-sharing API when available. Some mobile
+  // browsers incorrectly return false from canShare({files}) even though
+  // navigator.share can still open the OS share sheet for this File.
+  // The action is invoked directly from the Share button, preserving the
+  // transient user activation required by Safari/Chrome.
+  let nativeShareAttempted = false;
+  if (file && typeof navigator.share === 'function') {
+    nativeShareAttempted = true;
+    try {
+      if (typeof navigator.canShare === 'function') {
+        try { navigator.canShare({ files: [file] }); } catch (checkErr) { /* share attempt below is authoritative */ }
+      }
+      await navigator.share({ files: [file], title: shareTitle, text: shareText });
+      return; // OS share sheet opened and the user handled the share/cancel.
+    } catch (e) {
+      if (e && e.name === 'AbortError') return; // user closed the native share sheet
+      console.warn('Native DOCX sharing was unavailable; downloading the DOCX instead.', e);
     }
   }
-  // No file-sharing support here — download it instead so the person
-  // still ends up with the Word file, ready to share/print manually.
+
+  // Do not silently pretend Messenger was opened: the browser/OS controls
+  // whether Messenger appears in the native share sheet and accepts DOCX.
+  // When file sharing is unavailable, preserve the file and explain how to
+  // share it manually rather than opening a text-only sheet without the DOCX.
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(()=>URL.revokeObjectURL(url), 4000);
-  showToast('This browser cannot share files directly. The DOCX was downloaded; attach it from your Files/Downloads folder.', 'info');
+  showToast(
+    nativeShareAttempted
+      ? 'Your browser could not share a DOCX attachment. The file was downloaded. Open this page in Chrome/Safari over HTTPS and tap Share; choose Messenger if it appears in your phone’s share menu.'
+      : 'This browser has no native share menu. The DOCX was downloaded. Open this page in Chrome/Safari over HTTPS on your phone to share the file.',
+    'info'
+  );
 }
 
 async function doSubmit(){

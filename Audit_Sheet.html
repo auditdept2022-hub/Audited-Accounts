@@ -1243,8 +1243,7 @@
     <p class="share-retry-message" id="shareRetryMessage">The Word file is ready. Try opening the phone share panel again.</p>
     <div class="share-retry-actions">
       <button type="button" onclick="closeShareRetryPanel_()">Close</button>
-      <button type="button" onclick="downloadShareRecoveryDoc_()">Download DOCX</button>
-      <button type="button" class="primary" onclick="retryShareAuditDoc_()">Try native share</button>
+      <button type="button" class="primary" onclick="downloadShareRecoveryDoc_()">Download DOCX</button>
     </div>
   </div>
 </div>
@@ -3079,7 +3078,8 @@ function closePreview(){
 }
 /* Builds a genuine Word .docx file from the editable preview content.
    It intentionally uses a tiny uncompressed ZIP writer instead of a CDN
-   dependency, so document sharing also works on mobile when offline. */
+   dependency, so DOCX generation works on mobile when offline. Direct DOCX
+   sharing is still subject to the browser's native Web Share file allowlist. */
 const AUDIT_DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 function xmlEscapeDocx_(value){
   return String(value == null ? '' : value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
@@ -3274,11 +3274,12 @@ function downloadPreviewDoc(){
 /* ============================================================
    NATIVE SHARE (preview popup)
    ------------------------------------------------------------
-   Prepare the DOCX before the user taps Share. Android can reject a
-   navigator.share() call as NotAllowedError when expensive DOCX generation
-   happens first and transient user activation has expired. The actual tap
-   handler below now calls navigator.share() immediately with a cached File.
-   A visible retry panel offers another real tap if the browser still blocks it.
+   Important Android Chrome limitation: the browser's Web Share file
+   allowlist does not include .docx / the Word MIME type. A DOCX may be
+   shared from Android Files/Downloads, but a webpage cannot force Chrome
+   to pass that DOCX to Android's sharesheet. Check canShare() first and
+   explain the supported path instead of repeatedly calling a request that
+   will be rejected with NotAllowedError. Other browsers may allow DOCX.
    ============================================================ */
 function invalidateShareDocxCache_(){
   cachedShareDocxPackage_ = null;
@@ -3303,12 +3304,20 @@ function scheduleShareDocxPreparation_(delayMs){
     }
   }, Math.max(0, Number(delayMs) || 0));
 }
-function showShareRetryPanel_(message, prepared){
+function showShareRetryPanel_(message, prepared, title){
   pendingShareDocxPackage_ = prepared || cachedShareDocxPackage_;
   const layer = document.getElementById('shareRetryOverlay');
   const msg = document.getElementById('shareRetryMessage');
+  const titleEl = document.getElementById('shareRetryTitle');
+  if(titleEl) titleEl.textContent = title || 'DOCX sharing is not available here';
   if(msg) msg.textContent = message;
   if(layer) layer.classList.add('open');
+}
+function showDocxShareHelp_(prepared, detail){
+  const msg = 'This browser cannot pass a .docx Word file directly to the Android sharing panel.'
+    + (detail ? ' ' + detail : '')
+    + ' To share the actual Word attachment like in your screenshot: tap Download DOCX, open Files or Downloads on your phone, select the saved .docx, tap Share, then choose Messenger. This is a browser restriction, not an audit-data problem; HTML alone cannot bypass it.';
+  showShareRetryPanel_(msg, prepared, 'Direct DOCX sharing is blocked by this browser');
 }
 function closeShareRetryPanel_(){
   const layer = document.getElementById('shareRetryOverlay');
@@ -3319,79 +3328,118 @@ function downloadShareRecoveryDoc_(){
   downloadPreviewDoc();
 }
 function shareAuditDoc(){
-  // No await and no DOCX construction before navigator.share: this is the
-  // trusted button gesture on which Android's native panel depends.
+  // Do not await or build the file inside the tap. Use the cached DOCX.
   const page = document.getElementById('previewPage');
   if(!page){ showToast('The audit preview is not ready. Close and reopen Audit Findings, then try Share again.', 'warn'); return; }
   const currentHtml = page.innerHTML;
   if(!cachedShareDocxPackage_ || cachedShareDocxHtml_ !== currentHtml){
     scheduleShareDocxPreparation_(0);
-    showToast('Preparing the Word file for sharing. Please tap Share again in a moment.', 'info');
+    showToast('Preparing the Word file. Please tap Share again in a moment.', 'info');
     return;
   }
   const packageData = cachedShareDocxPackage_;
+
+  // In the installed Android Branch Audit app, send the DOCX bytes over an
+  // origin-restricted WebMessage bridge. Android then shares a FileProvider
+  // content:// URI with ACTION_SEND, which is not subject to Chrome's DOCX
+  // Web Share file-type allowlist. Plain Chrome cannot use this native bridge.
+  if(window.BranchAuditNative && typeof window.BranchAuditNative.postMessage === 'function'){
+    shareDocxViaAndroidApp_(packageData);
+    return;
+  }
   if(!packageData.file){
-    showToast('This browser could not create a shareable Word file. Open the HTTPS site in Chrome on Android. Download remains available.', 'warn');
+    showToast('This browser could not create the Word file. Use Download DOCX instead.', 'warn');
     return;
   }
   if(!window.isSecureContext){
-    showToast('Native sharing requires the secure HTTPS website. Open the site address beginning with https://.', 'warn');
+    showToast('Native sharing requires the site to be opened over HTTPS. Download remains available.', 'warn');
     return;
   }
   if(typeof navigator.share !== 'function'){
-    showToast('This browser does not support the phone sharing panel. Open this page in regular Chrome on Android.', 'warn');
+    showDocxShareHelp_(packageData, 'The Web Share API is not available in this browser.');
     return;
   }
-  shareRetryCount_ = 0;
-  callNativeDocxShare_(packageData, false);
+  // Chromium on Android rejects DOCX because application/vnd.openxmlformats-
+  // officedocument.wordprocessingml.document and .docx are not in its Web
+  // Share permitted-file list. Test this before calling share() so the user
+  // does not get a misleading retry prompt.
+  if(typeof navigator.canShare === 'function'){
+    let canShareDocx = false;
+    try{ canShareDocx = navigator.canShare({files:[packageData.file]}); }catch(err){ canShareDocx = false; }
+    if(!canShareDocx){
+      showDocxShareHelp_(packageData, 'Chrome for Android permits only selected web-share file types; DOCX is not currently included.');
+      return;
+    }
+  }
+  callNativeDocxShare_(packageData);
 }
-function retryShareAuditDoc_(){
-  // This is a brand-new button tap with fresh user activation. Do not rebuild
-  // the file or await anything before navigator.share().
-  const prepared = pendingShareDocxPackage_ || cachedShareDocxPackage_;
-  closeShareRetryPanel_();
-  if(!prepared || !prepared.file){
-    showToast('The Word file is not ready. Close and reopen Audit Findings, then tap Share.', 'warn');
+function shareDocxViaAndroidApp_(packageData){
+  if(!packageData || !packageData.blob){
+    showToast('The Word file is not ready. Please use Download DOCX.', 'warn');
     return;
   }
-  shareRetryCount_++;
-  callNativeDocxShare_(prepared, true);
+  // Use FileReader for compatibility with Android System WebView versions.
+  // The native bridge launches Android ACTION_SEND after receiving these bytes.
+  try{
+    const reader = new FileReader();
+    reader.onerror = function(){ showToast('Could not prepare the Word file for Android sharing. Try Download DOCX.', 'warn'); };
+    reader.onload = function(){
+      try{
+        const result = String(reader.result || '');
+        const base64 = result.slice(result.indexOf(',') + 1);
+        if(!base64){ showToast('The Word file could not be encoded for sharing.', 'warn'); return; }
+        const message = {
+          action:'shareDocx',
+          filename:packageData.filename || 'Audit Findings.docx',
+          title:'Audit Findings' + (state.branch ? ' - ' + state.branch : ''),
+          mimeType:AUDIT_DOCX_MIME,
+          base64:base64
+        };
+        window.BranchAuditNative.postMessage(JSON.stringify(message));
+        showToast('Opening Android sharing panel...', 'info');
+      }catch(err){
+        console.error('Android share bridge call failed:', err);
+        showToast('Could not open Android sharing. Use Download DOCX instead.', 'warn');
+      }
+    };
+    reader.readAsDataURL(packageData.blob);
+  }catch(err){
+    console.error('Could not prepare DOCX for native sharing:', err);
+    showToast('Could not prepare the Word file for Android sharing. Try Download DOCX.', 'warn');
+  }
 }
-function callNativeDocxShare_(packageData, isRetry){
+
+function callNativeDocxShare_(packageData){
   const file = packageData && packageData.file;
-  if(!file){ showToast('The Word file is not ready. Please use Download or reopen the preview.', 'warn'); return; }
+  if(!file){ showToast('The Word file is not ready. Please use Download DOCX.', 'warn'); return; }
   const shareTitle = 'Audit Findings' + (state.branch ? ' - ' + state.branch : '');
   let sharePromise;
   try{
-    // Invoke immediately inside the trusted Share/retry click. File creation
-    // and other asynchronous work have already finished.
+    // Must be called immediately during the trusted click. No await before it.
     sharePromise = navigator.share({files:[file], title:shareTitle, text:shareTitle});
   }catch(err){
-    handleNativeShareFailure_(err, packageData, isRetry);
+    handleNativeShareFailure_(err, packageData);
     return;
   }
   Promise.resolve(sharePromise).then(function(){
     pendingShareDocxPackage_ = null;
     closeShareRetryPanel_();
   }).catch(function(err){
-    handleNativeShareFailure_(err, packageData, isRetry);
+    handleNativeShareFailure_(err, packageData);
   });
 }
-function handleNativeShareFailure_(err, packageData, isRetry){
+function handleNativeShareFailure_(err, packageData){
   console.error('Native DOCX share failed:', err);
   if(err && err.name === 'AbortError'){
     closeShareRetryPanel_();
-    showToast('The Android sharing panel was closed. Tap Share again whenever you are ready.', 'warn');
+    showToast('The sharing panel was closed. Your audit document was not changed.', 'info');
     return;
   }
   if(err && err.name === 'NotAllowedError'){
-    const msg = isRetry
-      ? 'Android blocked the share request again. The file is ready, but this browser may be blocking native sharing (for example, an embedded browser or restricted web app). Try opening the same HTTPS address in the regular Chrome app. You can still download the DOCX below.'
-      : 'The Word file is ready, but Android blocked the first share request. Tap “Try native share” below. That second tap calls Android directly without rebuilding the file.';
-    showShareRetryPanel_(msg, packageData);
+    showDocxShareHelp_(packageData, 'The browser rejected the file share request (NotAllowedError), commonly because the file type is blocked or the page is in a restricted browser context.');
     return;
   }
-  showShareRetryPanel_('The browser could not open the Android share panel' + (err && err.name ? ' (' + err.name + ')' : '') + '. Try again or download the Word file instead.', packageData);
+  showShareRetryPanel_('The browser could not share this Word file ('+(err && err.name ? err.name : 'share error')+'). Download the DOCX, then share it from your phone\'s Files or Downloads app.', packageData, 'Could not share the DOCX from this page');
 }
 async function doSubmit(){
   if(submitting) return; // already in flight — ignore a stray double-tap

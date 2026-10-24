@@ -51,20 +51,16 @@
     *,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important;scroll-behavior:auto!important;}
   }
   *{box-sizing:border-box; min-width:0;}
-  html{-webkit-text-size-adjust:100%; background:var(--panel-2); overscroll-behavior-y:none;
-    height:100vh; height:100dvh; overflow:hidden;}
+  /* Use normal page scrolling instead of a nested scroll pane. This keeps
+     the scrollbar at the browser edge, prevents the form from feeling like
+     a separate left-side scrolling panel, and makes scrollIntoView/window
+     navigation behave consistently on desktop and mobile. */
+  html{-webkit-text-size-adjust:100%; background:var(--panel-2); min-height:100%;
+    overflow-x:hidden; overflow-y:auto; overscroll-behavior-y:auto;}
   body{margin:0;background:var(--paper);color:var(--text);font-size:14px;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;
-    height:100vh; height:100dvh; overflow:hidden;
-    display:flex; flex-direction:column;
+    min-height:100%; overflow-x:hidden; overflow-y:visible; display:block;
     overflow-wrap:anywhere; word-break:break-word;}
-  /* The page used to rely on document-level scrolling, which — combined
-     with the fixed footer and the mobile-web-app-capable/standalone meta
-     tags above — is a known combo that breaks scrolling entirely in some
-     mobile browsers and in-app webviews (and can misbehave on desktop
-     too). #scrollArea below is now the ONE explicit scroll container;
-     html/body themselves never scroll. This is the robust fix. */
-  #scrollArea{flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden;
-    -webkit-overflow-scrolling:touch; overscroll-behavior-y:contain;
+  #scrollArea{width:100%; min-height:100vh; min-height:100dvh; overflow:visible;
     padding-bottom:calc(10px + var(--safe-b));}
   img,svg{max-width:100%;}
   input,textarea,select,button{max-width:100%;}
@@ -73,7 +69,7 @@
   ::-webkit-scrollbar-thumb{background:#C7CEEE;border-radius:8px;}
 
   /* ---------- header ---------- */
-  .app-toolbar{position:sticky; top:0; z-index:30;}
+  .app-toolbar{position:relative; top:auto; z-index:30;}
   .topband{
     background:
       radial-gradient(900px 200px at 10% -60%, rgba(90,110,220,.30), transparent 60%),
@@ -253,8 +249,8 @@
   @media print{
     @page{ size:letter; margin:1in; }
     .app-toolbar, footer.nav-bar, .drawer-overlay, .drawer, .toast-overlay, .confirm-overlay{display:none !important;}
-    #scrollArea{overflow:visible !important; height:auto !important; padding-bottom:0 !important;}
-    body{overflow:visible !important; height:auto !important; display:block !important;}
+    #scrollArea{overflow:visible !important; height:auto !important; min-height:0 !important; padding-bottom:0 !important;}
+    html,body{overflow:visible !important; height:auto !important; min-height:0 !important; display:block !important;}
     .card{break-inside:avoid; box-shadow:none !important; border:1px solid #ccc !important;}
     .report-row, .deposit-report-item, .deposit-report-total, .info-row{break-inside:avoid;}
     #main{column-count:1 !important;}
@@ -708,6 +704,169 @@
     .field-grid{grid-template-columns:1fr;}
     .field{grid-column:1 / -1;}
   }
+
+
+  /* ---------- adaptive/mobile reliability layer ----------
+     Keep the same visual identity while making narrow screens, browser
+     zoom, on-screen keyboards and long labels less likely to clip. */
+  :root{--tap:44px;}
+  button, input, textarea, select{touch-action:manipulation;}
+  button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible{
+    outline:3px solid rgba(42,61,154,.28); outline-offset:2px;
+  }
+  button:disabled{cursor:not-allowed;}
+  body.audit-saving #scrollArea,
+  body.audit-saving .drawer,
+  body.audit-saving .drawer-overlay,
+  body.audit-saving .preview-overlay,
+  body.audit-saving .confirm-overlay{pointer-events:none!important;}
+  body.audit-saving{cursor:progress;}
+  .hdr-icon-btn,.tb-icon-btn,.icon-btn,.drawer-close{min-height:var(--tap);}
+  .hdr-icon-btn{min-width:var(--tap);}
+  .tb-icon-btn{min-width:var(--tap); min-height:var(--tap);}
+  .input, select, .field input, .field select, textarea{min-height:var(--tap);}
+  .btn, .confirm-btn, .preview-btn{min-height:var(--tap);}
+  #main, .wrap, .card, .field, .field-grid, .entry-row, .entry-row-typed,
+  .entry-row-simple, .er-table, .report-row, .history-item{min-width:0;}
+  .field label, .q-text, .cond-label, .card-hint, .report-row, .info-row,
+  .finding-review-row, .history-item, .banner{overflow-wrap:anywhere;}
+  .toolbar-row{min-width:0;}
+  .search-wrap{min-width:0;}
+  .search-wrap input{min-width:0;}
+  .nav-bar-inner{min-width:0;}
+  .btn.primary{min-height:46px;}
+  .drawer{width:min(92vw,390px); max-width:100%;}
+  .drawer-body,.report-drawer-body{min-width:0; overscroll-behavior:contain;}
+  .preview-toolbar{padding-top:calc(10px + var(--safe-t));}
+  .preview-actions{flex-wrap:wrap; justify-content:flex-end;}
+  .preview-page-wrap{padding-bottom:calc(26px + var(--safe-b));}
+  .preview-page{overflow-wrap:anywhere; word-break:normal;}
+  @media (max-width:640px){
+    html,body{height:auto; min-height:100%; overflow-x:hidden; overflow-y:auto;}
+    #scrollArea{min-height:0; overflow:visible; scroll-padding-top:12px; padding-bottom:calc(12px + var(--safe-b));}
+    .topband{padding-left:calc(10px + var(--safe-l)); padding-right:calc(10px + var(--safe-r));}
+    .topband-inner{max-width:none; gap:7px;}
+    .hdr-icon-btn{width:40px; height:40px;}
+    .brand .mark{font-size:18px; letter-spacing:.4px;}
+    .brand .sub{font-size:11px;}
+    .brand .draft-status{font-size:10px;}
+    .toolbar-row{padding:8px 10px; gap:7px; flex-wrap:wrap;}
+    .search-wrap{flex:1 1 100%; order:0;}
+    .tb-icon-btn{order:1; width:calc((100% - 21px)/3); border-radius:10px; flex:1 1 0;}
+    .wrap{width:100%; max-width:none; padding:12px 10px 8px;}
+    .card{padding:13px; border-radius:12px; margin-bottom:11px;}
+    .card-hint{line-height:1.45;}
+    .field-grid{grid-template-columns:minmax(0,1fr); gap:10px;}
+    .field{grid-column:1 / -1;}
+    .q-row{padding:10px 10px 10px 13px; gap:9px;}
+    .q-text{font-size:13px; line-height:1.45;}
+    .yn-btn{min-width:48px; min-height:38px; padding:8px 11px;}
+    .cond-seg button,.sev-seg button{min-height:40px;}
+    .denom-head,.denom-row,.denom-total{grid-template-columns:minmax(0,1fr) 58px 78px; gap:6px; padding-left:8px; padding-right:8px;}
+    .denom-row .input{padding:7px 5px; font-size:13px;}
+    .denom-row .denom-label{font-size:12px;}
+    .denom-row .denom-sub,.denom-total .denom-sub{font-size:11.5px;}
+    .deposit-row{display:grid; grid-template-columns:68px 76px minmax(0,1fr) 22px; gap:5px; align-items:center;}
+    .deposit-row .dep-amt,.deposit-row .dep-time{width:100%; min-width:0; flex:auto; padding:8px 5px;}
+    .deposit-row .dep-remarks{width:100%; min-width:0; padding:8px 6px;}
+    .deposit-row .dep-remove{width:22px; height:22px;}
+    .entry-row-typed{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 30px; gap:7px;}
+    .entry-row-typed .input{font-size:12px; min-height:40px;}
+    .entry-row-simple{padding:9px;}
+    /* Keep repeatable receipt tables inside the viewport: compact columns,
+       wrapped headers, and small-but-readable controls instead of sideways scrolling. */
+    .er-table{width:100%; max-width:100%; overflow:hidden;}
+    .er-table-head,.er-table-row{width:100%; min-width:0; grid-template-columns:16px minmax(0,.9fr) minmax(0,1fr) minmax(0,1.1fr) 22px;}
+    .er-table-head > div{white-space:normal; overflow-wrap:anywhere; text-overflow:clip; padding:5px 3px; font-size:9px; line-height:1.15;}
+    .er-cell-input,.er-cell-select{min-width:0; padding:6px 3px; font-size:10.5px;}
+    .er-table-row .icon-btn{width:20px; min-width:20px; height:24px;}
+    .info-row{gap:8px; align-items:flex-start;}
+    .info-row span:first-child{flex:1; min-width:0;}
+    .info-row span:last-child{max-width:56%;}
+    .score-hero,.report-hero{padding:13px;}
+    .score-hero-top{align-items:flex-start;}
+    .score-hero-frac{font-size:19px;}
+    .footer-status{display:none!important;}
+    footer.nav-bar{padding:10px calc(10px + var(--safe-r)) calc(10px + var(--safe-b)) calc(10px + var(--safe-l));}
+    .nav-bar-inner{width:100%; max-width:none; gap:8px;}
+    .btn.primary{width:100%; max-width:none; margin:0; padding:12px; font-size:14px;}
+    .history-stat-strip{gap:8px; padding:10px 8px;}
+    .history-stat-strip .hs-num{font-size:15px;}
+    .history-stat-strip .hs-label{font-size:9px;}
+    .history-item{padding:11px;}
+    .report-actions{gap:6px;}
+    .report-actions .btn{white-space:normal; overflow-wrap:anywhere; min-width:0;}
+    .preview-toolbar{display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px; align-items:center;}
+    .preview-title{min-width:0; font-size:12.5px;}
+    .preview-actions{grid-column:1 / -1; justify-content:stretch; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px;}
+    .preview-btn{min-width:0; padding:8px 5px; font-size:11.5px; white-space:normal;}
+    .preview-page-wrap{padding:12px 8px calc(20px + var(--safe-b));}
+    .preview-page{min-width:0; min-height:0; padding:8%; font-size:11pt;}
+    .pv-sign{width:47%;}
+    .pv-sign + .pv-sign{margin-left:4%;}
+    .confirm-overlay{padding:14px;}
+    .confirm-actions{padding:16px 14px calc(16px + var(--safe-b));}
+  }
+  @media (max-width:380px){
+    .brand .mark{font-size:16px;}
+    .brand .sub{font-size:10px;}
+    .card{padding:11px;}
+    .q-row{align-items:flex-start; flex-direction:column;}
+    .yn-toggle{align-self:flex-end;}
+    .deposit-row{grid-template-columns:60px 70px minmax(0,1fr) 20px; gap:4px;}
+    .denom-head,.denom-row,.denom-total{grid-template-columns:minmax(0,1fr) 54px 72px; gap:4px;}
+    .preview-actions{grid-template-columns:repeat(4,minmax(0,1fr)); gap:4px;}
+    .preview-btn{font-size:10.5px; padding:7px 3px;}
+    .report-actions .btn{font-size:10.5px; padding:9px 3px;}
+  }
+  @media (min-width:641px) and (max-width:859px){
+    .wrap{max-width:760px; padding-left:22px; padding-right:22px;}
+    .card{padding:16px;}
+    .field-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
+  }
+  @media (hover:none){
+    .hdr-icon-btn:active,.tb-icon-btn:active,.btn:active,.btn-add:active{transform:scale(.985);}
+  }
+
+  /* Final viewport-fit tuning: use screen width efficiently without creating
+     horizontal page/table scroll, while keeping fields legible and tappable. */
+  @media (min-width:1180px){
+    .wrap{max-width:1480px; padding-left:24px; padding-right:24px;}
+    #main{column-count:3; column-gap:16px;}
+    .card{padding:13px; margin-bottom:12px;}
+    .section-title .st-text{font-size:15.5px;}
+    .card-hint{font-size:11.5px; margin-bottom:9px;}
+    .field-grid{gap:9px 8px;}
+  }
+  @media (min-width:641px) and (max-width:859px){
+    .wrap{width:100%; max-width:100%; padding-left:14px; padding-right:14px;}
+    #main{column-count:2; column-gap:12px;}
+    .card{padding:12px; margin-bottom:10px;}
+    .section-title .st-text{font-size:15px;}
+    .input, select, .field input, .field select{font-size:12.5px; padding:8px;}
+  }
+  @media (max-width:480px){
+    html,body{width:100%; max-width:100%;}
+    /* Put branch on its own line, but keep auditor and audit date side-by-side. */
+    .card#sec-basics .field-grid{grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px;}
+    .card#sec-basics .field{grid-column:auto;}
+    .card#sec-basics .field.span2{grid-column:1 / -1;}
+    .wrap{padding:9px 8px 6px;}
+    .card{padding:11px; margin-bottom:9px; border-radius:11px;}
+    .section-title{gap:7px;}
+    .section-title .st-text{font-size:15px; line-height:1.25;}
+    .card-hint{font-size:11px; margin:3px 0 9px;}
+    .card-body{margin-top:9px;}
+    .field-grid{gap:8px;}
+    .field{gap:4px;}
+    .field label{font-size:10.5px;}
+    .input,select,.field input,.field select,textarea{font-size:12.5px; padding:8px;}
+    .toolbar-row{padding:7px 8px;}
+    .q-row{padding:9px 8px 9px 10px;}
+    .q-text{font-size:12.5px; line-height:1.35;}
+    .banner{font-size:11.5px; padding:8px 10px;}
+  }
+
 </style>
 </head>
 <body>
@@ -845,6 +1004,23 @@
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxtY9qnh6IpUOKRAj-KAwcvfXqVMOfi4u85ouZEdwmvMLJHvy1EUgzWaH1bBIpXeYIuvQ/exec';
 const backendConfigured = APPS_SCRIPT_URL && APPS_SCRIPT_URL.indexOf('PASTE_YOUR') !== 0;
 
+/** Every server request has a ceiling so a weak mobile connection cannot
+ *  leave buttons stuck in a permanent loading state. Submissions use a
+ *  stable request ID so the same submit can be retried safely after timeout. */
+async function fetchWithTimeout_(url, options, timeoutMs){
+  const controller = new AbortController();
+  const timer = setTimeout(()=>controller.abort(), timeoutMs || 15000);
+  try{
+    return await fetch(url, Object.assign({}, options || {}, {signal:controller.signal}));
+  }finally{
+    clearTimeout(timer);
+  }
+}
+function createRequestId_(){
+  try{ if(window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID(); }catch(e){}
+  return 'audit-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,12);
+}
+
 /* ============================================================
    STATE
    ============================================================ */
@@ -897,6 +1073,9 @@ let submitting = false;
    one. Submit becomes "Save changes" and updates the existing sheet
    tab/index row in place rather than creating a new one. */
 let editingSubmissionId = null;
+let editingExpectedSheetId = null;
+let activeClientRequestId = null;
+let activeUpdateRequestId = null;
 /* Snapshot (JSON string) of `state` taken the moment editAuditFromReport()
    loads a past audit in for editing. Compared against the live `state` so
    the footer can tell whether anything has actually changed yet \u2014 see
@@ -907,6 +1086,8 @@ let editSnapshotJson = null;
 /* Index into historyCache of whichever audit is currently open in the
    report drawer, so the Edit/Delete buttons there know what to act on. */
 let openReportIdx = -1;
+let openReportSubmissionId = null;
+let historyRenderRequestId = 0;
 
 /* The "Audit Findings" preview is a STANDALONE document: it never
    writes back into `state`, so editing it can't change your checklist
@@ -1029,8 +1210,10 @@ document.addEventListener('keydown', function(e){
    audits" history above — a draft is only ever the CURRENT,
    not-yet-submitted audit.
    ============================================================ */
-const DRAFT_KEY = 'branchAuditDraft_v1';
+const DRAFT_KEY = 'branchAuditDraft_v2';
+const LEGACY_DRAFT_KEY = 'branchAuditDraft_v1';
 let lastDraftSavedAt = null;
+let lastDraftSignature = null;
 
 /** True if `s` differs from a brand-new blank form — i.e. there's
  *  actually something worth protecting. auditDate defaults to
@@ -1043,28 +1226,46 @@ function isDraftWorthKeeping(s){
   catch(e){ return true; }
 }
 function saveDraftNow(){
-  if(submitting) return; // a real save is already in flight
+  if(submitting) return; // the server payload is already in flight
   try{
-    if(!isDraftWorthKeeping(state)){
+    const worthwhile = editingSubmissionId != null || isDraftWorthKeeping(state) || previewEditedHtml != null;
+    if(!worthwhile){
       localStorage.removeItem(DRAFT_KEY);
+      localStorage.removeItem(LEGACY_DRAFT_KEY);
       lastDraftSavedAt = null;
+      lastDraftSignature = null;
       updateDraftIndicator();
       return;
     }
+    // Only write storage when the actual draft changed. The old timer wrote
+    // the same full state to localStorage every five seconds, even when idle.
+    const signature = JSON.stringify({
+      state:state, editingSubmissionId:editingSubmissionId,
+      editingExpectedSheetId:editingExpectedSheetId,
+      editSnapshotJson:editSnapshotJson, previewEditedHtml:previewEditedHtml,
+      activeClientRequestId:activeClientRequestId, activeUpdateRequestId:activeUpdateRequestId
+    });
+    if(signature === lastDraftSignature && lastDraftSavedAt){ return; }
+    const savedAt = new Date().toISOString();
     localStorage.setItem(DRAFT_KEY, JSON.stringify({
-      state: state,
-      editingSubmissionId: editingSubmissionId,
-      editSnapshotJson: editSnapshotJson,
-      previewEditedHtml: previewEditedHtml,
-      savedAt: new Date().toISOString()
+      state:state,
+      editingSubmissionId:editingSubmissionId,
+      editingExpectedSheetId:editingExpectedSheetId,
+      editSnapshotJson:editSnapshotJson,
+      previewEditedHtml:previewEditedHtml,
+      activeClientRequestId:activeClientRequestId,
+      activeUpdateRequestId:activeUpdateRequestId,
+      savedAt:savedAt
     }));
-    lastDraftSavedAt = new Date().toISOString();
-  }catch(e){ /* storage full/unavailable \u2014 best effort, never interrupts typing */ }
+    lastDraftSignature = signature;
+    lastDraftSavedAt = savedAt;
+  }catch(e){ /* storage may be full/disabled; never block entering audit data */ }
   updateDraftIndicator();
 }
 function clearDraft(){
-  try{ localStorage.removeItem(DRAFT_KEY); }catch(e){}
+  try{ localStorage.removeItem(DRAFT_KEY); localStorage.removeItem(LEGACY_DRAFT_KEY); }catch(e){}
   lastDraftSavedAt = null;
+  lastDraftSignature = null;
   updateDraftIndicator();
 }
 /** Small "Draft saved 10:42 AM" line under the header title, so
@@ -1092,13 +1293,13 @@ function updateDraftIndicator(){
  *  at boot, so nothing is lost either way). */
 async function tryRestoreDraft(){
   let raw;
-  try{ raw = localStorage.getItem(DRAFT_KEY); }catch(e){ return; }
+  try{ raw = localStorage.getItem(DRAFT_KEY) || localStorage.getItem(LEGACY_DRAFT_KEY); }catch(e){ return; }
   if(!raw) return;
   let snap;
   try{ snap = JSON.parse(raw); }catch(e){ return; }
-  if(!snap || !isDraftWorthKeeping(snap.state)) return;
+  if(!snap || (!snap.editingSubmissionId && snap.previewEditedHtml == null && !isDraftWorthKeeping(snap.state))) return;
   const label = (snap.state.branch ? snap.state.branch : 'an audit')
-    + (snap.state.auditDate ? ' \u2014 ' + snap.state.auditDate : '');
+    + (snap.state.auditDate ? ' — ' + snap.state.auditDate : '');
   const when = snap.savedAt ? new Date(snap.savedAt).toLocaleString() : 'earlier';
   const ok = await showConfirm(
     'Found unsubmitted work from ' + when + ' (' + label + ').',
@@ -1108,18 +1309,24 @@ async function tryRestoreDraft(){
     state = snap.state;
     resetUndoHistory();
     editingSubmissionId = snap.editingSubmissionId || null;
+    editingExpectedSheetId = snap.editingExpectedSheetId != null ? Number(snap.editingExpectedSheetId) : null;
     editSnapshotJson = snap.editSnapshotJson || null;
     previewEditedHtml = snap.previewEditedHtml || null;
+    activeClientRequestId = snap.activeClientRequestId || null;
+    activeUpdateRequestId = snap.activeUpdateRequestId || null;
     lastDraftSavedAt = snap.savedAt || null;
+    lastDraftSignature = null;
     render();
     updateDraftIndicator();
-    showToast('Draft restored \u2014 continue where you left off.', 'success');
+    showToast('Draft restored — continue where you left off.', 'success');
   } else {
     clearDraft();
   }
 }
-setInterval(saveDraftNow, 5000);
+// A lighter autosave check every 8 seconds; writes only when the draft changed.
+setInterval(saveDraftNow, 8000);
 window.addEventListener('beforeunload', saveDraftNow);
+window.addEventListener('pagehide', saveDraftNow);
 document.addEventListener('visibilitychange', function(){
   if(document.visibilityState === 'hidden') saveDraftNow();
 });
@@ -1149,11 +1356,28 @@ function saveLocalHistoryCache(list){
    successful fetchHistory() call. */
 function saveHistoryEntry(entry){
   try{
-    const list = loadLocalHistory();
-    list.unshift(entry);
-    if(list.length > 30) list.length = 30;
-    saveLocalHistoryCache(list);
+    const base = historyCache || loadLocalHistory();
+    const list = Array.isArray(base) ? base.slice() : [];
+    const existingIndex = entry.submissionId ? list.findIndex(x=>x.submissionId===entry.submissionId) : -1;
+    if(existingIndex >= 0){
+      const previous = list[existingIndex];
+      if(previous.submittedAt) entry.submittedAt = previous.submittedAt;
+      if(entry.sheetId == null && previous.sheetId != null) entry.sheetId = previous.sheetId;
+      list[existingIndex] = entry; // an edit updates in place; it does not jump to the top
+    }else{
+      list.unshift(entry);
+    }
+    historyCache = list.slice(0,50);
+    saveLocalHistoryCache(historyCache.slice(0,30));
   }catch(e){}
+}
+function getOpenReport_(){
+  const list = historyCache || loadLocalHistory();
+  if(openReportSubmissionId){
+    const current = list.find(h=>h && h.submissionId===openReportSubmissionId);
+    if(current) return current;
+  }
+  return list[openReportIdx] || null;
 }
 /* Fetches the shared history from the backend. Falls back to whatever
    was last cached locally if offline or the backend isn't configured.
@@ -1164,30 +1388,26 @@ function saveHistoryEntry(entry){
 async function fetchHistory(){
   if(!backendConfigured) return { list: loadLocalHistory(), status:'unconfigured', detail:'Backend not configured.' };
   try{
-    // cache:'no-store' + a timestamp param stop the browser (and any
-    // network cache in between) from serving back a stale response for
-    // what looks like "the same" GET URL — without this, a device can
-    // sit showing old history for a while after a new audit was submitted
-    // elsewhere.
-    const res = await fetch(APPS_SCRIPT_URL + '?action=history&_=' + Date.now(), { cache: 'no-store' });
+    const res = await fetchWithTimeout_(APPS_SCRIPT_URL + '?action=history&_=' + Date.now(), { cache:'no-store' }, 18000);
     if(!res.ok){
-      return { list: loadLocalHistory(), status:'error', detail:'Server responded with HTTP '+res.status+' — the backend URL may be wrong, or the deployment needs republishing.' };
+      return { list:loadLocalHistory(), status:'error', detail:'Server responded with HTTP '+res.status+' — check the backend deployment.' };
     }
     const result = await res.json();
+    if(result && result.ok === false){
+      return { list:loadLocalHistory(), status:'error', detail:result.error || 'The server could not load audit history.' };
+    }
     if(result && Array.isArray(result.history)){
       saveLocalHistoryCache(result.history);
-      return { list: result.history, status:'live', detail:null };
+      return { list:result.history, status:'live', detail:null };
     }
-    // The server answered but with no "history" array at all — the
-    // classic sign the deployed Apps Script code is an OLDER version
-    // that doesn't know the "history" action yet (edit → Deploy →
-    // "New version" was never run after the last update).
-    return { list: loadLocalHistory(), status:'stale-backend', detail:'The server responded, but without audit history — the deployed Apps Script code looks out of date. Re-deploy Code.gs as a "New version".' };
+    return { list:loadLocalHistory(), status:'stale-backend', detail:'The server responded without audit history. Re-deploy Code.gs as a new Apps Script version.' };
   }catch(e){
-    return { list: loadLocalHistory(), status:'error', detail:'Could not reach the server: '+(e && e.message ? e.message : e) };
+    const detail = e && e.name === 'AbortError'
+      ? 'The history request took too long. Check your connection and refresh history.'
+      : 'Could not reach the server: '+(e && e.message ? e.message : e);
+    return { list:loadLocalHistory(), status:'error', detail:detail };
   }
 }
-
 /* ============================================================
    HELPERS — data
    ============================================================ */
@@ -1195,6 +1415,7 @@ function get(path){
   return path.split('.').reduce((o,k)=> (o==null?o:o[k]), state);
 }
 function set(path, value){
+  if(submitting) return;
   checkpoint(path);
   const keys = path.split('.');
   let o = state;
@@ -1202,8 +1423,10 @@ function set(path, value){
   o[keys[keys.length-1]] = value;
   updateSubmitBtnState();
 }
-function escAttr(s){ return (s==null?'':String(s)).replace(/"/g,'&quot;'); }
-function escHtml(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+function escHtml(s){
+  return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function escAttr(s){ return escHtml(s); }
 
 function setYN(path, val){
   const cur=get(path); set(path, cur===val?null:val);
@@ -1215,7 +1438,7 @@ function setCond(path, val){
   set(path+'.condition', cur===val ? '' : val);
   renderSection(sectionIdForPath(path));
 }
-function setRepField(path, idx, field, val){ checkpoint(path+'#'+idx+'#'+field); get(path)[idx][field] = val; updateSubmitBtnState(); }
+function setRepField(path, idx, field, val){ if(submitting) return; checkpoint(path+'#'+idx+'#'+field); get(path)[idx][field] = val; updateSubmitBtnState(); }
 
 /* Series No auto-fill: OR/SI/DR booklets are always issued in blocks
    that END on a multiple of 50 (1-50, 51-100, 101-150...) — whether a
@@ -1247,7 +1470,18 @@ function onSeriesNoInput(input, path, idx){
   }
   setRepField(path, idx, 'seriesNo', input.value);
 }
-function addRep(path){ checkpoint(); get(path).push(emptyEntry()); renderSection(sectionIdForPath(path)); updateSubmitBtnState(); }
+function addRep(path){
+  checkpoint();
+  const row = emptyEntry();
+  // In the Official Receipt / Spareparts Invoice / Sales Invoice & Delivery
+  // Receipt section, new rows default their Remarks to the requested value.
+  // The remarks remain editable, and the preset is also available in the UI.
+  const group = typeof OR_GROUPS !== 'undefined' ? OR_GROUPS.find(g => g.path === path) : null;
+  if(group) row.remarks = 'stock';
+  get(path).push(row);
+  renderSection(sectionIdForPath(path));
+  updateSubmitBtnState();
+}
 async function removeRep(path, idx){
   const row = get(path)[idx] || {};
   const hasData = (row.seriesNo && String(row.seriesNo).trim()) || (row.remarks && String(row.remarks).trim());
@@ -1544,19 +1778,18 @@ function conditionRow(path, label, opts, withCount){
    each its own repeatable list, so nothing has to share a row with a
    dropdown it doesn't need. Series No and Remarks each get their own
    full-width line so long values (e.g. a series range like
-   "10050 - 10051") are always fully visible, not clipped. Stock
-   entries no longer get their own group — they're logged as
-   "Stock - Motofinance" / "Stock - Motowheels" right in the Official
-   Receipt type list instead. */
+   "10050 - 10051") are always fully visible, not clipped. Stock is
+   recorded in Remarks; Official Receipt types are just Motofinance
+   and Motowheels. */
 /* Official Receipt remarks: instead of a free-text box, offer a quick
-   picker of the common remarks plus an "Enter manually" option that
-   reveals a text box for anything else. Only the Official Receipt
-   group uses this — the other three groups keep a plain text box. */
-const OR_REMARKS_PRESETS = ['MA','OTHERS','REG','COD/DP','SPARE PARTS'];
+   picker of common remarks plus an "Enter manually" option that
+   reveals a text box for anything else. Stock is available for every
+   entry group in this section and is prefilled on newly-added rows. */
+const OR_REMARKS_PRESETS = ['MA','OTHERS','REG','COD/DP','SPARE PARTS','stock'];
 const OR_GROUPS = [
-  { path:'officialReceipts.orEntries', title:'Official Receipt', addLabel:'OR entry', presets:['Motofinance','Motowheels','Stock - Motofinance','Stock - Motowheels'], remarksPresets:OR_REMARKS_PRESETS },
-  { path:'officialReceipts.sparepartsEntries', title:'Spareparts Invoice', addLabel:'spareparts invoice', presets:['Stock'], allowManualType:true },
-  { path:'officialReceipts.salesDrEntries', title:'Sales Invoice & Delivery Receipt', addLabel:'entry', presets:['Sales Invoice','Delivery Receipt','Stock'] }
+  { path:'officialReceipts.orEntries', title:'Official Receipt', addLabel:'OR entry', presets:['Motofinance','Motowheels'], remarksPresets:OR_REMARKS_PRESETS },
+  { path:'officialReceipts.sparepartsEntries', title:'Spareparts Invoice', addLabel:'spareparts invoice', presets:['Stock'], allowManualType:true, remarksPresets:['stock'] },
+  { path:'officialReceipts.salesDrEntries', title:'Sales Invoice & Delivery Receipt', addLabel:'entry', presets:['Sales Invoice','Delivery Receipt','Stock'], remarksPresets:['stock'] }
 ];
 /* Type field equivalent of setOrRemarksPreset(): only used by groups with
    allowManualType:true (currently just Spareparts Invoice), where "Stock"
@@ -2042,6 +2275,7 @@ function refreshSummary(){
  *  and the lighter-weight refreshSummary() so the "no changes to save"
  *  state stays accurate without needing a full re-render on every tap. */
 function updateSubmitBtnState(){
+  document.body.classList.toggle('audit-saving', !!submitting);
   const submitBtn = document.getElementById('submitBtn');
   const newBtn = document.getElementById('newAuditBtn');
   if(!submitBtn) return;
@@ -2081,6 +2315,26 @@ function render(){
 }
 
 document.getElementById('submitBtn').addEventListener('click', doSubmit);
+// Freeze all input paths while saving. Without this, a user could continue
+// editing the form while the request is in flight, then lose those extra
+// changes when the successful submit resets the form to a blank audit.
+document.addEventListener('click', function(e){
+  if(!submitting) return;
+  const target = e.target;
+  if(target && target.closest && target.closest('#toast')) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}, true);
+document.addEventListener('keydown', function(e){
+  if(!submitting) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}, true);
+document.addEventListener('beforeinput', function(e){
+  if(!submitting) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}, true);
 
 const TOAST_ICONS = {
   success:'<svg class="toast-icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="var(--ok-soft)"/><path d="M7.5 12.4l2.8 2.8L16.5 9" stroke="var(--ok)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -2563,10 +2817,18 @@ async function doSubmit(){
     return;
   }
   const isEdit = !!editingSubmissionId;
+  if(isEdit && !activeUpdateRequestId) activeUpdateRequestId = createRequestId_();
+  if(!isEdit && !activeClientRequestId) activeClientRequestId = createRequestId_();
   const score = computeScore();
   const payload = JSON.parse(JSON.stringify(state));
   payload.score = score;
-  if(isEdit) payload.submissionId = editingSubmissionId;
+  if(isEdit){
+    payload.submissionId = editingSubmissionId;
+    payload.updateRequestId = activeUpdateRequestId;
+    if(editingExpectedSheetId != null) payload.expectedSheetId = editingExpectedSheetId;
+  }else{
+    payload.clientRequestId = activeClientRequestId;
+  }
   // Save YOUR edited findings document, not the raw auto-draft, so
   // what lands in the "Audit Initial Report" sheet matches what you
   // actually reviewed. If the preview was never opened this session
@@ -2585,11 +2847,11 @@ async function doSubmit(){
     // Content-Type: text/plain is deliberate — it keeps this a "simple"
     // request so the browser skips a CORS preflight OPTIONS call, which
     // Apps Script web apps don't answer well.
-    const res = await fetch(APPS_SCRIPT_URL, {
+    const res = await fetchWithTimeout_(APPS_SCRIPT_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ action: isEdit ? 'update' : 'submit', data: payload })
-    });
+    }, 90000);
     const result = await res.json();
     submitting = false;
     if(result && result.ok){
@@ -2597,9 +2859,13 @@ async function doSubmit(){
       saveHistoryEntry({
         submissionId: result.submissionId || editingSubmissionId || null,
         branch: payload.branch, auditor: payload.auditor, auditDate: payload.auditDate,
-        submittedAt: new Date().toISOString(), score: score, state: payload
+        submittedAt: new Date().toISOString(), score: score, state: payload,
+        sheetId: result.sheetId != null ? Number(result.sheetId) : null
       });
       editingSubmissionId = null;
+      editingExpectedSheetId = null;
+      activeClientRequestId = null;
+      activeUpdateRequestId = null;
       editSnapshotJson = null;
       state = freshState();
       previewEditedHtml = null;
@@ -2610,11 +2876,13 @@ async function doSubmit(){
       renderBranchDrawer();
     } else {
       render();
+      saveDraftNow();
       showToast('Could not '+(isEdit?'save changes':'submit')+': ' + (result && result.error ? result.error : 'unknown error'), 'error');
     }
   } catch(err){
     submitting = false;
     render();
+    saveDraftNow();
     showToast('Could not reach the server \u2014 your answers are safe as a draft on this device. Try Submit again once you\u2019re back online: ' + err.message, 'error');
   }
 }
@@ -2624,8 +2892,7 @@ async function doSubmit(){
    the existing sheet tab/index row instead of creating a new one). */
 async function editAuditFromReport(){
   if(deleteInFlight) return;
-  const list = historyCache || loadLocalHistory();
-  const h = list[openReportIdx];
+  const h = getOpenReport_();
   if(!h || !h.state){ showToast('Full data for this audit isn\u2019t available on this device \u2014 open it on the device that submitted it, or check the shared Sheet directly.', 'warn'); return; }
   if(state.branch || editingSubmissionId){
     const ok = await showConfirm(
@@ -2636,6 +2903,9 @@ async function editAuditFromReport(){
   }
   state = JSON.parse(JSON.stringify(h.state));
   editingSubmissionId = h.submissionId || null;
+  editingExpectedSheetId = h.sheetId != null ? Number(h.sheetId) : null;
+  activeClientRequestId = null;
+  activeUpdateRequestId = null;
   // Snapshot the just-loaded state so hasEditChanges() can tell, later,
   // whether the auditor has actually touched anything yet.
   editSnapshotJson = JSON.stringify(state);
@@ -2663,6 +2933,9 @@ async function cancelEdit(){
   );
   if(!ok) return;
   editingSubmissionId = null;
+  editingExpectedSheetId = null;
+  activeClientRequestId = null;
+  activeUpdateRequestId = null;
   editSnapshotJson = null;
   state = freshState();
   previewEditedHtml = null;
@@ -2699,6 +2972,9 @@ async function newAudit(){
     if(!ok) return;
   }
   editingSubmissionId = null;
+  editingExpectedSheetId = null;
+  activeClientRequestId = null;
+  activeUpdateRequestId = null;
   editSnapshotJson = null;
   state = freshState();
   previewEditedHtml = null;
@@ -2725,8 +3001,7 @@ function setReportActionsBusy_(busy){
     const delBtn = wrap.querySelector('.btn.danger');
     if(delBtn) delBtn.innerHTML = '<span class="spinner spinner-danger"></span><span>Deleting\u2026</span>';
   } else {
-    const list = historyCache || loadLocalHistory();
-    const h = list[openReportIdx];
+    const h = getOpenReport_();
     if(h) wrap.innerHTML = reportActionsHtml(h);
   }
 }
@@ -2741,8 +3016,7 @@ function setReportActionsBusy_(busy){
 let deleteInFlight = false;
 async function deleteAuditFromReport(){
   if(deleteInFlight) return;
-  const list = historyCache || loadLocalHistory();
-  const h = list[openReportIdx];
+  const h = getOpenReport_();
   if(!h) return;
   const label = (h.branch || 'This audit') + (h.auditDate ? ' \u2014 ' + h.auditDate : '');
   const ok = await showConfirm(
@@ -2755,11 +3029,11 @@ async function deleteAuditFromReport(){
   deleteInFlight = true;
   setReportActionsBusy_(true);
   try{
-    const res = await fetch(APPS_SCRIPT_URL, {
+    const res = await fetchWithTimeout_(APPS_SCRIPT_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ action:'delete', data:{ submissionId: h.submissionId } })
-    });
+    }, 60000);
     const result = await res.json();
     if(result && result.ok){
       showToast('Audit deleted.', 'success');
@@ -2794,9 +3068,10 @@ async function loadBranches(isInitial){
   if(branchesLoading) return;
   branchesLoading = true;
   try{
-    const res = await fetch(APPS_SCRIPT_URL + '?action=branches&_=' + Date.now(), { cache: 'no-store' });
+    const res = await fetchWithTimeout_(APPS_SCRIPT_URL + '?action=branches&_=' + Date.now(), { cache:'no-store' }, 12000);
+    if(!res.ok) throw new Error('HTTP '+res.status);
     const result = await res.json();
-    if(result && Array.isArray(result.branches)){
+    if(result && result.ok !== false && Array.isArray(result.branches)){
       const changed = result.branches.length !== knownBranches.length
         || result.branches.some((b,i)=> b !== knownBranches[i]);
       if(changed){
@@ -2806,7 +3081,7 @@ async function loadBranches(isInitial){
       }
     }
   }catch(e){ /* non-fatal — free text still works */ }
-  branchesLoading = false;
+  finally{ branchesLoading = false; }
   if(isInitial) renderBranchDrawer();
 }
 /* Background refresh: every 5 minutes, and whenever the tab/app comes
@@ -2816,7 +3091,7 @@ async function loadBranches(isInitial){
    background calls never touch the branch drawer/history view — only
    the very first load on page open does that. */
 setInterval(loadBranches, 5*60*1000);
-document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) loadBranches(); });
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden){ loadBranches(); const drawer=document.getElementById('branchDrawer'); if(drawer && drawer.classList.contains('open')) renderBranchDrawer(); } });
 
 /* ============================================================
    HEADER — back to dashboard + hamburger branch menu
@@ -2955,19 +3230,16 @@ function renderHistorySection(list, status, detail){
 async function renderBranchDrawer(){
   const body = document.getElementById('branchDrawerBody');
   if(!body) return;
-  // Show cached/local list right away (no blank flash), then refresh
-  // with the shared server copy once it arrives — that refreshed copy
-  // is what keeps phone and desktop in sync with each other. The
-  // banner renderHistorySection adds now makes it obvious whenever
-  // that refresh DIDN'T actually happen, instead of silently showing
-  // old data that looks live but isn't.
+  const requestId = ++historyRenderRequestId;
   historyCache = historyCache || loadLocalHistory();
   body.innerHTML = renderHistorySection(historyCache, 'checking', null);
   const result = await fetchHistory();
+  // If the drawer was refreshed again while this request was in flight,
+  // ignore this older response to prevent history from jumping backwards.
+  if(requestId !== historyRenderRequestId) return;
   historyCache = result.list;
   body.innerHTML = renderHistorySection(historyCache, result.status, result.detail);
 }
-
 /* ---------- report viewer (read-only summary of a past audit) ---------- */
 /* Small line-icon set for report-section-title headers \u2014 purely
  * decorative, gives each section a quick visual anchor instead of a
@@ -3099,8 +3371,7 @@ function buildHistoryPreviewHtml(h){
    unreviewed. Replaces the old behaviour of printing the plain
    checklist-style report drawer directly. */
 function printHistoryReport(){
-  const list = historyCache || loadLocalHistory();
-  const h = list[openReportIdx];
+  const h = getOpenReport_();
   if(!h) return;
 
   historyPreviewMode = true;
@@ -3146,6 +3417,7 @@ function openReport(idx){
   const h = list[idx];
   if(!h) return;
   openReportIdx = idx;
+  openReportSubmissionId = h.submissionId || null;
   document.getElementById('reportTitle').textContent = h.branch || 'Audit report';
   document.getElementById('reportBody').innerHTML = '<div id="reportActionsWrap">' + reportActionsHtml(h) + '</div>' + buildReportHtml(h);
   document.getElementById('reportDrawer').classList.add('open');
@@ -3155,6 +3427,7 @@ function openReport(idx){
 
 function closeReport(){
   openReportIdx = -1;
+  openReportSubmissionId = null;
   document.getElementById('reportDrawer').classList.remove('open');
   document.getElementById('reportOverlay').classList.remove('open');
   document.getElementById('reportDrawer').setAttribute('aria-hidden','true');

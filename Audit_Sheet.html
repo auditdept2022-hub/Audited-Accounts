@@ -656,7 +656,7 @@
     display:flex; align-items:center; justify-content:center; gap:8px;}
   .btn.primary:disabled{opacity:.6; cursor:not-allowed;}
 
-  .toast-overlay{position:fixed; inset:0; z-index:70; display:flex; align-items:center; justify-content:center;
+  .toast-overlay{position:fixed; inset:0; z-index:10050; display:flex; align-items:center; justify-content:center;
     padding:24px; pointer-events:none;}
   .toast{pointer-events:none; cursor:pointer; display:flex; align-items:flex-start; gap:11px;
     background:#fff; color:var(--text); font-size:13.5px; line-height:1.48; padding:15px 16px;
@@ -1216,7 +1216,7 @@
     <div class="preview-actions">
       <button class="preview-btn" id="previewResetBtn" aria-label="Reset preview to auto-drafted text" onclick="resetPreviewDraft()">Reset</button>
       <button class="preview-btn" aria-label="Print report" onclick="capturePreviewEdits(); window.print()">Print</button>
-      <button class="preview-btn" id="previewShareBtn" aria-label="Share this audit as a Word document" onclick="shareAuditDoc()">Share</button>
+      <button type="button" class="preview-btn" id="previewShareBtn" aria-label="Share this audit as a Word document" onclick="shareAuditDoc()">Share</button>
       <button class="preview-btn primary" id="previewDownloadBtn" aria-label="Download Word DOCX" onclick="downloadPreviewDoc()">Download</button>
     </div>
   </div>
@@ -3237,44 +3237,47 @@ function downloadPreviewDoc(){
    is a dead end.
    ============================================================ */
 async function shareAuditDoc(){
-  // Build the real DOCX synchronously from the current preview while the
-  // user's tap is still the active gesture. On supported Android/iOS
-  // browsers, navigator.share({files:[file]}) opens the operating system's
-  // native share panel (the panel with Messenger, Drive, Quick Share, etc.).
+  // Called directly from the Share button. Build the file synchronously,
+  // then invoke navigator.share in this same user gesture so Android can
+  // open its native sharing sheet. Never silently download from Share.
   let packageData;
   try {
+    if (typeof buildDocxFile_ !== 'function') throw new Error('DOCX builder is unavailable');
     packageData = buildDocxFile_();
   } catch (buildErr) {
     console.error('Could not prepare the Word document for sharing.', buildErr);
-    showToast('Could not prepare the Word document. Try Download first, then share the saved file.', 'warn');
+    showToast('Could not prepare the Word document. Please try Download and check the preview content.', 'error');
     return;
   }
 
   const file = packageData && packageData.file;
   const shareTitle = 'Audit Findings' + (state.branch ? ' - ' + state.branch : '');
-
-  // Keep the Share button dedicated to sharing: do not silently download
-  // the file when native sharing fails. Download is a separate button.
   if (!file) {
-    showToast('This browser could not create a shareable DOCX file. Use Download, or open this page in Chrome on Android / Safari on iPhone over HTTPS.', 'warn');
+    showToast('This browser could not create a shareable Word file. Open the site in Chrome on Android over HTTPS, then try Share again.', 'warn');
     return;
   }
-  if (!window.isSecureContext || typeof navigator.share !== 'function') {
-    showToast('Native file sharing is unavailable in this browser. Open this site in Chrome on Android or Safari on iPhone over HTTPS, then tap Share again. Use Download as a fallback.', 'warn');
+  if (!window.isSecureContext) {
+    showToast('Sharing requires the secure HTTPS website. Open the hosted site address beginning with https:// and try again.', 'warn');
+    return;
+  }
+  if (typeof navigator.share !== 'function') {
+    showToast('This browser does not support the phone sharing panel. Open this page in regular Chrome (not an in-app browser) and try again.', 'warn');
     return;
   }
 
-  // Intentionally don't gate on canShare(): some mobile browsers return
-  // false or throw there even though navigator.share({files}) works.
-  // Call the OS API directly from this click handler to preserve the
-  // transient user activation needed to open the native share sheet.
+  // Do not put any await or timer before this call: transient user activation
+  // is required by Android/iOS to show the native share chooser.
   try {
-    await navigator.share({ files: [file], title: shareTitle });
-    // Native share panel appeared and the user completed or closed it.
+    const shareData = { files: [file], title: shareTitle, text: shareTitle };
+    // Some implementations expose canShare but incorrectly reject uncommon
+    // Office MIME types. Try share directly; the API itself is authoritative.
+    await navigator.share(shareData);
+    // The OS sheet has opened and was completed or dismissed.
   } catch (err) {
-    if (err && err.name === 'AbortError') return; // user cancelled the system panel
-    console.warn('Native DOCX share failed.', err);
-    showToast('The phone could not open its native share panel for this DOCX. Open the page in Chrome/Safari over HTTPS. You can still use Download, then share the saved file from your phone.', 'warn');
+    console.error('Native DOCX share failed:', err);
+    const reason = err && err.name ? ' (' + err.name + ')' : '';
+    const canceled = err && err.name === 'AbortError';
+    showToast((canceled ? 'The share panel was closed or no share target opened' : 'Android could not open the sharing panel') + reason + '. If you did not see the panel, open the site in regular Chrome over HTTPS, use Hard reload / reset app from the menu, reopen Audit Findings, and try Share again. Download remains available separately.', canceled ? 'warn' : 'error');
   }
 }
 

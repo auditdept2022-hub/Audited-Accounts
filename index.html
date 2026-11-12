@@ -1981,7 +1981,7 @@
         <div class="left">
           <div class="toolbar-group-label">Import &amp; export</div>
           <div class="btn-cluster" title="Import / Export">
-          <button class="btn" id="importAccountsBtn" onclick="document.getElementById('importAccountsInput').click()" title="Import a flat account list (.csv/.xls/.xlsx) with a header row like Acct Type/Status Customer, Release/ Rstr Date, Model, Engine No, Due Date, Term, MA, Beg Bal, Customer Status, etc. Reads only Customer, Model, Engine No, Release/Rstr Date, Due Date, Term, MA, Beg Bal &amp; Customer Status from each row. This PERMANENTLY CLEARS every existing record in the branch first, then adds every row from the file as a brand-new customer — it never matches/merges with what's already there. Due This Month / Payment (Adv) / Penalty Due are always set to 0 (use Import Balances afterward to fill them in); Unit status, Payment mode, Date of Audit, Auditor Remarks &amp; Previous Audit Remarks always start blank.">⇪ Import Accounts</button>
+          <button class="btn" id="importAccountsBtn" onclick="document.getElementById('importAccountsInput').click()" title="Import a flat account list (.csv/.xls/.xlsx) with a header row like Acct Type/Status Customer, Release/ Rstr Date, Model, Engine No, Due Date, Term, MA, Beg Bal, Customer Status, etc. Reads only Customer, Model, Engine No, Release/Rstr Date, Due Date, Term, MA, Beg Bal &amp; Customer Status from each row. This PERMANENTLY CLEARS every existing record in the branch first, then adds every row from the file as a brand-new customer — it never matches/merges with what's already there. Due This Month / Payment (Adv) / Penalty Due are imported when those columns exist in the source report; genuinely missing values default to 0. Unit status, Payment mode, Date of Audit, Auditor Remarks &amp; Previous Audit Remarks always start blank.">⇪ Import Accounts</button>
           <input type="file" id="importAccountsInput" accept=".csv,.xls,.xlsx" multiple style="display:none">
           <button class="btn" id="importBalancesBtn" onclick="document.getElementById('importBalancesInput').click()" title="Import CSV, Excel (.xls/.xlsx) or PDF files. Matches customers by name (and engine no. when the file has one, so same-name/different-unit customers are told apart) and updates ONLY Due This Month, Payment (Adv) &amp; Penalty Due. Accepts either a plain file with literal 'Due This Month' etc. headers, or the same STA-style ledger report Import Accounts reads (CU/OD/DEL/TTL/Adv columns). PDF support is best-effort (reconstructed from text position, not a real grid) — scanned/image-only PDFs aren't supported; use CSV/Excel if a PDF doesn't import cleanly. Any remarks/Auditor Remarks column in the file is ignored. Existing customers only; unmatched rows are skipped, never added.">⇪ Import Balances</button>
           <input type="file" id="importBalancesInput" accept=".csv,.xls,.xlsx,.pdf" multiple style="display:none">
@@ -5121,11 +5121,26 @@
     if(typeof XLSX !== 'undefined') return Promise.resolve();
     if(_xlsxLoadPromise) return _xlsxLoadPromise;
     _xlsxLoadPromise = new Promise((resolve, reject)=>{
-      const s = document.createElement('script');
-      s.src = 'https://unpkg.com/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
-      s.onload = () => resolve();
-      s.onerror = () => { _xlsxLoadPromise = null; reject(new Error('Failed to load Excel library — check your connection and try again.')); };
-      document.head.appendChild(s);
+      const sources = [
+        'https://unpkg.com/xlsx-js-style@1.2.0/dist/xlsx.bundle.js',
+        'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js'
+      ];
+      const trySource = index => {
+        if(index >= sources.length){
+          _xlsxLoadPromise = null;
+          reject(new Error('Failed to load Excel library from both CDNs — check your connection or network restrictions, then try again.'));
+          return;
+        }
+        const s = document.createElement('script');
+        s.src = sources[index];
+        s.onload = () => {
+          if(typeof XLSX !== 'undefined') resolve();
+          else { s.remove(); trySource(index + 1); }
+        };
+        s.onerror = () => { s.remove(); trySource(index + 1); };
+        document.head.appendChild(s);
+      };
+      trySource(0);
     });
     return _xlsxLoadPromise;
   }
@@ -5151,16 +5166,33 @@
     if(typeof pdfjsLib !== 'undefined') return Promise.resolve();
     if(_pdfLoadPromise) return _pdfLoadPromise;
     _pdfLoadPromise = new Promise((resolve, reject)=>{
-      const s = document.createElement('script');
-      s.src = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js';
-      s.onload = () => {
-        try{
-          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
-          resolve();
-        }catch(err){ _pdfLoadPromise = null; reject(err); }
+      const sources = [
+        { script: 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js', worker: 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js' },
+        { script: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js', worker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js' }
+      ];
+      const trySource = index => {
+        if(index >= sources.length){
+          _pdfLoadPromise = null;
+          reject(new Error('Failed to load PDF library from both CDNs — check your connection or network restrictions, then try again.'));
+          return;
+        }
+        const source = sources[index];
+        const s = document.createElement('script');
+        s.src = source.script;
+        s.onload = () => {
+          try{
+            if(typeof pdfjsLib === 'undefined') throw new Error('PDF library did not initialize.');
+            pdfjsLib.GlobalWorkerOptions.workerSrc = source.worker;
+            resolve();
+          }catch(err){
+            s.remove();
+            trySource(index + 1);
+          }
+        };
+        s.onerror = () => { s.remove(); trySource(index + 1); };
+        document.head.appendChild(s);
       };
-      s.onerror = () => { _pdfLoadPromise = null; reject(new Error('Failed to load PDF library — check your connection and try again.')); };
-      document.head.appendChild(s);
+      trySource(0);
     });
     return _pdfLoadPromise;
   }
@@ -5233,10 +5265,30 @@
     });
     clusters.forEach(c => { c.mid = c.tokens.reduce((s, t) => s + t.x + (t.w || 0) / 2, 0) / c.tokens.length; });
     clusters.sort((a, b) => a.xCenter - b.xCenter);
-    return clusters.map(c => {
+    const columns = clusters.map(c => {
       const sorted = c.tokens.slice().sort((a, b) => b.y - a.y || a.x - b.x); // top line's word(s) first
       return { xCenter: c.xCenter, mid: c.mid, text: sorted.map(t => t.str).join(' ') };
     });
+    // PDF reports sometimes split a logical two-word header across
+    // independently positioned text columns even though each data value
+    // is one cell (notably "Customer Name" and "Engine No"). Recombine
+    // these adjacent header fragments so both the customer identity and
+    // engine number are parsed as fields rather than losing the engine
+    // identity and accidentally matching duplicate names together.
+    for(let i = 0; i < columns.length - 1;){
+      const left = String(columns[i].text || '').trim().toLowerCase();
+      const right = String(columns[i + 1].text || '').trim().toLowerCase();
+      const isCustomerName = left === 'customer' && right === 'name';
+      const isEngineNo = left === 'engine' && /^(no|no\.)$/.test(right);
+      if(!isCustomerName && !isEngineNo){ i++; continue; }
+      const a = columns[i], b = columns[i + 1];
+      columns.splice(i, 2, {
+        xCenter: (a.xCenter + b.xCenter) / 2,
+        mid: (a.mid + b.mid) / 2,
+        text: a.text + ' ' + b.text
+      });
+    }
+    return columns;
   }
 
   function pdfBucketLineIntoColumns_(line, columns){
@@ -5269,9 +5321,14 @@
   // collector text) and by the money's right edge. Otherwise the original
   // bucketing is used unchanged.
   const PDF_NUM_RE = /^\(?-?[\d,]*\d\.\d{1,2}\)?$/;
-  const PDF_ENGINE_RE = /^[A-Z]{2}[A-Z0-9]{0,3}E-?D?\d{5,8}$/;
-  // Fused name+engine (no space between them): engine prefixes seen on these reports all start with J or K (JA, JF, JK, KF, KY, KP, KD, KS), which is what tells where the name ends.
-  const PDF_ENGINE_TAIL_RE = /^(.*?[A-Z.,])([JK][A-Z][A-Z0-9]{0,3}E-?D?\d{5,8})$/;
+  // Engine formats in the supplied report include G3V5E-0563867,
+  // E31XE-0129390, JA69ED078653, BC175AEBGT791 and E489-810330.
+  // Use a conservative alphanumeric shape instead of assuming a fixed
+  // prefix letter or a mandatory literal E in one position.
+  const PDF_ENGINE_RE = /^(?=[A-Z0-9-]{9,18}$)(?=.*[A-Z])(?=.*\d)[A-Z0-9]{2,8}-?[A-Z0-9]{5,10}$/i;
+  // The same broad shape also lets a fused customer+engine text fragment
+  // be split without restricting engine prefixes to J/K.
+  const PDF_ENGINE_TAIL_RE = /^(.*?[A-Z.,])((?=[A-Z0-9-]{9,18}$)(?=.*[A-Z])(?=.*\d)[A-Z0-9]{2,8}-?[A-Z0-9]{5,10})$/i;
 
   function pdfExpandItem_(it){
     const out = [];
@@ -5321,6 +5378,21 @@
     const heads = columns.map(c => c.text.toLowerCase());
     const custIdx = heads.findIndex(h => /customer/.test(h));
     if(custIdx === -1) return null;
+    // Some PDFs split the single "Customer Name" header into separate
+    // positioned tokens. Preserve all customer-name words together until
+    // the Type column begins instead of routing later name words to a
+    // phantom standalone "Name" column.
+    const nameIdx = heads.findIndex((h, i) => i > custIdx && /^\s*name\s*$/.test(h));
+    const typeIdx = heads.findIndex((h, i) => i > custIdx && /\btype\b/.test(h));
+    let custNameBoundary = null;
+    if(typeIdx > custIdx){
+      const customerCenter = columns[custIdx].mid !== undefined ? columns[custIdx].mid : columns[custIdx].xCenter;
+      const nameCenter = (nameIdx !== -1 && nameIdx < typeIdx)
+        ? (columns[nameIdx].mid !== undefined ? columns[nameIdx].mid : columns[nameIdx].xCenter)
+        : customerCenter;
+      const typeCenter = columns[typeIdx].mid !== undefined ? columns[typeIdx].mid : columns[typeIdx].xCenter;
+      custNameBoundary = (nameCenter + typeCenter) / 2;
+    }
     const engIdx = heads.findIndex(h => /engine/.test(h));
     const collIdx = heads.findIndex(h => /collector/.test(h));
     const skipHead = new Set([custIdx, engIdx, collIdx].filter(i => i !== -1));
@@ -5330,6 +5402,54 @@
       numCols.push({ center: c.mid !== undefined ? c.mid : c.xCenter, col: ci });
     });
     if(!numCols.length) return null;
+
+    // In the supplied aging PDF, the Payment (Adv) header is centered
+    // noticeably to the right of its right-aligned amounts. A raw nearest-
+    // header match therefore sends those amounts to Payment (Age), silently
+    // dropping the actual advance-payment figure from imports. Calibrate the
+    // Payment (Adv) center from the observed money-text cluster between the
+    // Payment (Age) and Penalty Due columns. This is only applied when all
+    // three identifying headers exist and a plausible data cluster is found.
+    const paymentAgeIdx = heads.findIndex(h => /payment/.test(h) && /age/.test(h));
+    const paymentAdvIdx = heads.findIndex(h => /payment/.test(h) && /adv/.test(h));
+    const penaltyDueIdx = heads.findIndex(h => /penalty/.test(h) && /due/.test(h));
+    if(paymentAgeIdx !== -1 && paymentAdvIdx > paymentAgeIdx && penaltyDueIdx > paymentAdvIdx){
+      const ageCenter = columns[paymentAgeIdx].mid !== undefined ? columns[paymentAgeIdx].mid : columns[paymentAgeIdx].xCenter;
+      const advHeaderCenter = columns[paymentAdvIdx].mid !== undefined ? columns[paymentAdvIdx].mid : columns[paymentAdvIdx].xCenter;
+      const penaltyCenter = columns[penaltyDueIdx].mid !== undefined ? columns[penaltyDueIdx].mid : columns[penaltyDueIdx].xCenter;
+      const candidateCenters = [];
+      dataLines.forEach(line => line.items.forEach(it => {
+        pdfExpandItem_(it).atoms.forEach(atom => {
+          if(!atom.num) return;
+          const center = atom.x + atom.w / 2;
+          // Payment (Age) amounts sit left of its header; Payment (Adv) values
+          // occupy the narrow band after the Age column and before the Adv header.
+          // Excluding centers beyond the Adv heading prevents a third adjacent
+          // money column from being mistaken for advance payments.
+          if(center > ageCenter && center < advHeaderCenter + 3) candidateCenters.push(center);
+        });
+      }));
+      candidateCenters.sort((a, b) => a - b);
+      const clusters = [];
+      candidateCenters.forEach(center => {
+        const last = clusters[clusters.length - 1];
+        if(last && Math.abs(last.center - center) <= 12){
+          last.n++;
+          last.center += (center - last.center) / last.n;
+        } else clusters.push({ center, n: 1 });
+      });
+      // The printed header is not aligned with right-aligned amount text.
+      // Prefer the dominant observed data cluster in this narrow band; a few
+      // values from adjacent columns can be closer to the label but are not
+      // the Payment (Adv) column.
+      const observedAdv = clusters.reduce((best, c) => {
+        return !best || c.n > best.n ? c : best;
+      }, null);
+      if(observedAdv && Math.abs(observedAdv.center - advHeaderCenter) <= 60){
+        const advColumn = numCols.find(n => n.col === paymentAdvIdx);
+        if(advColumn) advColumn.center = observedAdv.center;
+      }
+    }
 
     let anySplit = false;
     const orphanCenters = [];
@@ -5357,7 +5477,7 @@
       cols.push({ xCenter: g.center, mid: g.center, text: '' });
       numCols.push({ center: g.center, col: cols.length - 1 });
     });
-    return { cols, numCols, custIdx, engIdx, collIdx };
+    return { cols, numCols, custIdx, engIdx, collIdx, custNameBoundary, baseColCount: columns.length };
   }
 
   function pdfBucketLineByContent_(line, plan){
@@ -5379,7 +5499,26 @@
       } else if(nums.length && a.x >= lastNumRight - 2 && plan.collIdx !== -1){
         put(plan.collIdx, a.str);
       } else {
-        put(plan.custIdx, a.str);
+        // The source report splits "Customer Name" into two positioned
+        // header tokens, although the data itself is one combined field.
+        // Route every text atom before the Type column boundary to Customer.
+        const atomCenter = a.x + a.w / 2;
+        if(plan.custNameBoundary !== null && plan.custNameBoundary !== undefined && atomCenter < plan.custNameBoundary){
+          put(plan.custIdx, a.str);
+          return;
+        }
+        // Content-based mode is activated by an orphan money value or a
+        // fused name/engine fragment. Keep remaining text in the closest
+        // original header column; orphan money columns are excluded here.
+        let best = plan.custIdx, bestDist = Infinity;
+        const limit = Math.min(plan.baseColCount || plan.cols.length, plan.cols.length);
+        for(let i = 0; i < limit; i++){
+          const col = plan.cols[i];
+          const center = col.mid !== undefined ? col.mid : col.xCenter;
+          const d = Math.abs(center - (a.x + a.w / 2));
+          if(d < bestDist){ bestDist = d; best = i; }
+        }
+        put(best, a.str);
       }
     });
     return row;
@@ -6062,7 +6201,7 @@
         }
       }
       payloadRows += matches.length;
-      matches.forEach(m => toUpdate.push(Object.assign({ row: m.row, customer: m.customer }, payload)));
+      matches.forEach(m => toUpdate.push(Object.assign({ row: m.row, customer: m.customer, engineNo: m.engineNo || '' }, payload)));
     });
 
     return { toUpdate, unmatched, unmatchedNames, duplicateNameRows, payloadRows, looseMatchRows, looseMatchExamples };
@@ -6114,7 +6253,7 @@
       // cancelled partway — no duplicate-value risk like remarks below.
       updateResult = await runBatched_(
         toUpdate, 'batchUpdateCustomer', 'updates',
-        item => ({ row: item.row, fields: item.fields }),
+        item => ({ row: item.row, fields: item.fields, expect: { customer: item.customer, engineNo: item.engineNo } }),
         'updateCustomer', item => ({ row: item.row, fields: item.fields }),
         total, 0,
         item => item.customer,
@@ -6189,7 +6328,7 @@
       // stamp).
       updateResult = await runBatched_(
         toUpdate, 'batchUpdateCustomer', 'updates',
-        item => ({ row: item.row, historyAppend: item.historyAppend }),
+        item => ({ row: item.row, historyAppend: item.historyAppend, expect: { customer: item.customer, engineNo: item.engineNo } }),
         'appendRemarkHistoryRow', item => ({ row: item.row, entry: item.historyAppend }),
         total, 0,
         item => item.customer,
@@ -6236,16 +6375,13 @@
   // by Import Balances / Import Remarks can't read this layout — this
   // flow has its own bespoke parser (parseAccountsMatrix_) instead.
   //
-  // Only 8 fields are read from each data row: Customer, Model, Engine
-  // No, Release/Rstr Date, Due Date, Term, MA, Beg Bal — plus Customer
-  // Status, which is DERIVED from whichever section header the row
-  // currently falls under (deriveStatusFromSection_ below turns e.g.
-  // "BNEW - OD" into "OD - BN"). The file's own balance/TTL/Adv columns
-  // are never read into a record at all: Due This Month, Payment (Adv)
-  // and Penalty Due are always written as 0 (use Import Balances
-  // afterward to fill them in), and Unit status, Payment mode, Date of
-  // Audit, Auditor Remarks, Previous Audit Remarks are always left
-  // blank.
+  // Core account fields are read from each data row, plus Customer
+  // Status derived from the active section header (e.g. "BNEW - OD"
+  // becomes "OD - BN"). When the report contains its first TTL, Adv and
+  // second TTL columns, they are also carried into Due This Month,
+  // Payment (Adv) and Penalty Due; only genuinely missing values default
+  // to zero. Unit status, Payment mode, Date of Audit, Auditor Remarks
+  // and Previous Audit Remarks always start blank.
   //
   // Unlike Import Balances / Import Remarks, this flow does NOT try to
   // match rows against the branch's existing customers at all. Every
@@ -6271,10 +6407,10 @@
         const norm = normHeader_(cell);
         if(!norm) return;
         if(cols.customer === undefined && norm.indexOf('customer') !== -1) cols.customer = idx;
-        else if(cols.release === undefined && norm.indexOf('release') !== -1) cols.release = idx;
+        else if(cols.release === undefined && (norm.indexOf('release') !== -1 || norm.indexOf('restructure') !== -1 || norm === 'rstr date')) cols.release = idx;
         else if(cols.model === undefined && norm === 'model') cols.model = idx;
         else if(cols.engine === undefined && norm.indexOf('engine') !== -1) cols.engine = idx;
-        else if(cols.dueDate === undefined && norm.indexOf('due') !== -1 && norm.indexOf('date') !== -1) cols.dueDate = idx;
+        else if(cols.dueDate === undefined && ((norm.indexOf('due') !== -1 && norm.indexOf('date') !== -1) || (norm === 'date' && cols.release !== undefined))) cols.dueDate = idx;
         else if(cols.term === undefined && norm === 'term') cols.term = idx;
         else if(cols.ma === undefined && norm === 'ma') cols.ma = idx;
         else if(cols.begBal === undefined && norm.indexOf('beg') !== -1 && norm.indexOf('bal') !== -1) cols.begBal = idx;
@@ -6332,10 +6468,9 @@
   // that's what "BNEW - ADV", "BNEW - OD" etc. look like in the raw
   // sheet. The file's own balance columns (the first TTL block, Adv, the
   // second TTL block) are also captured as dueThisMonth/paymentAdv/
-  // penaltyDue — Import Accounts itself still ignores these three and
-  // always writes 0 (see buildAccountsCreateFields_ below), but Import
-  // Balances' STA-format fallback (see parseImportFiles_) reuses this
-  // same parser and DOES want them.
+  // penaltyDue — both Import Accounts and the STA-format fallback for
+  // Import Balances can use these values when the source report includes
+  // them; Import Accounts defaults only genuinely absent values to zero.
   function parseAccountsMatrix_(matrix){
     const found = findAccountsHeaderRow_(matrix);
     if(!found) return [];
@@ -6370,7 +6505,7 @@
         model: cols.model !== undefined ? String(row[cols.model] == null ? '' : row[cols.model]).trim() : '',
         engineNo: cols.engine !== undefined ? String(row[cols.engine] == null ? '' : row[cols.engine]).trim() : '',
         releaseDate: cols.release !== undefined ? accountsDateCell_(row[cols.release]) : '',
-        dueDate: cols.dueDate !== undefined ? String(row[cols.dueDate] == null ? '' : row[cols.dueDate]).trim() : '',
+        dueDate: cols.dueDate !== undefined ? accountsDateCell_(row[cols.dueDate]) : '',
         term: cols.term !== undefined ? String(row[cols.term] == null ? '' : row[cols.term]).trim() : '',
         ma: isNaN(maVal) ? 0 : maVal,
         begBal: begBal,
@@ -6422,18 +6557,16 @@
 
   // Every parsed record becomes a brand-new customer — Import Accounts
   // never matches against what's already on the branch (see the note
-  // above handleImportAccountsFiles). This just shapes each record into
-  // the WRITABLE_FIELDS payload createCustomer/batchCreateCustomer
-  // expect, forcing Due This Month / Payment (Adv) / Penalty Due to 0
-  // and leaving every other non-listed field unset (blank).
+  // above handleImportAccountsFiles). Carry balance fields when the source
+  // report provides them; only missing/unreadable amounts default to zero.
   function buildAccountsCreateFields_(allRecords){
     return allRecords.map(rec => {
       const fields = {};
-      ['customer', 'model', 'engineNo', 'releaseDate', 'dueDate', 'term', 'ma', 'begBal', 'customerStatus']
+      ['customer', 'model', 'engineNo', 'releaseDate', 'dueDate', 'term', 'ma', 'begBal', 'dueThisMonth', 'paymentAdv', 'penaltyDue', 'customerStatus']
         .forEach(k => { if(rec[k] !== undefined && rec[k] !== '') fields[k] = rec[k]; });
-      fields.dueThisMonth = 0;
-      fields.paymentAdv = 0;
-      fields.penaltyDue = 0;
+      ['dueThisMonth', 'paymentAdv', 'penaltyDue'].forEach(k => {
+        if(fields[k] === undefined || fields[k] === '') fields[k] = 0;
+      });
       return fields;
     });
   }
@@ -6476,8 +6609,8 @@
       + `(customers, remarks, and color markers) and replace them with these ${toCreate.length} `
       + `account${toCreate.length === 1 ? '' : 's'} as brand-new entries — this import does not try to `
       + `match or merge with what\u2019s already there.\n\n`
-      + `Due This Month / Payment (Adv) / Penalty Due will be 0 for all of them (use Import Balances `
-      + `afterward to fill them in). Unit status, Payment mode, Date of Audit, Auditor Remarks and `
+      + `Due This Month / Payment (Adv) / Penalty Due will be imported when present in the source report; `
+      + `missing values default to 0. Unit status, Payment mode, Date of Audit, Auditor Remarks and `
       + `Previous Audit Remarks will all start blank.\n\n`
       + `This cannot be undone. Continue?`;
     if(!await appConfirm(msg, { danger: true, title: 'Replace all accounts?', confirmText: 'Clear & import' })) return;
@@ -6925,12 +7058,59 @@
       while(true){
         if(control && control.cancelled) return;
         try{
-          await apiCallJson_(batchAction, payload);
-          succeeded += chunk.length;
+          const data = await apiCallJson_(batchAction, payload);
+          const countField = batchAction === 'batchCreateCustomer' ? 'created'
+            : batchAction === 'batchDeleteCustomer' ? 'deleted' : 'updated';
+          const okCount = Number(data && data[countField]);
+          const failedCount = Number(data && data.failed);
+          if(!data || data.ok !== true || !Number.isFinite(okCount) || !Number.isFinite(failedCount)
+            || okCount < 0 || failedCount < 0 || okCount + failedCount !== chunk.length){
+            // Do not fall back to single-row writes after an ambiguous batch
+            // result: a batch may already have appended remarks or created
+            // records before a proxy/response problem. Retrying could duplicate
+            // those writes. Report this chunk as unconfirmed instead.
+            throw Object.assign(new Error('The server returned an incomplete import result; this batch was not safely retried. Refresh the branch and verify these rows before importing again.'), { importResultUncertain: true });
+          }
+          succeeded += okCount;
+          failed += failedCount;
+          const failedIndexes = Array.isArray(data.failedIndexes) ? data.failedIndexes : [];
+          failedIndexes.forEach(rawIndex => {
+            const i = Number(rawIndex);
+            if(!Number.isInteger(i) || i < 0 || i >= chunk.length) return;
+            const item = chunk[i];
+            failedItems.push(item);
+            if(getLabel && failedLabels.length < FAILED_LABELS_CAP){
+              try{ failedLabels.push(getLabel(item) || 'row ' + item.row); }catch(e){ /* best-effort */ }
+            }
+          });
+          if(failedCount > failedIndexes.length){
+            for(let i = 0; i < chunk.length && failedCount > failedIndexes.length; i++){
+              if(failedIndexes.indexOf(i) !== -1) continue;
+              const item = chunk[i];
+              failedItems.push(item);
+              if(getLabel && failedLabels.length < FAILED_LABELS_CAP){
+                try{ failedLabels.push(getLabel(item) || 'row ' + item.row); }catch(e){ /* best-effort */ }
+              }
+              failedIndexes.push(i);
+            }
+          }
           done += chunk.length;
           reportProgress();
           return;
         }catch(err){
+          if(err && err.importResultUncertain){
+            failed += chunk.length;
+            done += chunk.length;
+            chunk.forEach(item => {
+              failedItems.push(item);
+              if(getLabel && failedLabels.length < FAILED_LABELS_CAP){
+                try{ failedLabels.push(getLabel(item) || 'row ' + item.row); }catch(e){ /* best-effort */ }
+              }
+            });
+            console.error(`${batchAction} returned an unconfirmed result; chunk was not retried to avoid duplicate writes:`, err);
+            reportProgress();
+            return;
+          }
           // BUG FIX: same branch-busy fix as fallbackChunk above — retry
           // the identical (idempotent) chunk request shortly, don't treat
           // it as a real error or a lost connection.
@@ -6991,17 +7171,34 @@
     return { succeeded, failed, done, failedLabels, failedItems, cancelled: !!(control && control.cancelled) };
   }
 
-  document.getElementById('importBalancesInput').addEventListener('change', (e)=>{
-    handleImportBalancesFiles(e.target.files);
-    e.target.value = ''; // allow re-importing the same file(s) later
+  // Centralize file-input dispatch so async failures never become an
+  // unhandled promise rejection (which previously left the import UI looking
+  // like the button did nothing). Copy the FileList before clearing the
+  // input so selecting the same file again remains possible.
+  function runImportFromInput_(event, handler, label){
+    const input = event && event.target;
+    const files = Array.from((input && input.files) || []);
+    if(input) input.value = '';
+    if(!files.length) return;
+    Promise.resolve(handler(files)).catch(err => {
+      const message = `${label} failed: ${(err && err.message) || String(err)}`;
+      console.error(message, err);
+      if(importRun_) endImportRun_();
+      const status = document.getElementById('importStatus');
+      if(status) status.textContent = '';
+      toast(message, 'error');
+      try{ logActivity_('error', `${label} failed`, message); }catch(logErr){ console.warn('Could not log import failure:', logErr); }
+    });
+  }
+
+  document.getElementById('importBalancesInput').addEventListener('change', e => {
+    runImportFromInput_(e, handleImportBalancesFiles, 'Import balances');
   });
-  document.getElementById('importRemarksInput').addEventListener('change', (e)=>{
-    handleImportRemarksFiles(e.target.files);
-    e.target.value = ''; // allow re-importing the same file(s) later
+  document.getElementById('importRemarksInput').addEventListener('change', e => {
+    runImportFromInput_(e, handleImportRemarksFiles, 'Import remarks');
   });
-  document.getElementById('importAccountsInput').addEventListener('change', (e)=>{
-    handleImportAccountsFiles(e.target.files);
-    e.target.value = ''; // allow re-importing the same file(s) later
+  document.getElementById('importAccountsInput').addEventListener('change', e => {
+    runImportFromInput_(e, handleImportAccountsFiles, 'Import accounts');
   });
 
   // TOAST — redesigned to actually distinguish success/error/warning at a

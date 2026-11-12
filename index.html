@@ -5403,53 +5403,12 @@
     });
     if(!numCols.length) return null;
 
-    // In the supplied aging PDF, the Payment (Adv) header is centered
-    // noticeably to the right of its right-aligned amounts. A raw nearest-
-    // header match therefore sends those amounts to Payment (Age), silently
-    // dropping the actual advance-payment figure from imports. Calibrate the
-    // Payment (Adv) center from the observed money-text cluster between the
-    // Payment (Age) and Penalty Due columns. This is only applied when all
-    // three identifying headers exist and a plausible data cluster is found.
-    const paymentAgeIdx = heads.findIndex(h => /payment/.test(h) && /age/.test(h));
-    const paymentAdvIdx = heads.findIndex(h => /payment/.test(h) && /adv/.test(h));
-    const penaltyDueIdx = heads.findIndex(h => /penalty/.test(h) && /due/.test(h));
-    if(paymentAgeIdx !== -1 && paymentAdvIdx > paymentAgeIdx && penaltyDueIdx > paymentAdvIdx){
-      const ageCenter = columns[paymentAgeIdx].mid !== undefined ? columns[paymentAgeIdx].mid : columns[paymentAgeIdx].xCenter;
-      const advHeaderCenter = columns[paymentAdvIdx].mid !== undefined ? columns[paymentAdvIdx].mid : columns[paymentAdvIdx].xCenter;
-      const penaltyCenter = columns[penaltyDueIdx].mid !== undefined ? columns[penaltyDueIdx].mid : columns[penaltyDueIdx].xCenter;
-      const candidateCenters = [];
-      dataLines.forEach(line => line.items.forEach(it => {
-        pdfExpandItem_(it).atoms.forEach(atom => {
-          if(!atom.num) return;
-          const center = atom.x + atom.w / 2;
-          // Payment (Age) amounts sit left of its header; Payment (Adv) values
-          // occupy the narrow band after the Age column and before the Adv header.
-          // Excluding centers beyond the Adv heading prevents a third adjacent
-          // money column from being mistaken for advance payments.
-          if(center > ageCenter && center < advHeaderCenter + 3) candidateCenters.push(center);
-        });
-      }));
-      candidateCenters.sort((a, b) => a - b);
-      const clusters = [];
-      candidateCenters.forEach(center => {
-        const last = clusters[clusters.length - 1];
-        if(last && Math.abs(last.center - center) <= 12){
-          last.n++;
-          last.center += (center - last.center) / last.n;
-        } else clusters.push({ center, n: 1 });
-      });
-      // The printed header is not aligned with right-aligned amount text.
-      // Prefer the dominant observed data cluster in this narrow band; a few
-      // values from adjacent columns can be closer to the label but are not
-      // the Payment (Adv) column.
-      const observedAdv = clusters.reduce((best, c) => {
-        return !best || c.n > best.n ? c : best;
-      }, null);
-      if(observedAdv && Math.abs(observedAdv.center - advHeaderCenter) <= 60){
-        const advColumn = numCols.find(n => n.col === paymentAdvIdx);
-        if(advColumn) advColumn.center = observedAdv.center;
-      }
-    }
+    // NOTE: an earlier version "calibrated" the Payment (Adv) column to the
+    // densest money cluster left of its header. In the aging report that
+    // cluster is the PAYMENT (AGE) column, so every aged customer's payment
+    // was imported as an advance. Rows of this report shape are now placed
+    // by position instead (see pdfBucketTailPositionally_), so no geometric
+    // guess is made for the Payment columns here.
 
     let anySplit = false;
     const orphanCenters = [];
@@ -5524,6 +5483,68 @@
     return row;
   }
 
+
+  // ---- Positional placement of the right-hand money block -------------------
+  //
+  // In the Crystal "Aging Summary" report every customer row prints the same
+  // fixed run of cells after the Terms value, and a zero is printed as "-"
+  // (never left blank):
+  //     Due This Month | <unlabeled ratio, e.g. 1.90> | Payment (Age) |
+  //     Payment (Adv) | Penalty Due | Penalty Payment
+  // Geometry cannot tell these apart reliably (right-aligned amounts sit under
+  // the wrong header, the ratio has no header, and a row with only an advance
+  // payment has nothing but dashes to its left), which is what produced
+  // Payment (Age) amounts imported as advances and advance-only customers
+  // being lost. Counting the cells instead is exact: when the cells after the
+  // Terms value are all money/"-" and their count equals the labeled columns
+  // (or one more, the unlabeled ratio, which is always the 2nd cell), they are
+  // assigned in order.
+  const PDF_DASH_RE = /^[-–—]$/;
+  function pdfPlanTailColumns_(columns){
+    const heads = columns.map(c => String(c.text || '').replace(/\s+/g, ' ').trim().toLowerCase());
+    const termsIdx = heads.findIndex(h => /^terms?$/.test(h));
+    if(termsIdx === -1) return null;
+    const dueIdx = heads.findIndex((h, i) => i > termsIdx && /\bdue\b/.test(h) && /\bmonth\b/.test(h));
+    if(dueIdx !== termsIdx + 1) return null;
+    const tailIdxs = [];
+    for(let i = termsIdx + 1; i < columns.length; i++){
+      if(!heads[i]) break;
+      tailIdxs.push(i);
+    }
+    if(tailIdxs.length < 3) return null;
+    return { termsIdx, tailIdxs };
+  }
+
+  // Returns { termsText, values[] } for a physical line that has the expected
+  // shape, or null (the caller then keeps the geometric bucketing).
+  function pdfSplitTailByCount_(line, tailPlan){
+    const atoms = [];
+    line.items.forEach(it => pdfExpandItem_(it).atoms.forEach(a => atoms.push(a)));
+    atoms.sort((a, b) => a.x - b.x);
+    const L = tailPlan.tailIdxs.length;
+    const isCell = a => a.num || PDF_DASH_RE.test(String(a.str).trim());
+    for(let k = 0; k < atoms.length; k++){
+      if(!/^\d{1,3}$/.test(String(atoms[k].str).trim())) continue;
+      const tail = atoms.slice(k + 1);
+      if(tail.length !== L && tail.length !== L + 1) continue;
+      if(!tail.every(isCell)) continue;
+      const vals = tail.map(a => String(a.str).trim());
+      if(vals.length === L + 1) vals.splice(1, 1); // drop the unlabeled ratio cell
+      return { termsText: String(atoms[k].str).trim(), values: vals };
+    }
+    return null;
+  }
+
+  function pdfApplyTail_(row, line, tailPlan, baseColCount){
+    const split = pdfSplitTailByCount_(line, tailPlan);
+    if(!split) return row;
+    const keep = new Set(tailPlan.tailIdxs);
+    for(let i = tailPlan.termsIdx + 1; i < row.length; i++) if(!keep.has(i)) row[i] = '';
+    row[tailPlan.termsIdx] = split.termsText;
+    tailPlan.tailIdxs.forEach((colIdx, n) => { row[colIdx] = split.values[n]; });
+    return row;
+  }
+
   // Builds one candidate matrix assuming the header spans exactly
   // `headerLineCount` physical PDF lines starting at lines[0] (the
   // caller has already skipped any letterhead before this point).
@@ -5536,9 +5557,11 @@
     const headerRow = outCols.map(c => c.text);
     const headerNorm = headerRow.map(h => String(h).replace(/\s+/g, ' ').trim().toLowerCase());
 
+    const tailPlan = pdfPlanTailColumns_(columns);
     const matrix = [headerRow];
     dataLines.forEach(line => {
-      const row = plan ? pdfBucketLineByContent_(line, plan) : pdfBucketLineIntoColumns_(line, columns);
+      let row = plan ? pdfBucketLineByContent_(line, plan) : pdfBucketLineIntoColumns_(line, columns);
+      if(tailPlan) row = pdfApplyTail_(row, line, tailPlan, columns.length);
       const rowNorm = row.map(v => String(v).replace(/\s+/g, ' ').trim().toLowerCase());
       // Skip a repeated header line (e.g. the header re-printed at the
       // top of page 2+) so it doesn't get treated as a bogus data row.
@@ -5712,7 +5735,12 @@
         const raw = row[bestMap[key]];
         if(raw === undefined || raw === null || raw === '') return;
         if(NUMERIC_KEYS.indexOf(key) !== -1){
-          const n = parseNum_(raw);
+          // A lone "-" is how these reports print zero. For the balance
+          // fields that is a real value (the customer owes/paid nothing this
+          // month) and MUST overwrite last month's figure — treating it as
+          // "blank" left stale balances on every zero-due customer.
+          const isDash = typeof raw === 'string' && /^\s*[-\u2013\u2014]\s*$/.test(raw);
+          const n = isDash && (key === 'dueThisMonth' || key === 'paymentAdv' || key === 'penaltyDue') ? 0 : parseNum_(raw);
           if(!isNaN(n)) rec[key] = n;
         } else if(key === 'releaseDate' && Object.prototype.toString.call(raw) === '[object Date]'){
           rec[key] = Utilities_formatDateLocal_(raw);
@@ -6059,8 +6087,10 @@
                 customer: r.customer,
                 engineNo: r.engineNo,
                 dueThisMonth: r.dueThisMonth,
-                paymentAdv: r.paymentAdv,
-                penaltyDue: r.penaltyDue
+                paymentAdv: r.paymentAdv
+                // penaltyDue intentionally omitted: the STA ledger has no
+                // penalty column, and a defaulted 0 here would wipe the
+                // branch's real Penalty Due values.
               }));
               headerFound = true;
             }
@@ -6175,6 +6205,17 @@
       if((!matches || !matches.length) && nameKey){
         const byName = nameIndex[nameKey];
         if(byName && byName.length){
+          if(engKey && byName.length > 1){
+            // The file names a specific unit (engine no.) that isn't on the
+            // branch, and this name belongs to several accounts. Updating
+            // "all of them" would overwrite the wrong customer's balances,
+            // so refuse and report it instead of guessing.
+            unmatched++;
+            if(unmatchedNames.length < UNMATCHED_NAMES_CAP){
+              unmatchedNames.push(`${String(rec.customer || '').trim() || '(blank name)'} — ${rec.engineNo} (engine not found; name shared by ${byName.length} accounts)`);
+            }
+            return;
+          }
           matches = byName;
           if(engKey) loose = true; // an engine WAS given but it didn't line up — flag it
         }
@@ -6498,7 +6539,11 @@
       const maVal = parseNum_(row[cols.ma]);
       const ttl1 = cols.ttl1 !== undefined ? parseNum_(row[cols.ttl1]) : NaN;
       const adv = cols.adv !== undefined ? parseNum_(row[cols.adv]) : NaN;
-      const ttl2 = cols.ttl2 !== undefined ? parseNum_(row[cols.ttl2]) : NaN;
+      // The second CU/OD/DEL/TTL block of this report is the payments
+      // received (it always equals Payment(Age)+Payment(Adv) of the aging
+      // PDF), NOT penalty — this report carries no penalty figure at all.
+      // Reading it as Penalty Due wrote payments into Penalty Due.
+      const ttl2 = NaN;
 
       records.push({
         customer: name,

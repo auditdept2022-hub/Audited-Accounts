@@ -6117,6 +6117,71 @@
 
   function normalizeEngine_(s){ return String(s || '').replace(/[\s-]+/g, '').toUpperCase(); }
 
+  // ---- Fuzzy matching helpers (used by matchImportRecords_) ----------------
+  // Report names/engine numbers often differ only slightly from what is on
+  // the branch sheet (punctuation, "Ñ" vs "N", "MA." vs "MA", JR/SR, word
+  // order, a space before the comma, one mistyped engine character...).
+  // These helpers let those "light difference" rows still be matched.
+  function stripAccents_(s){
+    try{ return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
+    catch(e){ return String(s || ''); }
+  }
+  const NAME_NOISE_TOKENS_ = new Set(['JR','SR','II','III','IV','MA','MR','MRS','MS','DE','DEL','DELA','DELOS','DELAS','LA','LOS','LAS','SAN','SANTA','STO','STA','Y']);
+  function nameTokens_(s){
+    return stripAccents_(s).toUpperCase().replace(/[^A-Z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+  }
+  // Order-insensitive key without noise words: "TABON , ARLAN LACAP" and
+  // "LACAP ARLAN TABON" and "TABON, ARLAN L." share the same core tokens.
+  function nameLooseKey_(s){
+    const t = nameTokens_(s).filter(w => !NAME_NOISE_TOKENS_.has(w));
+    return t.slice().sort().join(' ');
+  }
+  function engineCompact_(s){ return stripAccents_(s).toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+  function levenshtein_(a, b, max){
+    if(a === b) return 0;
+    const la = a.length, lb = b.length;
+    if(Math.abs(la - lb) > max) return max + 1;
+    let prev = new Array(lb + 1), cur = new Array(lb + 1);
+    for(let j = 0; j <= lb; j++) prev[j] = j;
+    for(let i = 1; i <= la; i++){
+      cur[0] = i; let rowMin = cur[0];
+      for(let j = 1; j <= lb; j++){
+        const c = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + c);
+        if(cur[j] < rowMin) rowMin = cur[j];
+      }
+      if(rowMin > max) return max + 1;
+      const t = prev; prev = cur; cur = t;
+    }
+    return prev[lb];
+  }
+  // 0..1 similarity between two person names (token based, order-insensitive,
+  // tolerant to a mistyped letter in a word and to a missing middle name).
+  function nameSimilarity_(a, b){
+    const ta = nameTokens_(a).filter(w => !NAME_NOISE_TOKENS_.has(w));
+    const tb = nameTokens_(b).filter(w => !NAME_NOISE_TOKENS_.has(w));
+    if(!ta.length || !tb.length) return 0;
+    const used = new Array(tb.length).fill(false);
+    let score = 0;
+    ta.forEach(x => {
+      let best = -1, bestSim = 0;
+      tb.forEach((y, j) => {
+        if(used[j]) return;
+        let sim = 0;
+        if(x === y) sim = 1;
+        else if(x.length > 2 && y.length > 2){
+          const m = Math.max(x.length, y.length);
+          const d = levenshtein_(x, y, 2);
+          if(d <= 2) sim = 1 - d / m;
+          if(sim < 0.7) sim = 0;
+        } else if((x.length === 1 || y.length === 1) && x[0] === y[0]) sim = 0.5; // initial vs full word
+        if(sim > bestSim){ bestSim = sim; best = j; }
+      });
+      if(best >= 0){ used[best] = true; score += bestSim; }
+    });
+    return score / Math.max(ta.length, tb.length);
+  }
+
   // Matches every parsed row against the currently loaded list by customer
   // name — and, whenever the row also carries an engine number, by
   // name+engine together. Import ONLY updates existing, already-matched
@@ -6145,7 +6210,13 @@
     // etc. The engine number is the more reliable identifier of an
     // actual unit, so it's trusted on its own when it matches exactly.
     const engineIndex = {};
+    const looseNameIndex = {};   // order/punctuation-insensitive name key -> accounts
+    const engineLooseIndex = {}; // engine with every non-alphanumeric removed -> accounts
     customers.forEach(c => {
+      const lk = nameLooseKey_(c.customer);
+      if(lk) (looseNameIndex[lk] = looseNameIndex[lk] || []).push(c);
+      const ek = engineCompact_(c.engineNo);
+      if(ek) (engineLooseIndex[ek] = engineLooseIndex[ek] || []).push(c);
       const nameKey = normalizeName_(c.customer);
       (nameIndex[nameKey] = nameIndex[nameKey] || []).push(c);
       const engKey = normalizeEngine_(c.engineNo);
@@ -6206,6 +6277,9 @@
         const byName = nameIndex[nameKey];
         if(byName && byName.length){
           if(engKey && byName.length > 1){
+            const nearEng = byName.filter(c => { const ce = engineCompact_(c.engineNo); return ce && levenshtein_(ce, engineCompact_(rec.engineNo), 2) <= 2; });
+            if(nearEng.length === 1){ matches = nearEng; loose = true; }
+            else {
             // The file names a specific unit (engine no.) that isn't on the
             // branch, and this name belongs to several accounts. Updating
             // "all of them" would overwrite the wrong customer's balances,
@@ -6215,10 +6289,58 @@
               unmatchedNames.push(`${String(rec.customer || '').trim() || '(blank name)'} — ${rec.engineNo} (engine not found; name shared by ${byName.length} accounts)`);
             }
             return;
+            }
           }
+          if(!matches || !matches.length){
           matches = byName;
           if(engKey) loose = true; // an engine WAS given but it didn't line up — flag it
+          }
         }
+      }
+
+      // 4) Light-difference rescue. Nothing matched exactly, so try, in order:
+      //    a) engine equal after dropping every non-alphanumeric character;
+      //    b) same name ignoring punctuation / accents / word order / JR-SR;
+      //    c) fuzzy: name similarity and engine closeness together.
+      //    Every row rescued here is flagged as a loose match so it shows up
+      //    for double-checking, and nothing is guessed when two accounts tie.
+      if(!matches || !matches.length){
+        const ek = engineCompact_(rec.engineNo);
+        const lk = nameLooseKey_(rec.customer);
+        let fuzzyNote = '';
+        if(ek && engineLooseIndex[ek] && engineLooseIndex[ek].length){
+          matches = engineLooseIndex[ek]; loose = true;
+        } else if(lk && looseNameIndex[lk] && looseNameIndex[lk].length){
+          let cand = looseNameIndex[lk];
+          if(cand.length > 1 && ek){
+            const near = cand.filter(c => { const ce = engineCompact_(c.engineNo); return ce && levenshtein_(ce, ek, 2) <= 2; });
+            if(near.length) cand = near;
+          }
+          if(cand.length === 1 || !ek){ matches = cand; loose = true; }
+        }
+        if((!matches || !matches.length) && (nameKey || ek)){
+          let best = null, second = 0;
+          customers.forEach(c => {
+            const ns = nameSimilarity_(rec.customer, c.customer);
+            const ce = engineCompact_(c.engineNo);
+            const ed = (ek && ce) ? levenshtein_(ce, ek, 3) : 99;
+            let score = 0;
+            if(ns >= 0.999 && ed <= 3) score = 1;                    // same name, engine a few characters off
+            else if(ed <= 1 && ns >= 0.5) score = 0.9 + ns * 0.1;    // engine 1 char off, name roughly agrees
+            else if(ed <= 2 && ns >= 0.75) score = 0.85 + ns * 0.1;  // engine 2 chars off, name close
+            else if(ns >= 0.85 && (!ek || !ce)) score = ns * 0.9;    // name very close, no engine to compare
+            else if(ns >= 0.9 && ed <= 3) score = ns * 0.9;
+            if(score > 0){
+              if(!best || score > best.score){ if(best) second = Math.max(second, best.score); best = { c, score, ns, ed }; }
+              else second = Math.max(second, score);
+            }
+          });
+          if(best && (best.score - second >= 0.05 || second === 0)){
+            matches = [best.c]; loose = true;
+            fuzzyNote = ` ≈ ${best.c.customer}${best.c.engineNo ? ' — ' + best.c.engineNo : ''}`;
+          }
+        }
+        if(matches && matches.length && fuzzyNote) rec = Object.assign({}, rec, { _fz: fuzzyNote });
       }
 
       if(!matches || !matches.length){
@@ -6238,7 +6360,7 @@
         looseMatchRows += matches.length;
         if(looseMatchExamples.length < LOOSE_MATCH_CAP){
           const label = String(rec.customer || '').trim() || '(blank name)';
-          looseMatchExamples.push(engKey ? `${label} — ${rec.engineNo}` : label);
+          looseMatchExamples.push((engKey ? `${label} — ${rec.engineNo}` : label) + (rec._fz || ''));
         }
       }
       payloadRows += matches.length;

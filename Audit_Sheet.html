@@ -476,6 +476,18 @@
   .er-cell-select{-webkit-appearance:none; appearance:none;}
   .er-table-row .icon-btn{width:20px; height:20px; border:none; background:transparent; color:var(--muted-2); font-size:15px;}
   .er-table-row .icon-btn:active{color:var(--del); background:transparent;}
+  /* ---- Receipt monitoring import + green match ---- */
+  .er-table-row.er-match{background:#E3F6E8;}
+  .er-table-row.er-match .er-cell-input, .er-table-row.er-match .er-cell-select{color:#14532D; font-weight:600;}
+  .rcpt-bar{border:1px dashed var(--line); border-radius:var(--radius-sm); background:#F8F9FD; padding:9px 10px; margin:0 0 12px;}
+  .rcpt-bar-top{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  .rcpt-btn{border:1px solid var(--line); background:#fff; color:var(--accent-dark); font-family:inherit; font-size:12px;
+    font-weight:700; padding:6px 11px; border-radius:8px; cursor:pointer;}
+  .rcpt-btn.danger{color:var(--del);}
+  .rcpt-btn:disabled{opacity:.55; cursor:wait;}
+  .rcpt-info{font-size:11.5px; color:var(--muted); line-height:1.45; margin-top:6px;}
+  .rcpt-info .ok{color:#14532D; font-weight:700;}
+  .rcpt-legend{display:inline-block; width:10px; height:10px; border-radius:3px; background:#BDE8C7; border:1px solid #7CC48F; vertical-align:-1px; margin-right:4px;}
   .er-add-row{display:block; width:100%; border:none; background:#fff; color:var(--accent-dark); font-family:inherit;
     font-size:12.5px; font-weight:700; padding:10px; cursor:pointer; text-align:center;}
   .er-add-row:active{background:var(--accent-soft);}
@@ -1277,6 +1289,252 @@
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxtY9qnh6IpUOKRAj-KAwcvfXqVMOfi4u85ouZEdwmvMLJHvy1EUgzWaH1bBIpXeYIuvQ/exec';
 const backendConfigured = APPS_SCRIPT_URL && APPS_SCRIPT_URL.indexOf('PASTE_YOUR') !== 0;
 
+/* ============================================================
+   RECEIPT MONITORING IMPORT
+   ------------------------------------------------------------
+   Import the receipt-monitoring workbook (one tab per branch, with
+   Moto Finance / Motorlandia / Sales Invoice / Delivery Receipt /
+   Sales Invoice-PARTS columns of series like 1901-1950). Any entry in
+   the Official Receipt / Spareparts Invoice / Sales Invoice & Delivery
+   Receipt lists whose Series No matches (or overlaps) a series on the
+   selected branch's tab turns green. The parsed data is kept on this
+   device (localStorage); nothing is sent to the server.
+   ============================================================ */
+const RCPT_DB_KEY = 'branchAudit.receiptDb.v1';
+let receiptDb = null;
+let receiptBusy = false;
+const rcptBranchMemo = {};
+try{ receiptDb = JSON.parse(localStorage.getItem(RCPT_DB_KEY) || 'null'); }catch(e){ receiptDb = null; }
+
+function rcptNorm_(s){
+  return String(s == null ? '' : s).toLowerCase().replace(/branch/g,' ').replace(/[^a-z0-9]+/g,' ').trim();
+}
+/* Column label -> kind: mf = Moto Finance invoice, or = Motorlandia
+   collection receipt, si = Sales Invoice, dr = Delivery Receipt,
+   sp = Sales Invoice - PARTS. */
+function rcptKind_(label){
+  const t = String(label == null ? '' : label).toLowerCase();
+  if(/stock on branch|used on branch|using/.test(t)) return '';
+  if(/part/.test(t) && /(invoice|\bsi\b)/.test(t)) return 'sp';
+  if(/moto\s*finance/.test(t)) return 'mf';
+  if(/motorlandia|collection\s*receipt/.test(t)) return 'or';
+  if(/delivery\s*receipt/.test(t)) return 'dr';
+  if(/sales\s*invoice/.test(t)) return 'si';
+  return '';
+}
+function rcptParseWorkbook_(wb){
+  const branches = [];
+  wb.SheetNames.forEach(function(name){
+    const ws = wb.Sheets[name];
+    if(!ws) return;
+    const rows = XLSX.utils.sheet_to_json(ws, { header:1, raw:true, defval:'' });
+    let title = '', asOf = '';
+    for(let r = 0; r < 8 && r < rows.length; r++){
+      const row = rows[r] || [];
+      for(let c = 0; c < 4; c++){
+        const v = String(row[c] == null ? '' : row[c]).trim();
+        if(!title && /branch/i.test(v) && !/stock|used/i.test(v)) title = v;
+        if(!asOf && /^as of/i.test(v)) asOf = v;
+      }
+    }
+    let hr = -1, cols = [];
+    for(let r = 0; r < 20 && r < rows.length; r++){
+      const row = rows[r] || [];
+      const found = [];
+      for(let c = 0; c < row.length; c++){
+        const k = rcptKind_(row[c]);
+        if(k) found.push({ c:c, k:k, label:String(row[c]).trim() });
+      }
+      if(found.length){ hr = r; cols = found; break; }
+    }
+    if(hr < 0) return;
+    const docs = {};
+    cols.forEach(function(col){
+      const ranges = [];
+      let section = 0; // 0 = stock on branch (unused), 1 = used on branch
+      for(let r = hr + 1; r < rows.length; r++){
+        const raw = rows[r] && rows[r][col.c];
+        if(raw === '' || raw == null) continue;
+        const txt = String(raw).trim();
+        if(!txt) continue;
+        const m = /(\d+)\s*[-\u2013\u2014]\s*(\d+)/.exec(txt);
+        if(m){
+          const a = parseInt(m[1], 10);
+          let b = parseInt(m[2], 10);
+          if(b < a) b = a; // typo'd end number: keep just the start
+          ranges.push([a, b, (/used|using/i.test(txt) || section) ? 1 : 0]);
+        } else if(/^\d+$/.test(txt)){
+          const n = parseInt(txt, 10);
+          ranges.push([n, n, section]);
+        } else if(/used|using/i.test(txt)){
+          section = 1; // "used on branch:" divider row
+        }
+      }
+      if(ranges.length){
+        if(docs[col.k]) docs[col.k].ranges = docs[col.k].ranges.concat(ranges);
+        else docs[col.k] = { label: col.label, ranges: ranges };
+      }
+    });
+    if(Object.keys(docs).length) branches.push({ title: title || name, sheet: name, asOf: asOf, docs: docs });
+  });
+  return branches;
+}
+function rcptClearMemo_(){ Object.keys(rcptBranchMemo).forEach(function(k){ delete rcptBranchMemo[k]; }); }
+function rcptFindBranch_(name){
+  if(!receiptDb || !receiptDb.branches) return null;
+  const n = rcptNorm_(name);
+  if(!n) return null;
+  if(Object.prototype.hasOwnProperty.call(rcptBranchMemo, n)) return rcptBranchMemo[n];
+  const list = receiptDb.branches;
+  let found = null;
+  for(let i = 0; i < list.length && !found; i++){
+    if(rcptNorm_(list[i].title) === n || rcptNorm_(list[i].sheet) === n) found = list[i];
+  }
+  if(!found){
+    let bestLen = 0;
+    list.forEach(function(b){
+      [rcptNorm_(b.title), rcptNorm_(b.sheet)].forEach(function(k){
+        if(k.length >= 3 && (' ' + n + ' ').indexOf(' ' + k + ' ') >= 0 && k.length > bestLen){ found = b; bestLen = k.length; }
+      });
+    });
+  }
+  rcptBranchMemo[n] = found;
+  return found;
+}
+/* Every number or a-b range typed in a Series No cell. */
+function rcptEntered_(text){
+  const t = String(text == null ? '' : text);
+  const out = [];
+  const re = /(\d+)\s*[-\u2013\u2014]\s*(\d+)/g;
+  let m;
+  while((m = re.exec(t))){
+    let a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+    if(b < a){ const x = a; a = b; b = x; }
+    out.push([a, b]);
+  }
+  (t.replace(re, ' ').match(/\d+/g) || []).forEach(function(d){ const n = parseInt(d, 10); out.push([n, n]); });
+  return out;
+}
+function rcptKindsFor_(path, row){
+  if(path === 'officialReceipts.orEntries') return ['mf', 'or'];
+  if(path === 'officialReceipts.sparepartsEntries') return ['sp'];
+  if(path === 'officialReceipts.salesDrEntries'){
+    const t = String(row && row.type || '').toLowerCase();
+    if(/delivery/.test(t)) return ['dr'];
+    if(/sales\s*invoice/.test(t)) return ['si'];
+    return ['si', 'dr'];
+  }
+  return [];
+}
+/* { hit, detail } for one entry row, or null when there's nothing to compare. */
+function receiptMatch_(path, row){
+  try{
+    if(!receiptDb || !row) return null;
+    const txt = String(row.seriesNo || '');
+    if(!/\d/.test(txt)) return null;
+    const br = rcptFindBranch_(state.branch);
+    if(!br) return null;
+    const ents = rcptEntered_(txt);
+    const kinds = rcptKindsFor_(path, row);
+    for(let ki = 0; ki < kinds.length; ki++){
+      const d = br.docs[kinds[ki]];
+      if(!d) continue;
+      for(let i = 0; i < d.ranges.length; i++){
+        const s = d.ranges[i][0], e = d.ranges[i][1], used = d.ranges[i][2];
+        for(let j = 0; j < ents.length; j++){
+          const a = ents[j][0], b = ents[j][1];
+          if(s <= b && a <= e){
+            return { hit:true, detail:(s === a && e === b ? 'Matches ' : 'Overlaps ') + d.label + ' ' + s + '-' + e
+              + ' (' + (used ? 'used' : 'in stock') + ') in the imported monitoring for ' + br.title };
+          }
+        }
+      }
+    }
+    return { hit:false };
+  }catch(err){ return null; }
+}
+/* Re-colours the rows already on screen (no re-render, so typing isn't interrupted). */
+function refreshReceiptMatches_(){
+  document.querySelectorAll('.er-table-row[data-path]').forEach(function(el){
+    const path = el.getAttribute('data-path');
+    const idx = parseInt(el.getAttribute('data-idx'), 10);
+    const arr = get(path);
+    const m = receiptMatch_(path, arr && arr[idx]);
+    el.classList.toggle('er-match', !!(m && m.hit));
+    const inp = el.querySelector('input[inputmode="numeric"]');
+    if(inp){ if(m && m.hit) inp.title = m.detail; else inp.removeAttribute('title'); }
+  });
+  rcptUpdateInfo_();
+}
+function rcptInfoHtml_(){
+  if(!receiptDb || !receiptDb.branches || !receiptDb.branches.length){
+    return 'No monitoring file imported yet. Import your receipt monitoring workbook (one tab per branch) and entries below turn <span class="rcpt-legend"></span>green when their series is found for the selected branch.';
+  }
+  const br = rcptFindBranch_(state.branch);
+  let h = 'Loaded <b>' + receiptDb.branches.length + '</b> branches from <b>' + escHtml(receiptDb.fileName || 'file') + '</b>'
+    + (receiptDb.importedAt ? ' &middot; ' + escHtml(new Date(receiptDb.importedAt).toLocaleDateString()) : '') + '. ';
+  if(!state.branch) h += 'Pick a branch above to start matching.';
+  else if(br) h += '<span class="ok">Matching against ' + escHtml(br.title) + (br.asOf ? ' (' + escHtml(br.asOf) + ')' : '') + '.</span> <span class="rcpt-legend"></span>Green = series found in monitoring.';
+  else h += 'No tab in the file matches the branch &ldquo;' + escHtml(state.branch) + '&rdquo;.';
+  return h;
+}
+function rcptUpdateInfo_(){
+  const el = document.getElementById('rcptInfo');
+  if(el) el.innerHTML = rcptInfoHtml_();
+}
+function rcptBarHtml_(){
+  const has = !!(receiptDb && receiptDb.branches && receiptDb.branches.length);
+  return '<div class="rcpt-bar"><div class="rcpt-bar-top">'
+    + '<button type="button" class="rcpt-btn" id="rcptImportBtn" onclick="document.getElementById(\'rcptFile\').click()">' + (has ? 'Re-import file' : 'Import monitoring file') + '</button>'
+    + (has ? '<button type="button" class="rcpt-btn danger" onclick="clearReceiptDb_()">Clear</button>' : '')
+    + '<input type="file" id="rcptFile" accept=".xlsx,.xls" style="display:none" onchange="importReceiptFile_(this)">'
+    + '</div><div class="rcpt-info" id="rcptInfo">' + rcptInfoHtml_() + '</div></div>';
+}
+function rcptLoadSheetJs_(){
+  return new Promise(function(resolve, reject){
+    if(window.XLSX) return resolve();
+    const sc = document.createElement('script');
+    sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    sc.onload = function(){ window.XLSX ? resolve() : reject(new Error('The spreadsheet reader did not load.')); };
+    sc.onerror = function(){ reject(new Error('Could not load the spreadsheet reader. Check your internet connection and try again.')); };
+    document.head.appendChild(sc);
+  });
+}
+async function importReceiptFile_(input){
+  const file = input.files && input.files[0];
+  input.value = '';
+  if(!file || receiptBusy) return;
+  receiptBusy = true;
+  const btn = document.getElementById('rcptImportBtn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Reading file...'; }
+  try{
+    await rcptLoadSheetJs_();
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type:'array' });
+    const branches = rcptParseWorkbook_(wb);
+    if(!branches.length) throw new Error('No receipt series found. Use the monitoring format: one tab per branch with Moto Finance / Motorlandia / Sales Invoice / Delivery Receipt / Parts columns.');
+    receiptDb = { fileName: file.name, importedAt: Date.now(), branches: branches };
+    rcptClearMemo_();
+    let saved = true;
+    try{ localStorage.setItem(RCPT_DB_KEY, JSON.stringify(receiptDb)); }catch(e){ saved = false; }
+    showToast('Imported ' + branches.length + ' branches' + (saved ? '.' : ' (could not be saved on this device, so it will be lost on refresh).'), saved ? 'success' : 'warn');
+  }catch(err){
+    showToast(err && err.message ? err.message : 'Import failed.', 'warn');
+  }finally{
+    receiptBusy = false;
+    renderSection('sec-or');
+  }
+}
+async function clearReceiptDb_(){
+  const ok = await showConfirm('The imported monitoring data will be removed from this device. Your entries stay as they are.',
+    { title:'Clear monitoring data?', confirmLabel:'Clear', danger:true });
+  if(!ok) return;
+  receiptDb = null;
+  rcptClearMemo_();
+  try{ localStorage.removeItem(RCPT_DB_KEY); }catch(e){}
+  renderSection('sec-or');
+}
+
 /** Every server request has a ceiling so a weak mobile connection cannot
  *  leave buttons stuck in a permanent loading state. Submissions use a
  *  stable request ID so the same submit can be retried safely after timeout. */
@@ -1775,6 +2033,7 @@ function onSeriesNoInput(input, path, idx){
     }
   }
   setRepField(path, idx, 'seriesNo', input.value);
+  refreshReceiptMatches_();
 }
 function addRep(path){
   checkpoint();
@@ -2094,7 +2353,7 @@ function conditionRow(path, label, opts, withCount){
 const OR_REMARKS_PRESETS = ['MA','OTHERS','REG','COD/DP','SPARE PARTS','STOCK'];
 const OR_GROUPS = [
   { path:'officialReceipts.orEntries', title:'Official Receipt', addLabel:'OR entry', presets:['Motofinance','Motowheels'], remarksPresets:OR_REMARKS_PRESETS },
-  { path:'officialReceipts.sparepartsEntries', title:'Spareparts Invoice', addLabel:'spareparts invoice', presets:['STOCK'], allowManualType:true, remarksPresets:['STOCK'] },
+  { path:'officialReceipts.sparepartsEntries', title:'Spareparts Invoice', addLabel:'spareparts invoice', presets:['SPAREPARTS','STOCK'], allowManualType:true, remarksPresets:['STOCK'] },
   { path:'officialReceipts.salesDrEntries', title:'Sales Invoice & Delivery Receipt', addLabel:'entry', presets:['Sales Invoice','Delivery Receipt','STOCK'], remarksPresets:['STOCK'] }
 ];
 /* Type field equivalent of setOrRemarksPreset(): only used by groups with
@@ -2174,10 +2433,12 @@ function orEntryRow(path, row, i, presets, remarksPresets, allowManualType){
     remarksCell = '<input class="er-cell-input" type="text" placeholder="Remarks" value="'+escAttr(row.remarks)+'"'
       + ' oninput="setRepField(\''+path+'\','+i+',\'remarks\',this.value)">';
   }
-  return '<div class="er-table-row" data-idx="'+i+'">'
+  const rcptHit = receiptMatch_(path, row);
+  return '<div class="er-table-row'+(rcptHit && rcptHit.hit ? ' er-match' : '')+'" data-idx="'+i+'" data-path="'+path+'">'
     + '<div class="er-drag-cell"><span class="er-drag-handle" onpointerdown="orDragStart(event,\''+path+'\','+i+')"></span></div>'
     + '<div>' + typeCell + '</div>'
     + '<div><input class="er-cell-input" type="text" inputmode="numeric" placeholder="e.g. 51-100" value="'+escAttr(row.seriesNo)+'"'
+    + (rcptHit && rcptHit.hit ? ' title="'+escAttr(rcptHit.detail)+'"' : '')
     + ' oninput="onSeriesNoInput(this,\''+path+'\','+i+')"></div>'
     + '<div>' + remarksCell + '</div>'
     + '<div><button type="button" class="icon-btn" onclick="removeRep(\''+path+'\','+i+')">&times;</button></div>'
@@ -2338,7 +2599,7 @@ const sections = [
 function renderBasics(){
   return card('sec-basics','Branch &amp; auditor', null, null,
     '<div class="field-grid">'
-    + field('Branch', inputEl(state.branch, 'list="branchList" oninput="set(\'branch\', this.value)"', 'text', 'placeholder="e.g. Branch 12 - Cabanatuan"'), true)
+    + field('Branch', inputEl(state.branch, 'list="branchList" oninput="set(\'branch\', this.value); refreshReceiptMatches_();"', 'text', 'placeholder="e.g. Branch 12 - Cabanatuan"'), true)
     + field('Auditor', inputEl(state.auditor, 'oninput="set(\'auditor\', this.value)"', 'text', 'placeholder="Your name"'))
     + field('Audit date', inputEl(state.auditDate, 'oninput="set(\'auditDate\', this.value)"', 'date'))
     + '</div>', true);
@@ -2451,7 +2712,7 @@ function renderOR(){
   const paths = ['officialReceipts.allComplete','officialReceipts.cutoffSigned',
     'officialReceipts.greenCopiesFiledSeries','officialReceipts.greenCopiesOrganized','officialReceipts.properlyValidated'];
   return card('sec-or','Official receipts, sales invoices &amp; delivery receipts', null, sectionYNStats(paths),
-    OR_GROUPS.map(orGroupList).join('')
+    rcptBarHtml_() + OR_GROUPS.map(orGroupList).join('')
     + '<div class="field span2" style="margin:2px 0 14px;"><label>Additional remarks</label>'
     + textareaEl(state.officialReceipts.tableRemarks, 'oninput="set(\'officialReceipts.tableRemarks\', this.value)"',
         'Any additional notes on the OR / SI / DR entries above...')

@@ -413,7 +413,8 @@
   .cond-seg button.active.poor{background:var(--del-soft); color:var(--del); border-color:#F0C3CE;}
   .cond-seg button.active.complete{background:var(--ok-soft); color:var(--ok); border-color:#B7E1CE;}
   .cond-seg button.active.missing{background:var(--del-soft); color:var(--del); border-color:#F0C3CE;}
-  .cond-seg button.active.na{background:#EEF1F6;color:#525D73;border-color:#C9D0DE;}
+  .cond-seg button.active.sampling{background:#E4EEFF;color:#1D4ED8;border-color:#9DB9F5;font-weight:800;}
+  .cond-seg button.active.na{background:#4B5878!important;color:#fff!important;border-color:#4B5878!important;font-weight:800;box-shadow:0 0 0 2px rgba(75,88,120,.22);}
   .cond-seg button.active.incomplete{background:var(--del-soft); color:var(--del); border-color:#F0C3CE;}
   .status-row{border:1px solid var(--line); border-radius:var(--radius-sm); padding:11px 12px; margin-bottom:8px; background:#fff;}
   .status-row .status-head{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:9px;}
@@ -2322,7 +2323,7 @@ function conditionRow(path, label, opts, withCount){
   const v = get(path+'.condition');
   const r = get(path+'.remarks');
   const seg = opts.map(function(o){
-    return '<button type="button" class="'+(v===o?'active '+o.toLowerCase():'')+'" onclick="setCond(\''+path+'\',\''+o+'\')">'+o+'</button>';
+    return '<button type="button" class="'+(v===o?'active '+o.toLowerCase().replace(/[^a-z]/g,''):'')+'" onclick="setCond(\''+path+'\',\''+o+'\')">'+o+'</button>';
   }).join('');
   const countHtml = withCount
     ? '<input class="cond-count" type="number" inputmode="numeric" min="0" placeholder="Count" value="'
@@ -2541,8 +2542,9 @@ function statusRow(path){
   // Tools and the 3S spareparts shop may not exist at every branch or
   // may not have been audited on the visit. Keep N/A available only on
   // these two pickers so it is recorded as neutral, not a finding.
-  const options = (path === 'inventory.tools' || path === 'inventory.spareparts')
-    ? STATUS_OPTS.concat(['N/A']) : STATUS_OPTS;
+  // Sampling is offered on the 3S spareparts shop only (neutral, not a finding).
+  const options = path === 'inventory.spareparts' ? STATUS_OPTS.concat(['Sampling','N/A'])
+    : path === 'inventory.tools' ? STATUS_OPTS.concat(['N/A']) : STATUS_OPTS;
   return '<div class="status-row">'
     + '<div class="cond-seg">' + options.map(opt =>
         '<button type="button" class="'+(row.status===opt?'active '+(opt==='N/A'?'na':opt.toLowerCase()):'')+'" aria-pressed="'+(row.status===opt?'true':'false')+'" onclick="setStatusField(\''+path+'\',\''+opt+'\')">'+opt+'</button>'
@@ -2748,7 +2750,7 @@ function renderInventory(){
     + conditionRow('inventory.brandNewCondition','Brand-new (BN) units \u2014 free from scratches, with TBA\u2019s', null, true)
     + conditionRow('inventory.repoUnits','Repossessed (Repo) units', null, true)
     + conditionRow('inventory.serviceUnits','Service units', null, true)
-    + conditionRow('inventory.repairUnits','Repair units (if any)', null, true)
+    + conditionRow('inventory.repairUnits','Repair units (if any)', ['Good','Fair','Poor','N/A'], true)
     + '<div class="review-sub" style="margin-top:14px;">Tools (owned by company)</div>' + statusRow('inventory.tools')
     + '<div class="review-sub" style="margin-top:6px;">Spareparts (3S shop only)</div>' + statusRow('inventory.spareparts')
     + '<div class="review-sub" style="margin-top:6px;">Plates and OR-CR</div>' + statusRow('inventory.platesOrCr')

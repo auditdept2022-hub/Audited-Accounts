@@ -5,6 +5,9 @@ on:
   push:
     branches: [main, master]
 
+permissions:
+  contents: write   # needed to publish the APK on the Releases page
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,13 +24,15 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Install ImageMagick (for app icons)
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+
       - name: Create Capacitor project (outside the repo, nothing is committed)
         run: |
           mkdir -p "$RUNNER_TEMP/app/www"
           cd "$RUNNER_TEMP/app"
           npm init -y
           npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
-          # Copy the site's files into the app
           rsync -a \
             --exclude='.git' --exclude='.github' --exclude='node_modules' \
             "$GITHUB_WORKSPACE/" www/
@@ -35,14 +40,36 @@ jobs:
           npx cap add android
           npx cap sync android
 
+      - name: Use the app's own icon as the launcher icon
+        run: |
+          RES="$RUNNER_TEMP/app/android/app/src/main/res"
+          SRC="$GITHUB_WORKSPACE/icon-512-maskable.png"
+          # remove the default adaptive-icon definitions so our PNGs are used
+          rm -rf "$RES"/mipmap-anydpi-v26
+          for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
+            dir="mipmap-${d%%:*}"; size="${d##*:}"
+            mkdir -p "$RES/$dir"
+            for n in ic_launcher ic_launcher_round ic_launcher_foreground; do
+              convert "$SRC" -resize ${size}x${size} "$RES/$dir/$n.png"
+            done
+          done
+
       - name: Build debug APK
         run: |
           cd "$RUNNER_TEMP/app/android"
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/Audited-Accounts.apk"
 
-      - name: Upload APK
+      - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: Audited-Accounts-apk
-          path: ${{ runner.temp }}/app/android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ runner.temp }}/Audited-Accounts.apk
+
+      - name: Publish APK on the Releases page
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Audited Accounts build ${{ github.run_number }}
+          files: ${{ runner.temp }}/Audited-Accounts.apk

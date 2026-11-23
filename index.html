@@ -6569,16 +6569,21 @@
       row.forEach((cell, idx) => {
         const norm = normHeader_(cell);
         if(!norm) return;
-        if(cols.customer === undefined && norm.indexOf('customer') !== -1) cols.customer = idx;
+        if(cols.customer === undefined && norm.indexOf('customer') !== -1 && norm !== 'customer status') cols.customer = idx;
         else if(cols.release === undefined && (norm.indexOf('release') !== -1 || norm.indexOf('restructure') !== -1 || norm === 'rstr date')) cols.release = idx;
         else if(cols.model === undefined && norm === 'model') cols.model = idx;
         else if(cols.engine === undefined && norm.indexOf('engine') !== -1) cols.engine = idx;
         else if(cols.dueDate === undefined && ((norm.indexOf('due') !== -1 && norm.indexOf('date') !== -1) || (norm === 'date' && cols.release !== undefined))) cols.dueDate = idx;
+        else if(cols.status === undefined && (norm === 'customer status' || norm === 'status')) cols.status = idx;
         else if(cols.term === undefined && norm === 'term') cols.term = idx;
         else if(cols.ma === undefined && norm === 'ma') cols.ma = idx;
         else if(cols.begBal === undefined && norm.indexOf('beg') !== -1 && norm.indexOf('bal') !== -1) cols.begBal = idx;
         else if(norm === 'ttl') ttlIdxs.push(idx);
         else if(cols.adv === undefined && norm === 'adv') cols.adv = idx;
+        // Flat-list (e.g. this dashboard's own export) balance headers.
+        else if(cols.flatDue === undefined && /^due this m(on)?th/.test(norm)) cols.flatDue = idx;
+        else if(cols.flatAdv === undefined && /^payment\s*[\/(]?\s*\(?adv/.test(norm)) cols.flatAdv = idx;
+        else if(cols.flatPen === undefined && /^penalty/.test(norm)) cols.flatPen = idx;
       });
       // Needs a customer column, a beginning-balance column, and the
       // "Adv" column — specific enough to this report shape that it
@@ -6586,10 +6591,29 @@
       // columns are optional now (this flow no longer reads balance
       // figures from the file at all), so their presence/absence
       // doesn't affect whether the header row is recognized.
-      if(cols.customer !== undefined && cols.begBal !== undefined && cols.adv !== undefined){
+      // Many STA exports put CU/OD/DEL/TTL/Adv on the 1-2 rows BELOW the main
+      // header row (Beg Bal etc.). Look there too, and start data after them.
+      let subLast = r;
+      if(cols.customer !== undefined && cols.begBal !== undefined){
+        for(let sr = r + 1; sr <= Math.min(r + 2, matrix.length - 1); sr++){
+          const srow = matrix[sr] || [];
+          let hit = false;
+          srow.forEach((cell, idx) => {
+            const n2 = normHeader_(cell);
+            if(n2 === 'cu' || n2 === 'od' || n2 === 'del') hit = true;
+            else if(n2 === 'ttl'){ hit = true; if(ttlIdxs.indexOf(idx) === -1) ttlIdxs.push(idx); }
+            else if(n2 === 'adv'){ hit = true; if(cols.adv === undefined) cols.adv = idx; }
+          });
+          if(hit) subLast = sr;
+        }
+      }
+      const isSta = cols.adv !== undefined;
+      // Flat list: customer + beg bal + at least one of model/engine/status.
+      const isFlat = !isSta && (cols.model !== undefined || cols.engine !== undefined || cols.status !== undefined);
+      if(cols.customer !== undefined && cols.begBal !== undefined && (isSta || isFlat)){
         if(ttlIdxs.length >= 1) cols.ttl1 = ttlIdxs[0];
         if(ttlIdxs.length >= 2) cols.ttl2 = ttlIdxs[1];
-        return { headerRow: r, cols };
+        return { headerRow: subLast, cols };
       }
     }
     return null;
@@ -6666,7 +6690,10 @@
 
       const otherBlank = coreIdxs.every(idx => idx === undefined || row[idx] === undefined || row[idx] === null || row[idx] === '');
       if(otherBlank){
-        currentStatus = deriveStatusFromSection_(name);
+        // Only genuine section labels ("BNEW - OD", "RSTR - DEL"...). Page
+        // titles / print headers repeated on every page must be ignored or
+        // they overwrite the status of every row under them.
+        if(/^[A-Za-z]{2,8}\s*-\s*[A-Za-z]{2,8}$/.test(name)) currentStatus = deriveStatusFromSection_(name);
         continue;
       }
 
@@ -6674,13 +6701,25 @@
       if(isNaN(begBal)) continue; // doesn't look like a real data row
 
       const maVal = parseNum_(row[cols.ma]);
-      const ttl1 = cols.ttl1 !== undefined ? parseNum_(row[cols.ttl1]) : NaN;
-      const adv = cols.adv !== undefined ? parseNum_(row[cols.adv]) : NaN;
+      // Header labels are often merged over 2 cells (label in the left cell,
+      // value in the right), so read the label's cell, else the one after it.
+      const mergedVal_ = idx => {
+        if(idx === undefined) return NaN;
+        const a = parseNum_(row[idx]);
+        return !isNaN(a) ? a : parseNum_(row[idx + 1]);
+      };
+      const ttl1 = mergedVal_(cols.ttl1);
+      const adv = mergedVal_(cols.adv);
       // The second CU/OD/DEL/TTL block of this report is the payments
       // received (it always equals Payment(Age)+Payment(Adv) of the aging
       // PDF), NOT penalty — this report carries no penalty figure at all.
       // Reading it as Penalty Due wrote payments into Penalty Due.
       const ttl2 = NaN;
+      // Flat-list columns (only present when the file isn't STA-style).
+      const flatDue = cols.flatDue !== undefined ? parseNum_(row[cols.flatDue]) : NaN;
+      const flatAdv = cols.flatAdv !== undefined ? parseNum_(row[cols.flatAdv]) : NaN;
+      const flatPen = cols.flatPen !== undefined ? parseNum_(row[cols.flatPen]) : NaN;
+      const rowStatus = cols.status !== undefined ? String(row[cols.status] == null ? '' : row[cols.status]).trim() : '';
 
       records.push({
         customer: name,
@@ -6691,10 +6730,10 @@
         term: cols.term !== undefined ? String(row[cols.term] == null ? '' : row[cols.term]).trim() : '',
         ma: isNaN(maVal) ? 0 : maVal,
         begBal: begBal,
-        customerStatus: currentStatus,
-        dueThisMonth: isNaN(ttl1) ? 0 : ttl1,
-        paymentAdv: isNaN(adv) ? 0 : adv,
-        penaltyDue: isNaN(ttl2) ? 0 : ttl2
+        customerStatus: rowStatus || currentStatus,
+        dueThisMonth: !isNaN(flatDue) ? flatDue : (isNaN(ttl1) ? 0 : ttl1),
+        paymentAdv: !isNaN(flatAdv) ? flatAdv : (isNaN(adv) ? 0 : adv),
+        penaltyDue: !isNaN(flatPen) ? flatPen : (isNaN(ttl2) ? 0 : ttl2)
       });
     }
     return records;
